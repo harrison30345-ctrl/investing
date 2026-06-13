@@ -1,0 +1,112 @@
+# ─────────────────────────────────────────────────────────────
+# Long-term investing screener config
+# Quality/value bias: find compounders with strong fundamentals
+# ─────────────────────────────────────────────────────────────
+
+# Pass/fail filters — a stock must pass ALL enabled filters
+# Set enabled: false to disable a filter without deleting it
+# on_missing: "pass" (default) or "fail" — what to do when data is unavailable
+filters:
+
+  # ── Valuation ──
+  pe_trailing:
+    enabled: true
+    max: 25
+    on_missing: pass
+
+  pe_forward:
+    enabled: false
+    max: 22
+
+  pb:
+    enabled: false
+    max: 8
+
+  ev_ebitda:
+    enabled: false
+    max: 18
+
+  # ── Profitability ──
+  roe:
+    enabled: true
+    min: 15
+    on_missing: pass
+
+  roa:
+    enabled: false
+    min: 5
+
+  gross_margin:
+    enabled: false
+    min: 30
+
+  operating_margin:
+    enabled: true
+    min: 10
+    on_missing: pass
+
+  net_margin:
+    enabled: true
+    min: 5
+    on_missing: pass
+
+  # ── Financial health ──
+  debt_to_equity:
+    enabled: true
+    max: 1.0
+    on_missing: pass
+
+  current_ratio:
+    enabled: true
+    min: 1.0
+    on_missing: pass
+
+  interest_coverage:
+    enabled: false
+    min: 5
+
+  # ── Growth ──
+  revenue_growth_1y:
+    enabled: false
+    min: 0
+
+  # ── Cash flow ──
+  fcf:
+    enabled: true
+    min: 0
+    on_missing: pass
+
+  # ── Quality flags ──
+  fcf_positive_3y:
+    enabled: true
+    must_be_true: true
+    on_missing: pass
+
+  no_dilution_3y:
+    enabled: false
+    must_be_true: true
+
+
+# ─────────────────────────────────────────────────────────────
+# Scoring — composite score weights and normalization overrides
+# ─────────────────────────────────────────────────────────────
+scoring:
+  weights:
+    profitability: 0.30
+    financial_health: 0.25
+    valuation: 0.20
+    growth: 0.15
+    cash_flow: 0.10
+
+  # Optional: override default normalization ranges per metric
+  # metric_ranges:
+  #   pe_trailing:
+  #     low: 5
+  #     high: 30
+  #     higher_better: false
+
+# ─────────────────────────────────────────────────────────────
+# Cache settings
+# ─────────────────────────────────────────────────────────────
+cache:
+  expiry_hours: 24
