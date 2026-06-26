@@ -571,7 +571,9 @@ if page == "🔥 Hot Stocks":
                     continue
 
             prog.empty()
-
+            if not rows:
+                st.warning("No data returned. Check your tickers and try again.")
+                st.stop()
             hot_df = pd.DataFrame(rows).sort_values("hot_score", ascending=False).reset_index(drop=True)
             st.session_state[cache_key] = hot_df
 
@@ -873,6 +875,9 @@ elif page == "💎 Hidden Gems":
                     continue
 
             prog.empty()
+            if not rows:
+                st.warning("No data returned. Check your tickers and try again.")
+                st.stop()
             gem_df = pd.DataFrame(rows).sort_values("potential_score", ascending=False).reset_index(drop=True)
             st.session_state[gem_cache_key] = gem_df
 
@@ -1861,6 +1866,9 @@ elif page == "🇬🇧 T212 ISA":
                         continue
 
                 prog.empty()
+                if not rows:
+                    st.warning("No data returned. Check your tickers and try again.")
+                    st.stop()
                 df_hot = pd.DataFrame(rows).sort_values("hot_score", ascending=False).reset_index(drop=True)
                 st.session_state[t212_cache_key] = df_hot
 
@@ -2035,6 +2043,9 @@ elif page == "🇬🇧 T212 ISA":
                         continue
 
                 prog.empty()
+                if not rows:
+                    st.warning("No data returned. Check your tickers and try again.")
+                    st.stop()
                 opp_df = pd.DataFrame(rows).sort_values("isa_score", ascending=False).reset_index(drop=True)
                 st.session_state[t212_opp_key] = opp_df
 
