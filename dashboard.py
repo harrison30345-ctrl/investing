@@ -507,7 +507,7 @@ if page == "🔥 Hot Stocks":
         with st.spinner(f"Analysing {len(tickers_to_scan)} tickers for momentum..."):
             prog = st.progress(0, text="Downloading price data (batch)...")
             all_prices = _batch_prices(tickers_tuple, period="1mo", interval="1d")
-            valid_tup  = tuple(t for t in tickers_to_scan if t in all_prices and not all_prices[t].empty)
+            valid_tup  = tuple(t for t in tickers_to_scan if t in all_prices and not all_prices[t].empty) or tuple(tickers_to_scan)
             prog.progress(0.5, text=f"Fetching analyst data for {len(valid_tup)} active stocks...")
             all_info   = _batch_info(valid_tup)
             prog.progress(0.9, text="Computing scores...")
@@ -730,7 +730,7 @@ elif page == "💎 Hidden Gems":
             rows = []
             prog = st.progress(0, text="Downloading price data (batch)...")
             gem_prices = _batch_prices(tickers_tuple, period="1mo", interval="1d")
-            valid_tup  = tuple(t for t in scan_tickers if t in gem_prices and not gem_prices[t].empty)
+            valid_tup  = tuple(t for t in scan_tickers if t in gem_prices and not gem_prices[t].empty) or tuple(scan_tickers)
             prog.progress(0.45, text=f"Fetching fundamentals for {len(valid_tup)} active stocks...")
             all_info = _batch_info(valid_tup)
             prog.progress(0.8, text="Computing gem scores...")
@@ -1071,7 +1071,7 @@ elif page == "⚠️ Sell Watch":
         tickers_tuple_sell = tuple(sell_tickers)
         prog = st.progress(0, text="Downloading price data (batch)...")
         sell_all_prices = _batch_prices(tickers_tuple_sell, period="3mo", interval="1d")
-        valid_sell_tup  = tuple(t for t in sell_tickers if t in sell_all_prices and not sell_all_prices[t].empty)
+        valid_sell_tup  = tuple(t for t in sell_tickers if t in sell_all_prices and not sell_all_prices[t].empty) or tuple(sell_tickers)
         prog.progress(0.45, text=f"Fetching fundamentals for {len(valid_sell_tup)} stocks...")
         sell_all_info   = _batch_info(valid_sell_tup)
         prog.progress(0.85, text="Computing sell signals...")
