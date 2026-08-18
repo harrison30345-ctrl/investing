@@ -218,10 +218,22 @@ def chart_layout(**kwargs):
 # Cache keyed on (tickers_tuple, period, interval) — valid for 1 hour.
 # Using tuples because st.cache_data requires hashable args.
 
-_CACHE_TTL = 6 * 3600  # 6-hour TTL — balances freshness with speed
+_CACHE_TTL = 6 * 3600  # 6-hour refresh window — balances freshness with speed
 
-@st.cache_data(ttl=_CACHE_TTL, persist="disk", show_spinner=False)
-def _batch_prices(tickers_tuple: tuple, period: str = "1mo", interval: str = "1d") -> dict:
+
+def _bucket() -> int:
+    """Current 6-hour time bucket.
+
+    Streamlit ignores `ttl` on any cache_data function using persist="disk", so
+    disk-cached results would otherwise live forever. Passing this bucket in as a
+    hashed argument changes the cache key every _CACHE_TTL seconds, which gives us
+    real expiry back without giving up disk persistence.
+    """
+    return int(time.time() // _CACHE_TTL)
+
+
+@st.cache_data(persist="disk", show_spinner=False)
+def _batch_prices_cached(tickers_tuple: tuple, period: str, interval: str, bucket: int) -> dict:
     """Download OHLCV for every ticker in one yfinance call. Persisted to disk for fast reloads."""
     tickers_list = list(tickers_tuple)
     if not tickers_list:
@@ -246,6 +258,10 @@ def _batch_prices(tickers_tuple: tuple, period: str = "1mo", interval: str = "1d
     return out
 
 
+def _batch_prices(tickers_tuple: tuple, period: str = "1mo", interval: str = "1d") -> dict:
+    return _batch_prices_cached(tickers_tuple, period, interval, _bucket())
+
+
 def _fetch_one_info(ticker: str) -> tuple:
     try:
         return ticker, yf.Ticker(ticker).info or {}
@@ -253,8 +269,8 @@ def _fetch_one_info(ticker: str) -> tuple:
         return ticker, {}
 
 
-@st.cache_data(ttl=_CACHE_TTL, persist="disk", show_spinner=False)
-def _batch_info(tickers_tuple: tuple, max_workers: int = 25) -> dict:
+@st.cache_data(persist="disk", show_spinner=False)
+def _batch_info_cached(tickers_tuple: tuple, max_workers: int, bucket: int) -> dict:
     """Fetch .info dicts for all tickers in parallel. 25 workers + disk persistence = fast reloads."""
     results: dict = {}
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
@@ -263,6 +279,10 @@ def _batch_info(tickers_tuple: tuple, max_workers: int = 25) -> dict:
             ticker, info = f.result()
             results[ticker] = info
     return results
+
+
+def _batch_info(tickers_tuple: tuple, max_workers: int = 25) -> dict:
+    return _batch_info_cached(tickers_tuple, max_workers, _bucket())
 
 
 # ── Hedge Fund narrative summary generator ────────────────────
@@ -3681,8 +3701,8 @@ def _bs_call(spot, strike, t_years, iv, rate=0.042):
     return price, _norm_cdf(d1)
 
 
-@st.cache_data(ttl=_CACHE_TTL, persist="disk", show_spinner=False)
-def _leaps_chain(ticker: str, min_days: int = 300) -> dict:
+@st.cache_data(persist="disk", show_spinner=False)
+def _leaps_chain_cached(ticker: str, min_days: int, bucket: int) -> dict:
     """Fetch long-dated call chains for one ticker. Returns {'spot':…, 'rows':[…]}."""
     try:
         tk = yf.Ticker(ticker)
@@ -3754,6 +3774,10 @@ def _leaps_chain(ticker: str, min_days: int = 300) -> dict:
                 "cost_per_100": mid * 100,
             })
     return {"spot": spot, "rows": rows}
+
+
+def _leaps_chain(ticker: str, min_days: int = 300) -> dict:
+    return _leaps_chain_cached(ticker, min_days, _bucket())
 
 
 if page == "📈 LEAPS":
