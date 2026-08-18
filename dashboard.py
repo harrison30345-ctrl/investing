@@ -4,9 +4,11 @@ Launch with:  python3 -m streamlit run screener/dashboard.py
 """
 from __future__ import annotations
 
+import math
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -216,10 +218,22 @@ def chart_layout(**kwargs):
 # Cache keyed on (tickers_tuple, period, interval) — valid for 1 hour.
 # Using tuples because st.cache_data requires hashable args.
 
-_CACHE_TTL = 6 * 3600  # 6-hour TTL — balances freshness with speed
+_CACHE_TTL = 6 * 3600  # 6-hour refresh window — balances freshness with speed
 
-@st.cache_data(ttl=_CACHE_TTL, persist="disk", show_spinner=False)
-def _batch_prices(tickers_tuple: tuple, period: str = "1mo", interval: str = "1d") -> dict:
+
+def _bucket() -> int:
+    """Current 6-hour time bucket.
+
+    Streamlit ignores `ttl` on any cache_data function using persist="disk", so
+    disk-cached results would otherwise live forever. Passing this bucket in as a
+    hashed argument changes the cache key every _CACHE_TTL seconds, which gives us
+    real expiry back without giving up disk persistence.
+    """
+    return int(time.time() // _CACHE_TTL)
+
+
+@st.cache_data(persist="disk", show_spinner=False)
+def _batch_prices_cached(tickers_tuple: tuple, period: str, interval: str, bucket: int) -> dict:
     """Download OHLCV for every ticker in one yfinance call. Persisted to disk for fast reloads."""
     tickers_list = list(tickers_tuple)
     if not tickers_list:
@@ -244,6 +258,10 @@ def _batch_prices(tickers_tuple: tuple, period: str = "1mo", interval: str = "1d
     return out
 
 
+def _batch_prices(tickers_tuple: tuple, period: str = "1mo", interval: str = "1d") -> dict:
+    return _batch_prices_cached(tickers_tuple, period, interval, _bucket())
+
+
 def _fetch_one_info(ticker: str) -> tuple:
     try:
         return ticker, yf.Ticker(ticker).info or {}
@@ -251,8 +269,8 @@ def _fetch_one_info(ticker: str) -> tuple:
         return ticker, {}
 
 
-@st.cache_data(ttl=_CACHE_TTL, persist="disk", show_spinner=False)
-def _batch_info(tickers_tuple: tuple, max_workers: int = 25) -> dict:
+@st.cache_data(persist="disk", show_spinner=False)
+def _batch_info_cached(tickers_tuple: tuple, max_workers: int, bucket: int) -> dict:
     """Fetch .info dicts for all tickers in parallel. 25 workers + disk persistence = fast reloads."""
     results: dict = {}
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
@@ -261,6 +279,10 @@ def _batch_info(tickers_tuple: tuple, max_workers: int = 25) -> dict:
             ticker, info = f.result()
             results[ticker] = info
     return results
+
+
+def _batch_info(tickers_tuple: tuple, max_workers: int = 25) -> dict:
+    return _batch_info_cached(tickers_tuple, max_workers, _bucket())
 
 
 # ── Hedge Fund narrative summary generator ────────────────────
@@ -469,7 +491,7 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-page = st.sidebar.radio("Navigate", ["📊 Hedge Fund", "🔥 Hot Stocks", "💎 Hidden Gems", "⚠️ Sell Watch", "🔍 Screener", "🇬🇧 T212 ISA"], index=0)
+page = st.sidebar.radio("Navigate", ["📊 Hedge Fund", "🔥 Hot Stocks", "💎 Hidden Gems", "⚠️ Sell Watch", "🔍 Screener", "🇬🇧 T212 ISA", "📈 LEAPS"], index=0)
 
 # ════════════════════════════════════════════════════════════
 # PAGE 1 — HOT STOCKS
@@ -3660,3 +3682,249 @@ elif page == "📊 Hedge Fund":
         "future returns. Always do your own research before trading."
     )
 
+
+
+# ════════════════════════════════════════════════════════════
+# PAGE 7 — LEAPS (long-term options)
+# ════════════════════════════════════════════════════════════
+def _norm_cdf(x: float) -> float:
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def _bs_call(spot, strike, t_years, iv, rate=0.042):
+    """Black-Scholes call price + delta. Returns (price, delta)."""
+    if t_years <= 0 or iv <= 0 or spot <= 0 or strike <= 0:
+        return max(spot - strike, 0.0), 1.0 if spot > strike else 0.0
+    d1 = (math.log(spot / strike) + (rate + 0.5 * iv * iv) * t_years) / (iv * math.sqrt(t_years))
+    d2 = d1 - iv * math.sqrt(t_years)
+    price = spot * _norm_cdf(d1) - strike * math.exp(-rate * t_years) * _norm_cdf(d2)
+    return price, _norm_cdf(d1)
+
+
+@st.cache_data(persist="disk", show_spinner=False)
+def _leaps_chain_cached(ticker: str, min_days: int, bucket: int) -> dict:
+    """Fetch long-dated call chains for one ticker. Returns {'spot':…, 'rows':[…]}."""
+    try:
+        tk = yf.Ticker(ticker)
+        expiries = tk.options or []
+        hist = tk.history(period="1y")
+        if hist.empty:
+            return {"spot": None, "rows": []}
+        spot = float(hist["Close"].iloc[-1])
+        rets = hist["Close"].pct_change().dropna()
+        hv = float(rets.std() * math.sqrt(252)) if len(rets) > 20 else None
+    except Exception:
+        return {"spot": None, "rows": []}
+
+    today = date.today()
+    targets = []
+    for e in expiries:
+        try:
+            d = datetime.strptime(e, "%Y-%m-%d").date()
+        except Exception:
+            continue
+        if (d - today).days >= min_days:
+            targets.append((e, (d - today).days))
+    targets = targets[:3]
+
+    rows = []
+    for expiry, dte in targets:
+        try:
+            calls = tk.option_chain(expiry).calls
+        except Exception:
+            continue
+        if calls is None or calls.empty:
+            continue
+        t_years = dte / 365.0
+        for _, c in calls.iterrows():
+            strike = float(c.get("strike") or 0)
+            if strike <= 0 or not (0.6 * spot <= strike <= 1.4 * spot):
+                continue
+            bid = float(c.get("bid") or 0)
+            ask = float(c.get("ask") or 0)
+            last = float(c.get("lastPrice") or 0)
+            mid = (bid + ask) / 2 if bid > 0 and ask > 0 else last
+            if mid <= 0:
+                continue
+            iv = float(c.get("impliedVolatility") or 0)
+            _, delta = _bs_call(spot, strike, t_years, iv if iv > 0 else (hv or 0.3))
+            oi = int(c.get("openInterest") or 0)
+            vol = int(c.get("volume") or 0)
+            spread_pct = ((ask - bid) / mid * 100) if (bid > 0 and ask > 0) else None
+            breakeven = strike + mid
+            rows.append({
+                "ticker": ticker,
+                "expiry": expiry,
+                "dte": dte,
+                "strike": strike,
+                "spot": spot,
+                "moneyness": strike / spot,
+                "mid": mid,
+                "bid": bid,
+                "ask": ask,
+                "iv": iv * 100 if iv else None,
+                "hv": hv * 100 if hv else None,
+                "delta": delta,
+                "oi": oi,
+                "volume": vol,
+                "spread_pct": spread_pct,
+                "breakeven": breakeven,
+                "be_move_pct": (breakeven / spot - 1) * 100,
+                "leverage": (delta * spot / mid) if mid > 0 else None,
+                "cost_per_100": mid * 100,
+            })
+    return {"spot": spot, "rows": rows}
+
+
+def _leaps_chain(ticker: str, min_days: int = 300) -> dict:
+    return _leaps_chain_cached(ticker, min_days, _bucket())
+
+
+if page == "📈 LEAPS":
+
+    st.title("LEAPS")
+    st.caption(
+        "Long-dated call options (1+ year to expiry) — a leveraged way to hold a long-term view "
+        "without buying the shares outright. Contracts are ranked on liquidity, leverage and how "
+        "cheap the implied volatility is versus the stock's own realised volatility."
+    )
+
+    st.sidebar.markdown("### LEAPS settings")
+    leaps_input = st.sidebar.text_area(
+        "Tickers", value="AAPL, MSFT, NVDA, AMZN, GOOGL",
+        help="Comma-separated. Options data is heavy — keep this under ~10 tickers.",
+    )
+    min_dte = st.sidebar.slider("Minimum days to expiry", 180, 900, 300, step=30)
+    max_spread = st.sidebar.slider("Max bid/ask spread (%)", 2, 40, 15)
+    min_oi = st.sidebar.slider("Min open interest", 0, 2000, 100, step=50)
+    delta_lo, delta_hi = st.sidebar.slider("Delta range", 0.0, 1.0, (0.55, 0.90), step=0.05)
+    max_budget = st.sidebar.number_input("Max cost per contract ($)", 0, 100000, 0, step=250,
+                                         help="0 = no limit. One contract = 100 shares.")
+
+    leaps_tickers = [t.strip().upper() for t in leaps_input.replace("\n", ",").split(",") if t.strip()][:12]
+
+    if st.button("Scan LEAPS", type="primary") or st.session_state.get("_leaps_ran"):
+        st.session_state["_leaps_ran"] = True
+
+        rows = []
+        prog = st.progress(0.0, text="Fetching option chains…")
+        for i, t in enumerate(leaps_tickers):
+            res = _leaps_chain(t, min_days=min_dte)
+            rows.extend(res["rows"])
+            prog.progress((i + 1) / max(len(leaps_tickers), 1), text=f"Fetched {t}")
+        prog.empty()
+
+        if not rows:
+            st.warning("No long-dated contracts returned. Try different tickers or a lower minimum DTE.")
+            st.stop()
+
+        df = pd.DataFrame(rows)
+
+        # ── Filters ──────────────────────────────────────────
+        f = df[
+            (df["delta"] >= delta_lo) & (df["delta"] <= delta_hi) & (df["oi"] >= min_oi)
+        ].copy()
+        f = f[f["spread_pct"].isna() | (f["spread_pct"] <= max_spread)]
+        if max_budget > 0:
+            f = f[f["cost_per_100"] <= max_budget]
+
+        if f.empty:
+            st.warning("Every contract was filtered out. Loosen the delta range, spread or open-interest limits.")
+            st.stop()
+
+        # ── Score: cheap IV vs HV, high leverage, tight spread, deep liquidity
+        iv_hv = (f["iv"] / f["hv"]).replace([float("inf")], None)
+        f["iv_hv_ratio"] = iv_hv
+        vol_score = (2.0 - iv_hv.fillna(1.2)).clip(0, 1.5) / 1.5 * 35
+        lev_score = (f["leverage"].fillna(1) / 4).clip(0, 1) * 30
+        spread_score = (1 - (f["spread_pct"].fillna(max_spread) / max(max_spread, 1))).clip(0, 1) * 20
+        liq_score = (f["oi"].clip(0, 5000) / 5000) * 15
+        f["score"] = (vol_score + lev_score + spread_score + liq_score).round(1)
+        f = f.sort_values("score", ascending=False)
+
+        st.markdown("---")
+        c1, c2, c3, c4 = st.columns(4)
+        metric_card("Contracts found", f"{len(f):,}", c1)
+        metric_card("Tickers covered", f"{f['ticker'].nunique()}", c2)
+        metric_card("Median IV", f"{f['iv'].median():.0f}%" if f["iv"].notna().any() else "—", c3)
+        metric_card("Best score", f"{f['score'].max():.0f}", c4, hot=True)
+
+        # ── Top picks ────────────────────────────────────────
+        st.subheader("Top contracts")
+        show = f.head(25).copy()
+        table = pd.DataFrame({
+            "Ticker": show["ticker"],
+            "Expiry": show["expiry"],
+            "DTE": show["dte"],
+            "Strike": show["strike"].map(lambda v: f"${v:,.0f}"),
+            "Spot": show["spot"].map(lambda v: f"${v:,.2f}"),
+            "Mid": show["mid"].map(lambda v: f"${v:,.2f}"),
+            "Cost/contract": show["cost_per_100"].map(lambda v: f"${v:,.0f}"),
+            "Delta": show["delta"].map(lambda v: f"{v:.2f}"),
+            "IV": show["iv"].map(lambda v: f"{v:.0f}%" if pd.notna(v) else "—"),
+            "IV/HV": show["iv_hv_ratio"].map(lambda v: f"{v:.2f}" if pd.notna(v) else "—"),
+            "Leverage": show["leverage"].map(lambda v: f"{v:.1f}x" if pd.notna(v) else "—"),
+            "Spread": show["spread_pct"].map(lambda v: f"{v:.1f}%" if pd.notna(v) else "—"),
+            "OI": show["oi"].map(lambda v: f"{v:,}"),
+            "Breakeven": show["breakeven"].map(lambda v: f"${v:,.2f}"),
+            "Move needed": show["be_move_pct"].map(lambda v: f"{v:+.1f}%"),
+            "Score": show["score"],
+        })
+        st.dataframe(table, use_container_width=True, hide_index=True)
+
+        # ── Payoff explorer ──────────────────────────────────
+        st.markdown("---")
+        st.subheader("Payoff at expiry")
+        labels = [
+            f"{r.ticker}  {r.expiry}  ${r.strike:,.0f}C  (${r.mid:,.2f})"
+            for r in f.head(25).itertuples()
+        ]
+        pick = st.selectbox("Contract", labels, index=0)
+        row = f.head(25).iloc[labels.index(pick)]
+
+        lo, hi = row["spot"] * 0.5, row["spot"] * 1.8
+        spots = [lo + (hi - lo) * i / 120 for i in range(121)]
+        opt_pl = [(max(s - row["strike"], 0) - row["mid"]) * 100 for s in spots]
+        n_shares = int((row["mid"] * 100) // row["spot"]) or 1
+        stk_pl = [(s - row["spot"]) * n_shares for s in spots]
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=spots, y=opt_pl, name="LEAPS call", line=dict(color="#b8960c", width=3)))
+        fig.add_trace(go.Scatter(x=spots, y=stk_pl, name=f"{n_shares} shares (same capital)",
+                                 line=dict(color="#64748b", width=2, dash="dash")))
+        fig.add_hline(y=0, line_color="#334155")
+        fig.add_vline(x=row["spot"], line_color="#334155", line_dash="dot",
+                      annotation_text="today", annotation_position="top")
+        fig.add_vline(x=row["breakeven"], line_color="#dc2626", line_dash="dot",
+                      annotation_text="breakeven", annotation_position="top")
+        fig.update_layout(
+            height=420, template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)", margin=dict(l=10, r=10, t=30, b=10),
+            xaxis_title="Share price at expiry ($)", yaxis_title="Profit / loss ($)",
+            legend=dict(orientation="h", y=1.12, x=0),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        d1, d2, d3, d4 = st.columns(4)
+        metric_card("Cost", f"${row['cost_per_100']:,.0f}", d1)
+        metric_card("Max loss", f"${row['cost_per_100']:,.0f}", d2)
+        metric_card("Breakeven", f"${row['breakeven']:,.2f}", d3)
+        metric_card("Move needed", f"{row['be_move_pct']:+.1f}%", d4, hot=True)
+
+        st.markdown("---")
+        st.subheader("All filtered contracts")
+        st.dataframe(
+            f[["ticker", "expiry", "dte", "strike", "mid", "delta", "iv", "hv",
+               "leverage", "spread_pct", "oi", "volume", "breakeven", "score"]]
+            .round(2),
+            use_container_width=True, hide_index=True,
+        )
+    else:
+        st.info("Pick your tickers in the sidebar, then hit **Scan LEAPS**.")
+
+    st.markdown("---")
+    st.caption(
+        "⚠️ Options are high risk and can expire worthless — you can lose 100% of the premium. "
+        "Deltas here are Black-Scholes estimates, not broker values, and chain data can be stale "
+        "or thin outside market hours. This is a research tool, not financial advice."
+    )
