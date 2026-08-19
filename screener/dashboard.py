@@ -213,7 +213,7 @@ def chart_layout(**kwargs):
 
 
 # ── Fast batch data helpers ──────────────────────────────────
-# Cache keyed on (tickers_tuple, period, interval) — valid for 1 hour.
+# Cache keyed on (tickers_tuple, period, interval, bucket) — see _bucket() below.
 # Using tuples because st.cache_data requires hashable args.
 
 _CACHE_TTL = 6 * 3600  # 6-hour refresh window — balances freshness with speed
