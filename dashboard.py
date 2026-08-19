@@ -3701,20 +3701,57 @@ def _bs_call(spot, strike, t_years, iv, rate=0.042):
     return price, _norm_cdf(d1)
 
 
+# Deep, reliably liquid LEAPS markets — used to top up a thin scan universe.
+LEAPS_FALLBACK = [
+    "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META",
+    "AMD", "NFLX", "QQQ", "SPY",
+]
+
+
+def _retry(fn, attempts: int = 3, base_delay: float = 0.6):
+    """Run fn(), retrying transient yfinance/network failures with backoff.
+
+    Streamlit Cloud shares outbound IPs, so Yahoo rate-limits it far more often
+    than a local machine. A single failed call is usually transient, so one retry
+    recovers most tickers that would otherwise silently vanish from the scan.
+    """
+    last = None
+    for i in range(attempts):
+        try:
+            return fn(), None
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user as status
+            last = exc
+            if i < attempts - 1:
+                time.sleep(base_delay * (2 ** i))
+    return None, last
+
+
 @st.cache_data(persist="disk", show_spinner=False)
 def _leaps_chain_cached(ticker: str, min_days: int, bucket: int) -> dict:
-    """Fetch long-dated call chains for one ticker. Returns {'spot':…, 'rows':[…]}."""
-    try:
-        tk = yf.Ticker(ticker)
-        expiries = tk.options or []
-        hist = tk.history(period="1y")
-        if hist.empty:
-            return {"spot": None, "rows": []}
-        spot = float(hist["Close"].iloc[-1])
-        rets = hist["Close"].pct_change().dropna()
-        hv = float(rets.std() * math.sqrt(252)) if len(rets) > 20 else None
-    except Exception:
-        return {"spot": None, "rows": []}
+    """Fetch long-dated call chains for one ticker.
+
+    Returns {'spot':…, 'rows':[…], 'status':…, 'detail':…}. `status` is one of
+    'ok', 'no_price', 'no_expiries', 'no_long_dated', 'no_contracts' or 'error'
+    so the caller can tell the user exactly why a ticker produced nothing rather
+    than dropping it silently.
+    """
+    tk = yf.Ticker(ticker)
+
+    hist, err = _retry(lambda: tk.history(period="1y"))
+    if err is not None:
+        return {"spot": None, "rows": [], "status": "error", "detail": type(err).__name__}
+    if hist is None or hist.empty:
+        return {"spot": None, "rows": [], "status": "no_price", "detail": "no price history"}
+
+    spot = float(hist["Close"].iloc[-1])
+    rets = hist["Close"].pct_change().dropna()
+    hv = float(rets.std() * math.sqrt(252)) if len(rets) > 20 else None
+
+    expiries, err = _retry(lambda: tk.options or [])
+    if err is not None:
+        return {"spot": spot, "rows": [], "status": "error", "detail": type(err).__name__}
+    if not expiries:
+        return {"spot": spot, "rows": [], "status": "no_expiries", "detail": "no options listed"}
 
     today = date.today()
     targets = []
@@ -3726,14 +3763,17 @@ def _leaps_chain_cached(ticker: str, min_days: int, bucket: int) -> dict:
         if (d - today).days >= min_days:
             targets.append((e, (d - today).days))
     targets = targets[:3]
+    if not targets:
+        furthest = max(expiries) if expiries else "—"
+        return {
+            "spot": spot, "rows": [], "status": "no_long_dated",
+            "detail": f"furthest expiry is {furthest}",
+        }
 
     rows = []
     for expiry, dte in targets:
-        try:
-            calls = tk.option_chain(expiry).calls
-        except Exception:
-            continue
-        if calls is None or calls.empty:
+        calls, err = _retry(lambda e=expiry: tk.option_chain(e).calls)
+        if err is not None or calls is None or calls.empty:
             continue
         t_years = dte / 365.0
         for _, c in calls.iterrows():
@@ -3773,11 +3813,23 @@ def _leaps_chain_cached(ticker: str, min_days: int, bucket: int) -> dict:
                 "leverage": (delta * spot / mid) if mid > 0 else None,
                 "cost_per_100": mid * 100,
             })
-    return {"spot": spot, "rows": rows}
+    if not rows:
+        return {"spot": spot, "rows": [], "status": "no_contracts",
+                "detail": "chains had no priceable strikes near spot"}
+    return {"spot": spot, "rows": rows, "status": "ok", "detail": f"{len(rows)} contracts"}
 
 
 def _leaps_chain(ticker: str, min_days: int = 300) -> dict:
     return _leaps_chain_cached(ticker, min_days, _bucket())
+
+
+_LEAPS_STATUS_TEXT = {
+    "no_price": "no price data returned",
+    "no_expiries": "no options listed for this ticker",
+    "no_long_dated": "no expiries far enough out",
+    "no_contracts": "no priceable strikes near the current price",
+    "error": "data provider error (rate limit or timeout)",
+}
 
 
 if page == "📈 LEAPS":
@@ -3801,35 +3853,111 @@ if page == "📈 LEAPS":
     max_budget = st.sidebar.number_input("Max cost per contract ($)", 0, 100000, 0, step=250,
                                          help="0 = no limit. One contract = 100 shares.")
 
+    use_fallback = st.sidebar.checkbox(
+        "Top up with liquid LEAPS names", value=True,
+        help="If your own tickers return thin results, automatically add major names "
+             "with deep, reliable LEAPS markets (AAPL, MSFT, NVDA, TSLA, QQQ, SPY…).",
+    )
+
     leaps_tickers = [t.strip().upper() for t in leaps_input.replace("\n", ",").split(",") if t.strip()][:12]
 
     if st.button("Scan LEAPS", type="primary") or st.session_state.get("_leaps_ran"):
         st.session_state["_leaps_ran"] = True
 
-        rows = []
+        def _scan(tickers, prog, done, total):
+            """Fetch each ticker, never letting one failure stop the scan."""
+            got, stat = [], {}
+            for t in tickers:
+                try:
+                    res = _leaps_chain(t, min_days=min_dte)
+                except Exception as exc:  # noqa: BLE001 - a bad ticker must not kill the run
+                    stat[t] = ("error", type(exc).__name__)
+                else:
+                    got.extend(res.get("rows") or [])
+                    stat[t] = (res.get("status", "error"), res.get("detail", ""))
+                done += 1
+                prog.progress(min(done / max(total, 1), 1.0),
+                              text=f"Scanning {t}  ({done}/{total})")
+            return got, stat, done
+
+        total = len(leaps_tickers) + (len(LEAPS_FALLBACK) if use_fallback else 0)
         prog = st.progress(0.0, text="Fetching option chains…")
-        for i, t in enumerate(leaps_tickers):
-            res = _leaps_chain(t, min_days=min_dte)
-            rows.extend(res["rows"])
-            prog.progress((i + 1) / max(len(leaps_tickers), 1), text=f"Fetched {t}")
+        rows, status, done = _scan(leaps_tickers, prog, 0, total)
+
+        # Top up from the deep-liquidity list if the user's own picks came back thin.
+        covered = {r["ticker"] for r in rows}
+        if use_fallback and len(covered) < 5:
+            extra = [t for t in LEAPS_FALLBACK if t not in status]
+            total = done + len(extra)
+            more, more_stat, done = _scan(extra, prog, done, total)
+            rows.extend(more)
+            status.update(more_stat)
+            added = sorted({r["ticker"] for r in more} - covered)
+            if added:
+                st.info(
+                    f"Your tickers returned only {len(covered)} with usable chains, so the scan "
+                    f"was topped up with liquid LEAPS names: **{', '.join(added)}**. "
+                    "Untick *Top up with liquid LEAPS names* in the sidebar to disable."
+                )
         prog.empty()
 
+        # Report every ticker that produced nothing, and why.
+        failed = {t: v for t, v in status.items() if v[0] != "ok"}
+        if failed:
+            with st.expander(f"⚠️ {len(failed)} ticker(s) returned no contracts — see why", expanded=not rows):
+                st.dataframe(
+                    pd.DataFrame([
+                        {"Ticker": t,
+                         "Reason": _LEAPS_STATUS_TEXT.get(v[0], v[0]),
+                         "Detail": v[1]}
+                        for t, v in sorted(failed.items())
+                    ]),
+                    use_container_width=True, hide_index=True,
+                )
+                if any(v[0] == "error" for v in failed.values()):
+                    st.caption(
+                        "Provider errors are usually temporary rate limiting — each ticker is "
+                        "already retried 3 times. Re-running the scan in a minute normally clears them."
+                    )
+
         if not rows:
-            st.warning("No long-dated contracts returned. Try different tickers or a lower minimum DTE.")
+            st.warning(
+                "No long-dated contracts found for any ticker. Try lowering **Minimum days to "
+                "expiry**, enabling the liquid-names top-up, or re-running in a minute if the "
+                "table above shows provider errors."
+            )
             st.stop()
 
         df = pd.DataFrame(rows)
 
-        # ── Filters ──────────────────────────────────────────
-        f = df[
-            (df["delta"] >= delta_lo) & (df["delta"] <= delta_hi) & (df["oi"] >= min_oi)
-        ].copy()
+        # ── Filters (tracked so we can explain what removed what) ────
+        funnel = [("fetched", len(df), df["ticker"].nunique())]
+        f = df[(df["delta"] >= delta_lo) & (df["delta"] <= delta_hi)].copy()
+        funnel.append(("after delta range", len(f), f["ticker"].nunique()))
+        f = f[f["oi"] >= min_oi]
+        funnel.append(("after min open interest", len(f), f["ticker"].nunique()))
         f = f[f["spread_pct"].isna() | (f["spread_pct"] <= max_spread)]
+        funnel.append(("after max spread", len(f), f["ticker"].nunique()))
         if max_budget > 0:
             f = f[f["cost_per_100"] <= max_budget]
+            funnel.append(("after max cost", len(f), f["ticker"].nunique()))
+
+        dropped = sorted(set(df["ticker"]) - set(f["ticker"]))
+        if dropped:
+            st.caption(
+                f"Fetched {df['ticker'].nunique()} tickers; "
+                f"{', '.join(dropped)} had contracts but none passed your filters."
+            )
 
         if f.empty:
-            st.warning("Every contract was filtered out. Loosen the delta range, spread or open-interest limits.")
+            st.warning(
+                "Contracts were found, but your filters removed every one of them. "
+                "Widen the delta range, raise the max spread, or lower the min open interest."
+            )
+            st.dataframe(
+                pd.DataFrame(funnel, columns=["Stage", "Contracts", "Tickers"]),
+                use_container_width=True, hide_index=True,
+            )
             st.stop()
 
         # ── Score: cheap IV vs HV, high leverage, tight spread, deep liquidity
