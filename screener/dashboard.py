@@ -90,6 +90,12 @@ st.markdown("""
         padding: 1rem 1.2rem 0.9rem;
         margin-bottom: 0.5rem;
         box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+        transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    }
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 14px rgba(13,17,23,0.10);
+        border-color: #c8cfe0;
     }
     .metric-card h3 {
         margin: 0 0 0.35rem 0;
@@ -110,6 +116,12 @@ st.markdown("""
         padding: 1rem 1.2rem 0.85rem;
         margin-bottom: 0.5rem;
         box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+        transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    }
+    .hot-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 18px rgba(184,150,12,0.16);
+        border-color: #b8960c;
     }
     .hot-card h3 { margin: 0 0 0.3rem 0; font-size: 0.95rem; font-weight: 700; color: #b8960c; letter-spacing: 0.03em; }
     .hot-card p  { margin: 0 0 0.2rem 0; font-size: 1.3rem; font-weight: 700; color: #0d1117; line-height: 1.15; }
@@ -173,6 +185,104 @@ st.markdown("""
 
     /* ── Selectbox / inputs ── */
     .stSelectbox > div > div { background: #ffffff !important; border-color: #dde3ef !important; color: #0d1117 !important; }
+
+    /* ══════════════════════════════════════════════════════════
+       Hover & cursor affordances — make clickable things look
+       clickable, the way a normal website behaves.
+       ══════════════════════════════════════════════════════════ */
+
+    /* Anything actually clickable gets a pointer cursor */
+    .stButton > button,
+    .stDownloadButton > button,
+    .stRadio label,
+    .stCheckbox label,
+    .stSelectbox div[data-baseweb="select"],
+    .stMultiSelect div[data-baseweb="select"],
+    .stTabs [data-baseweb="tab"],
+    details summary,
+    div[data-testid="stExpander"] summary,
+    div[data-baseweb="select"] * ,
+    li[role="option"] {
+        cursor: pointer !important;
+    }
+
+    /* Buttons lift slightly */
+    .stButton > button {
+        transition: opacity 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease !important;
+    }
+    .stButton > button:hover {
+        opacity: 0.92 !important;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(184,150,12,0.32) !important;
+    }
+    .stButton > button:active { transform: translateY(0); }
+
+    /* Sidebar nav — highlight the row under the cursor */
+    section[data-testid="stSidebar"] .stRadio label {
+        border-radius: 4px;
+        padding: 0.18rem 0.4rem !important;
+        transition: background 0.14s ease, color 0.14s ease;
+    }
+    section[data-testid="stSidebar"] .stRadio label:hover {
+        background: rgba(184,150,12,0.14);
+    }
+    section[data-testid="stSidebar"] .stRadio label:hover * {
+        color: #e2c65a !important;
+    }
+
+    /* Tabs — colour up before you click */
+    .stTabs [data-baseweb="tab"] { transition: color 0.14s ease, background 0.14s ease; }
+    .stTabs [data-baseweb="tab"]:hover {
+        color: #b8960c !important;
+        background: rgba(184,150,12,0.07) !important;
+    }
+
+    /* Table rows — track the cursor like a normal data table */
+    div[data-testid="stDataFrame"] [role="row"]:hover {
+        background: rgba(184,150,12,0.08) !important;
+    }
+
+    /* Dropdown options */
+    li[role="option"]:hover { background: rgba(184,150,12,0.12) !important; }
+
+    /* Inputs / selects — border responds on hover and focus */
+    .stSelectbox div[data-baseweb="select"],
+    .stMultiSelect div[data-baseweb="select"],
+    .stTextInput input, .stNumberInput input, .stTextArea textarea {
+        transition: border-color 0.14s ease, box-shadow 0.14s ease;
+    }
+    .stSelectbox div[data-baseweb="select"]:hover,
+    .stMultiSelect div[data-baseweb="select"]:hover,
+    .stTextInput input:hover, .stNumberInput input:hover, .stTextArea textarea:hover {
+        border-color: #b8960c !important;
+    }
+
+    /* Expanders */
+    div[data-testid="stExpander"] summary { transition: background 0.14s ease; border-radius: 4px; }
+    div[data-testid="stExpander"] summary:hover { background: rgba(184,150,12,0.08); }
+
+    /* Sliders */
+    .stSlider [role="slider"] { cursor: grab !important; transition: box-shadow 0.14s ease; }
+    .stSlider [role="slider"]:hover { box-shadow: 0 0 0 6px rgba(184,150,12,0.18); }
+    .stSlider [role="slider"]:active { cursor: grabbing !important; }
+
+    /* Charts — lift the whole panel on hover */
+    div[data-testid="stPlotlyChart"] {
+        border-radius: 6px;
+        transition: box-shadow 0.18s ease;
+    }
+    div[data-testid="stPlotlyChart"]:hover { box-shadow: 0 4px 16px rgba(13,17,23,0.09); }
+
+    /* Respect users who ask for reduced motion */
+    @media (prefers-reduced-motion: reduce) {
+        .metric-card, .hot-card, .stButton > button,
+        div[data-testid="stPlotlyChart"] {
+            transition: none !important;
+        }
+        .metric-card:hover, .hot-card:hover, .stButton > button:hover {
+            transform: none !important;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -281,6 +391,22 @@ def _batch_info_cached(tickers_tuple: tuple, max_workers: int, bucket: int) -> d
 
 def _batch_info(tickers_tuple: tuple, max_workers: int = 25) -> dict:
     return _batch_info_cached(tickers_tuple, max_workers, _bucket())
+
+
+def _scan_gate(state_key: str, label: str, forced: bool = False, note: str = "") -> bool:
+    """Decide whether an expensive scan should run on this page load.
+
+    A scan costs hundreds of requests to the data provider, so it waits for an
+    explicit click instead of firing for every visitor who opens the page. Once
+    the result is in session state the gate stays out of the way, and the page's
+    own refresh button bypasses it via `forced`.
+    """
+    if forced:
+        return True
+    if st.session_state.get(state_key) is not None:
+        return False
+    st.info(note or "This scan pulls live data for several hundred tickers — press the button to run it.")
+    return st.button(label, type="primary", key=f"_gate_{state_key}")
 
 
 # ── Hedge Fund narrative summary generator ────────────────────
@@ -520,7 +646,9 @@ if page == "🔥 Hot Stocks":
     if refresh_hot or cache_key not in st.session_state:
         st.session_state[cache_key] = None
 
-    if st.session_state[cache_key] is None:
+    if _scan_gate(cache_key, "🔥 Run Hot Stocks scan", forced=refresh_hot,
+                  note="Scans your chosen universe for momentum. Pulls live data for "
+                       "up to a few hundred tickers, so it takes a moment."):
         tickers_to_scan = get_universe(hot_universe)
         tickers_tuple   = tuple(tickers_to_scan)
 
@@ -597,10 +725,16 @@ if page == "🔥 Hot Stocks":
             hot_df = pd.DataFrame(rows).sort_values("hot_score", ascending=False).reset_index(drop=True)
             st.session_state[cache_key] = hot_df
 
-    hot_df = st.session_state[cache_key]
+    hot_df = st.session_state.get(cache_key)
 
-    if hot_df is None or hot_df.empty:
-        st.error("No data returned. Try refreshing.")
+    if hot_df is None:
+        st.stop()  # gate is showing its own prompt — nothing to render yet
+    if hot_df.empty:
+        st.error(
+            "The scan finished but no stocks came back. This is usually a temporary "
+            "data-provider hiccup — press **🔄 Refresh Hot Stocks** to try again, or "
+            "pick a different universe in the sidebar."
+        )
         st.stop()
 
     top_hot = hot_df.head(hot_top_n)
@@ -634,7 +768,7 @@ if page == "🔥 Hot Stocks":
         "analyst_score": "Analyst Score", "hot_score": "🔥 Hot Score",
     })
 
-    st.dataframe(display_hot, hide_index=True, use_container_width=True)
+    st.dataframe(display_hot, hide_index=True, width="stretch")
 
     # ── Price chart for selected stock ───────────────────────
     st.markdown("---")
@@ -660,7 +794,7 @@ if page == "🔥 Hot Stocks":
                 height=420, xaxis_rangeslider_visible=False,
                 title=dict(text=f"{chart_ticker} — 3 months", font=dict(size=12, color=CHART_TEXT)),
             ))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
     except Exception as e:
         st.warning(f"Could not load chart for {chart_ticker}: {e}")
 
@@ -680,7 +814,7 @@ if page == "🔥 Hot Stocks":
                 height=200, showlegend=False,
                 title=dict(text=f"{chart_ticker} — Volume (gold = above 30d avg)", font=dict(size=11, color=CHART_TEXT)),
             ))
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, width="stretch")
     except Exception:
         pass
 
@@ -699,7 +833,7 @@ if page == "🔥 Hot Stocks":
                 marker_color=colors3[i],
             ))
     fig3.update_layout(**chart_layout(barmode="group", height=360))
-    st.plotly_chart(fig3, use_container_width=True)
+    st.plotly_chart(fig3, width="stretch")
 
 
 # ════════════════════════════════════════════════════════════
@@ -742,7 +876,9 @@ elif page == "💎 Hidden Gems":
     if refresh_gem or gem_cache_key not in st.session_state:
         st.session_state[gem_cache_key] = None
 
-    if st.session_state[gem_cache_key] is None:
+    if _scan_gate(gem_cache_key, "💎 Find Hidden Gems", forced=refresh_gem,
+                  note="Screens for undervalued stocks the market may have overlooked. "
+                       "Pulls live data for several hundred tickers."):
         scan_tickers  = get_universe(gem_universe)
         tickers_tuple = tuple(scan_tickers)
 
@@ -901,10 +1037,16 @@ elif page == "💎 Hidden Gems":
             gem_df = pd.DataFrame(rows).sort_values("potential_score", ascending=False).reset_index(drop=True)
             st.session_state[gem_cache_key] = gem_df
 
-    gem_df = st.session_state[gem_cache_key]
+    gem_df = st.session_state.get(gem_cache_key)
 
-    if gem_df is None or gem_df.empty:
-        st.error("No data returned. Try a different universe or hit Refresh.")
+    if gem_df is None:
+        st.stop()  # gate is showing its own prompt — nothing to render yet
+    if gem_df.empty:
+        st.error(
+            "The scan finished but nothing passed the filters. Try a different universe "
+            "in the sidebar, or press **🔄 Find Gems** to run it again — an empty result "
+            "is often just a temporary data-provider hiccup."
+        )
         st.stop()
 
     top_gems = gem_df.head(gem_top_n)
@@ -947,7 +1089,7 @@ elif page == "💎 Hidden Gems":
     }
     disp_gems = top_gems.rename(columns=col_rename)
     disp_gems.insert(0, "Rank", range(1, len(disp_gems) + 1))
-    st.dataframe(disp_gems, hide_index=True, use_container_width=True,
+    st.dataframe(disp_gems, hide_index=True, width="stretch",
                  height=min(700, 36 * len(disp_gems) + 40))
 
     # ── Score breakdown radar-style bar chart ────────────────
@@ -965,7 +1107,7 @@ elif page == "💎 Hidden Gems":
                 marker_color=color,
             ))
     fig_gems.update_layout(**chart_layout(barmode="group", height=380, yaxis_range=[0, 100]))
-    st.plotly_chart(fig_gems, use_container_width=True)
+    st.plotly_chart(fig_gems, width="stretch")
 
     # ── Deep dive on a selected gem ──────────────────────────
     st.markdown("---")
@@ -1086,7 +1228,9 @@ elif page == "⚠️ Sell Watch":
     if refresh_sell or sell_cache not in st.session_state:
         st.session_state[sell_cache] = None
 
-    if st.session_state[sell_cache] is None:
+    if _scan_gate(sell_cache, "⚠️ Analyse my holdings", forced=refresh_sell,
+                  note="Checks your holdings for warning signs. Pulls live data for "
+                       "each ticker you listed in the sidebar."):
         rows = []
         tickers_tuple_sell = tuple(sell_tickers)
         prog = st.progress(0, text="Downloading price data (batch)...")
@@ -1247,10 +1391,15 @@ elif page == "⚠️ Sell Watch":
         sell_df = pd.DataFrame(rows).sort_values("sell_score", ascending=False).reset_index(drop=True)
         st.session_state[sell_cache] = sell_df
 
-    sell_df = st.session_state[sell_cache]
+    sell_df = st.session_state.get(sell_cache)
 
-    if sell_df is None or sell_df.empty:
-        st.warning("No data returned. Check your tickers and try again.")
+    if sell_df is None:
+        st.stop()  # gate is showing its own prompt — nothing to render yet
+    if sell_df.empty:
+        st.warning(
+            "No data came back for those tickers. Check the symbols in the sidebar "
+            "(US tickers work best), then press **🔄 Analyse Holdings** to try again."
+        )
         st.stop()
 
     # ── Verdict cards ────────────────────────────────────────────
@@ -1303,7 +1452,7 @@ elif page == "⚠️ Sell Watch":
         yaxis_range=[0, 105],
         yaxis_title="Sell pressure (0 = no concern, 100 = strong sell signal)",
     ))
-    st.plotly_chart(fig_sell, use_container_width=True)
+    st.plotly_chart(fig_sell, width="stretch")
 
     # ── Full data table ──────────────────────────────────────────
     st.markdown("---")
@@ -1327,7 +1476,7 @@ elif page == "⚠️ Sell Watch":
     avail_sell = [c for c in table_cols if c in sell_df.columns]
     st.dataframe(
         sell_df[avail_sell].rename(columns=rename_sell),
-        hide_index=True, use_container_width=True,
+        hide_index=True, width="stretch",
     )
 
     # ── Deep dive ───────────────────────────────────────────────
@@ -1430,7 +1579,7 @@ elif page == "⚠️ Sell Watch":
                 height=340,
                 title=dict(text=f"{sel_sell} vs SMA 50 & SMA 200", font=dict(size=12, color=CHART_TEXT)),
             ))
-            st.plotly_chart(fig_price, use_container_width=True)
+            st.plotly_chart(fig_price, width="stretch")
     except Exception:
         pass
 
@@ -1549,7 +1698,7 @@ elif page == "🔍 Screener":
         st.info("Enter tickers in the sidebar or load a predefined universe, then hit **Run Screener**.")
         st.stop()
 
-    if st.button("▶  Run Screener", type="primary", use_container_width=True):
+    if st.button("▶  Run Screener", type="primary", width="stretch"):
         st.session_state["screen_run"] = True
         st.session_state["screen_results"] = None
 
@@ -1633,7 +1782,7 @@ elif page == "🔍 Screener":
             "no_dilution_3y": "No Dilute", "data_completeness": "Data%",
         }
         disp = df[avail].head(top_n).rename(columns=rename_map)
-        st.dataframe(disp, hide_index=True, use_container_width=True,
+        st.dataframe(disp, hide_index=True, width="stretch",
                      height=min(700, 35 * len(disp) + 40))
 
         csv_data = df[avail].to_csv(index=False)
@@ -1649,7 +1798,7 @@ elif page == "🔍 Screener":
                           "Reason": "; ".join(f"{k}: {v['reason']}"
                                               for k, v in e["failed_filters"].items())}
                          for e in failed_screen]
-            st.dataframe(pd.DataFrame(fail_rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(fail_rows), hide_index=True, width="stretch")
 
     with tab2:
         score_cols = {
@@ -1670,7 +1819,7 @@ elif page == "🔍 Screener":
                     marker_color=colors[i % len(colors)],
                 ))
             fig.update_layout(**chart_layout(barmode="group", height=400))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
     with tab3:
         sel = st.selectbox("Select stock", [r["ticker"] for r in results])
@@ -1895,7 +2044,10 @@ elif page == "🇬🇧 T212 ISA":
         df_hot = st.session_state[t212_cache_key]
 
         if df_hot is None or df_hot.empty:
-            st.error("No data returned. Try refreshing.")
+            st.error(
+                "No data came back for this list. This is usually a temporary "
+                "data-provider hiccup — refresh the page to try again."
+            )
             st.stop()
 
         top_hot = df_hot.head(t212_top_n)
@@ -1927,7 +2079,7 @@ elif page == "🇬🇧 T212 ISA":
             "vol_surge": "Vol Surge", "rsi": "RSI (14)",
             "vs_sma20": "vs SMA20%", "hot_score": "🔥 Score",
         })
-        st.dataframe(display_df, hide_index=True, use_container_width=True)
+        st.dataframe(display_df, hide_index=True, width="stretch")
 
         # Chart
         st.markdown("---")
@@ -1950,7 +2102,7 @@ elif page == "🇬🇧 T212 ISA":
                     height=400, xaxis_rangeslider_visible=False,
                     title=dict(text=f"{chart_t} — 3 months", font=dict(size=12, color=CHART_TEXT)),
                 ))
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
         except Exception:
             pass
 
@@ -2072,7 +2224,10 @@ elif page == "🇬🇧 T212 ISA":
         opp_df = st.session_state[t212_opp_key]
 
         if opp_df is None or opp_df.empty:
-            st.error("No data returned. Try refreshing.")
+            st.error(
+                "No data came back for this list. This is usually a temporary "
+                "data-provider hiccup — refresh the page to try again."
+            )
             st.stop()
 
         top_opp = opp_df.head(t212_top_n)
@@ -2109,7 +2264,7 @@ elif page == "🇬🇧 T212 ISA":
         }
         disp_opp = top_opp.rename(columns=col_rename_opp)
         disp_opp.insert(0, "Rank", range(1, len(disp_opp) + 1))
-        st.dataframe(disp_opp, hide_index=True, use_container_width=True,
+        st.dataframe(disp_opp, hide_index=True, width="stretch",
                      height=min(700, 36 * len(disp_opp) + 40))
 
         # Score breakdown chart
@@ -2127,7 +2282,7 @@ elif page == "🇬🇧 T212 ISA":
                 marker_color=clr,
             ))
         fig_opp.update_layout(**chart_layout(barmode="group", height=360, yaxis_range=[0, 100]))
-        st.plotly_chart(fig_opp, use_container_width=True)
+        st.plotly_chart(fig_opp, width="stretch")
 
         st.download_button(
             "⬇ Download T212 opportunities as CSV",
@@ -2178,7 +2333,7 @@ elif page == "🇬🇧 T212 ISA":
             f"Hit **Run Screen** to start."
         )
 
-        if st.button("▶  Run T212 Screen", type="primary", use_container_width=True, key="t212_run"):
+        if st.button("▶  Run T212 Screen", type="primary", width="stretch", key="t212_run"):
             st.session_state["t212_screen_run"] = True
             st.session_state["t212_screen_results"] = None
 
@@ -2249,7 +2404,7 @@ elif page == "🇬🇧 T212 ISA":
         }
         disp_res = df_res[avail].head(t212_top_n).rename(columns=rename_t212)
         disp_res.insert(0, "Rank", range(1, len(disp_res) + 1))
-        st.dataframe(disp_res, hide_index=True, use_container_width=True,
+        st.dataframe(disp_res, hide_index=True, width="stretch",
                      height=min(700, 35 * len(disp_res) + 40))
 
         st.download_button(
@@ -2273,7 +2428,7 @@ elif page == "🇬🇧 T212 ISA":
                     marker_color=PALETTE[i % len(PALETTE)],
                 ))
             fig_sc.update_layout(**chart_layout(barmode="group", height=380))
-            st.plotly_chart(fig_sc, use_container_width=True)
+            st.plotly_chart(fig_sc, width="stretch")
 
     # ── ISA disclaimer ───────────────────────────────────────
     st.markdown("---")
@@ -2350,7 +2505,9 @@ elif page == "📊 Hedge Fund":
         st.session_state[hf_cache_key] = None
 
     # ── Data fetch & scoring ──────────────────────────────────
-    if st.session_state[hf_cache_key] is None:
+    if _scan_gate(hf_cache_key, "📊 Run fund scan", forced=refresh_hf,
+                  note="Classifies your chosen universe into four trading strategies. "
+                       "This is the heaviest scan in the app — up to ~360 tickers."):
         scan_tickers  = get_universe(hf_universe)
         hf_tup        = tuple(scan_tickers)
 
@@ -2638,10 +2795,16 @@ elif page == "📊 Hedge Fund":
             hf_df = hf_df.sort_values("best_score", ascending=False).reset_index(drop=True)
             st.session_state[hf_cache_key] = hf_df
 
-    hf_df = st.session_state[hf_cache_key]
+    hf_df = st.session_state.get(hf_cache_key)
 
-    if hf_df is None or hf_df.empty:
-        st.error("No data returned. Try refreshing.")
+    if hf_df is None:
+        st.stop()  # gate is showing its own prompt — nothing to render yet
+    if hf_df.empty:
+        st.error(
+            "The scan finished but no stocks came back. This is usually a temporary "
+            "data-provider hiccup — press **🔄 Run Fund Scan** to try again, or pick a "
+            "smaller universe in the sidebar."
+        )
         st.stop()
 
     # ── FUND OVERVIEW CARDS ───────────────────────────────────
@@ -2758,7 +2921,7 @@ elif page == "📊 Hedge Fund":
         }
         st.dataframe(
             disp.rename(columns=rename),
-            hide_index=True, use_container_width=True,
+            hide_index=True, width="stretch",
             height=min(600, 36 * len(disp) + 40),
         )
 
@@ -2833,7 +2996,7 @@ elif page == "📊 Hedge Fund":
             height=320, showlegend=False,
             title=dict(text="Primary strategy breakdown (top 50 picks)", font=dict(size=11, color=CHART_TEXT)),
         ))
-        st.plotly_chart(fig_dist, use_container_width=True)
+        st.plotly_chart(fig_dist, width="stretch")
 
         # ── Deep Dive panel ──────────────────────────────────────
         st.markdown("---")
@@ -3042,7 +3205,7 @@ elif page == "📊 Hedge Fund":
                         font=dict(size=11, color=CHART_TEXT),
                     ),
                 ))
-                st.plotly_chart(fig_dive, use_container_width=True)
+                st.plotly_chart(fig_dive, width="stretch")
         except Exception:
             st.info("Chart unavailable — data may be loading. Try switching tickers.")
 
@@ -3070,7 +3233,7 @@ elif page == "📊 Hedge Fund":
         ]:
             fig_mom.add_trace(go.Bar(name=name, x=top_mom["ticker"], y=top_mom[col], marker_color=clr))
         fig_mom.update_layout(**chart_layout(barmode="group", height=320))
-        st.plotly_chart(fig_mom, use_container_width=True)
+        st.plotly_chart(fig_mom, width="stretch")
 
     # ════════════════════════════════
     with tab_bnc:
@@ -3103,7 +3266,7 @@ elif page == "📊 Hedge Fund":
                               annotation_font=dict(color="#b8960c", size=10))
             fig_rsi.update_layout(**chart_layout(height=300, yaxis_range=[0, 60], showlegend=False,
                                                   title=dict(text="RSI (gold = extreme oversold)", font=dict(size=11, color=CHART_TEXT))))
-            st.plotly_chart(fig_rsi, use_container_width=True)
+            st.plotly_chart(fig_rsi, width="stretch")
 
     # ════════════════════════════════
     with tab_cat:
@@ -3145,7 +3308,7 @@ elif page == "📊 Hedge Fund":
                 yaxis_title="Analyst Upside %",
                 title=dict(text="Bubble size = earnings growth rate", font=dict(size=11, color=CHART_TEXT)),
             ))
-            st.plotly_chart(fig_cat, use_container_width=True)
+            st.plotly_chart(fig_cat, width="stretch")
 
     # ════════════════════════════════
     with tab_brk:
@@ -3181,7 +3344,7 @@ elif page == "📊 Hedge Fund":
                                annotation_font=dict(color="#16a34a", size=10))
             fig_brk.update_layout(**chart_layout(height=300, yaxis_range=[60, 105], showlegend=False,
                                                   title=dict(text="Green = ideal breakout zone (85–97%)", font=dict(size=11, color=CHART_TEXT))))
-            st.plotly_chart(fig_brk, use_container_width=True)
+            st.plotly_chart(fig_brk, width="stretch")
 
     # ════════════════════════════════
     with tab_risk:
@@ -3223,7 +3386,7 @@ elif page == "📊 Hedge Fund":
             yaxis_title="Reward (target upside %)",
             title=dict(text="Risk/Reward map — aim for picks above the 2:1 line", font=dict(size=11, color=CHART_TEXT)),
         ))
-        st.plotly_chart(fig_rr, use_container_width=True)
+        st.plotly_chart(fig_rr, width="stretch")
 
         st.markdown("---")
         st.markdown("### Full position sizing table")
@@ -3246,7 +3409,7 @@ elif page == "📊 Hedge Fund":
         }
         st.dataframe(
             hf_df[avail_pos].head(hf_top_n * 2).rename(columns=rename_pos),
-            hide_index=True, use_container_width=True,
+            hide_index=True, width="stretch",
             height=min(700, 36 * hf_top_n * 2 + 40),
         )
 
@@ -3266,7 +3429,7 @@ elif page == "📊 Hedge Fund":
                                     annotation_text="High risk", annotation_font=dict(color="#dc2626", size=10))
             fig_risk_hist.update_layout(**chart_layout(height=280, showlegend=False,
                                                          xaxis_title="Risk score (0=low, 100=high)"))
-            st.plotly_chart(fig_risk_hist, use_container_width=True)
+            st.plotly_chart(fig_risk_hist, width="stretch")
 
         with c2:
             st.markdown("### Beta distribution")
@@ -3281,7 +3444,7 @@ elif page == "📊 Hedge Fund":
             fig_beta.add_vline(x=1.5, line_dash="dash", line_color=GOLD,
                                annotation_text="β=1.5", annotation_font=dict(color=GOLD, size=10))
             fig_beta.update_layout(**chart_layout(height=280, showlegend=False, xaxis_title="Beta"))
-            st.plotly_chart(fig_beta, use_container_width=True)
+            st.plotly_chart(fig_beta, width="stretch")
 
         st.markdown("---")
         st.download_button(
@@ -3419,7 +3582,7 @@ elif page == "📊 Hedge Fund":
                     "Tier":     st.column_config.TextColumn(disabled=True),
                 },
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 key="ret_custom_alloc",
             )
             # Write normalised pct back to sel_df
@@ -3545,7 +3708,7 @@ elif page == "📊 Hedge Fund":
             yaxis_title="Projected profit / loss ($)",
             title=dict(text=f"Per-stock P&L — {hold_weeks}-week hold", font=dict(size=11, color=CHART_TEXT)),
         ))
-        st.plotly_chart(fig_proj, use_container_width=True)
+        st.plotly_chart(fig_proj, width="stretch")
 
         # ── Detailed table ────────────────────────────────────────
         st.markdown("---")
@@ -3576,7 +3739,7 @@ elif page == "📊 Hedge Fund":
             "bull_profit":"Bull P&L","base_profit":"Base P&L","bear_profit":"Bear P&L",
         })
         proj_disp.insert(0, "#", range(1, len(proj_disp) + 1))
-        st.dataframe(proj_disp, hide_index=True, use_container_width=True,
+        st.dataframe(proj_disp, hide_index=True, width="stretch",
                      height=min(600, 36 * len(proj_disp) + 40))
 
         # ── Compounding projection ────────────────────────────────
@@ -3634,7 +3797,7 @@ elif page == "📊 Hedge Fund":
                 font=dict(size=11, color=CHART_TEXT),
             ),
         ))
-        st.plotly_chart(fig_compound, use_container_width=True)
+        st.plotly_chart(fig_compound, width="stretch")
 
         # End state summary cards
         e1, e2, e3 = st.columns(3)
