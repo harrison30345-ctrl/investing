@@ -1,0 +1,28 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dashboard",
+      "runtimeExecutable": "streamlit",
+      "runtimeArgs": ["run", "dashboard.py", "--server.headless", "true"],
+      "port": 8501,
+      "autoPort": true
+    },
+    {
+      "name": "arena",
+      "runtimeExecutable": "streamlit",
+      "runtimeArgs": ["run", "trading/hub.py", "--server.headless", "true"],
+      "port": 8502,
+      "autoPort": true
+    },
+    {
+      "name": "moonscope",
+      "runtimeExecutable": "/bin/zsh",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/harrisontallon/investing/moonscope && exec /Users/harrisontallon/.local/node/bin/node node_modules/vite/bin/vite.js --port 5173"
+      ],
+      "port": 5173
+    }
+  ]
+}
