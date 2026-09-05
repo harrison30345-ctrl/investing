@@ -1,6 +1,24 @@
 """
 Interactive Streamlit dashboard for the stock screener.
-Launch with:  python3 -m streamlit run screener/dashboard.py
+Launch with:  python3 -m streamlit run dashboard.py   (root launcher)
+
+LANGUAGE POLICY
+---------------
+This is a UK consumer-facing research and education product. It describes what
+company data shows; it does not instruct anyone to trade.
+
+User-facing copy must NOT contain: buy, sell, entry, exit, stop loss, target
+price, position size, allocation, risk/reward ratio, or "score_band" as a
+recommendation strength. `tests/test_language.py` enforces this and will fail
+the build if such wording reappears.
+
+Use instead: research score, strengths, risks, factors, what changed, what to
+monitor, typical downside, analyst upside (always attributed to third-party
+analysts, never presented as this platform's forecast).
+
+This policy reduces the risk of the product reading as a personal
+recommendation. It is not a legal opinion, and the product has not been
+reviewed against the FCA perimeter -- that review is still outstanding.
 """
 from __future__ import annotations
 
@@ -409,7 +427,7 @@ def _scan_gate(state_key: str, label: str, forced: bool = False, note: str = "")
     return st.button(label, type="primary", key=f"_gate_{state_key}")
 
 
-# ── Hedge Fund narrative summary generator ────────────────────
+# ── Research narrative generator ────────────────────
 def generate_hf_summary(row: dict) -> dict:
     """
     Produce a data-driven narrative for a hedge fund pick.
@@ -418,8 +436,8 @@ def generate_hf_summary(row: dict) -> dict:
     """
     ticker   = row.get("ticker", "")
     strategy = row.get("primary_strategy", "")
-    conv     = row.get("conviction", "med")
-    conv_w   = {"high": "high-conviction", "med": "moderate-conviction", "low": "speculative"}.get(conv, "moderate")
+    conv     = row.get("score_band", "med")
+    conv_w   = {"high": "high-scoring", "med": "mid-scoring", "low": "low-scoring"}.get(conv, "mid-scoring")
 
     def _v(key, default=0):
         v = row.get(key)
@@ -443,7 +461,6 @@ def generate_hf_summary(row: dict) -> dict:
     chg_1m   = _v("chg_1m")
     chg_3m   = _v("chg_3m")
     stop_p   = _v("stop_pct", 5)
-    rr       = _v("rr_ratio", 0)
     score    = _v("best_score")
     atr      = _v("atr_pct", 2)
 
@@ -477,7 +494,7 @@ def generate_hf_summary(row: dict) -> dict:
 
     # ── RSI / momentum ──────────────────────────────────────
     if rsi < 32:
-        bull.append(f"RSI at {rsi:.0f} — deeply oversold. Historically this extreme level resolves with a mean-reversion bounce within 5–10 trading sessions, especially with intact fundamentals.")
+        bull.append(f"RSI at {rsi:.0f} places the shares in territory usually described as heavily oversold, meaning the recent fall has been steep relative to the stock's own history. This describes what has already happened and does not indicate what the price will do next.")
     elif 50 <= rsi <= 68:
         bull.append(f"RSI at {rsi:.0f} — in the momentum continuation sweet spot (50–70). The trend has room to run before reaching overbought territory.")
     elif rsi > 76:
@@ -497,7 +514,7 @@ def generate_hf_summary(row: dict) -> dict:
     elif vol > 1.3:
         bull.append(f"Volume {vol:.1f}× above average — healthy buying pressure supporting the price move.")
     elif vol < 0.65:
-        bear.append(f"Volume has dried up to {vol:.1f}× normal — low conviction behind recent price action. A move on thin volume is easier to reverse.")
+        bear.append(f"Volume has dried up to {vol:.1f}× normal — weak participation behind recent price action. A move on thin volume is easier to reverse.")
 
     # ── 52-week range ─────────────────────────────────────────
     if 87 <= pct_rng <= 97:
@@ -534,7 +551,7 @@ def generate_hf_summary(row: dict) -> dict:
     if beta > 2.2:
         bear.append(f"Beta of {beta:.1f} means {ticker} typically moves {beta:.1f}× the broader market — amplifies gains but also drawdowns. Size positions accordingly.")
     if atr > 6:
-        bear.append(f"Daily ATR of {atr:.1f}% of price — high intraday volatility. Wider stops are needed but position size should be reduced to compensate.")
+        bear.append(f"Daily ATR of {atr:.1f}% of price — the shares swing widely within a single day, so short-term price moves are less informative about the business.")
 
     # ── Overview paragraph ────────────────────────────────────
     strat_label = strategy.split(" ", 1)[1] if " " in strategy else strategy
@@ -544,53 +561,69 @@ def generate_hf_summary(row: dict) -> dict:
     if chg_1m > 8:
         overview += f"The stock has gained {chg_1m:.1f}% over the past month and {chg_3m:.1f}% over three months, confirming strong near-term momentum. "
     elif chg_1m < -8:
-        overview += f"After falling {abs(chg_1m):.1f}% over the past month, the stock may be approaching a tactical entry point. "
+        overview += f"The stock has fallen {abs(chg_1m):.1f}% over the past month, a large move relative to its own recent history. "
     elif abs(chg_1m) <= 8:
         overview += f"Price action over the past month has been measured ({chg_1m:+.1f}%), with the setup building quietly. "
     overview += (
-        f"The risk/reward stands at {rr:.1f}:1 with a suggested stop {stop_p:.1f}% below current price, "
-        f"implying disciplined risk management is the priority."
+        f"Its recent trading range implies typical downside of about {stop_p:.1f}% from the current price, "
+        f"which is a measure of how volatile the shares have been."
     )
 
     # ── Strategy-specific note ────────────────────────────────
     strat_notes = {
         "🚀 Momentum": (
-            f"**Momentum setup.** The trend is confirmed and accelerating — the job is to stay on board, not predict the top. "
-            f"Hold as long as price remains above the 20-day SMA (stop at ${_v('stop_loss'):.2f}). "
-            f"If RSI drops below 45 or volume collapses, treat it as a warning. "
-            f"Week-over-week change of {chg_1w:+.1f}% with {vol:.1f}× volume confirms institutional participation."
+            f"**What the price is doing.** The share price is in a sustained uptrend, sitting above both its 20-day "
+            f"and 50-day averages. It changed {chg_1w:+.1f}% over the past week on {vol:.1f}× its normal trading volume, "
+            f"which means unusually heavy activity. "
+            f"**What to monitor:** momentum characteristics historically weaken when a stock falls back below its "
+            f"20-day average, when RSI drops under 45, or when volume dries up. Strong momentum describes past price "
+            f"movement — it says nothing about the quality of the underlying business."
         ),
-        "🔄 Bounce": (
-            f"**Mean-reversion play.** The sell-off appears excessive relative to underlying fundamentals. "
-            f"With RSI at {rsi:.0f}, the stock is entering historically oversold territory where buyers tend to step in. "
-            f"Target: retest of the 20-day SMA. Risk: if the stock breaks to new lows, the thesis is invalidated — cut quickly. "
-            f"Only works if the fundamental story (revenue, margins) remains intact."
+        "🔄 Oversold": (
+            f"**What the price is doing.** The shares have sold off sharply, and RSI of {rsi:.0f} places them in "
+            f"territory historically described as oversold — meaning the fall has been rapid relative to the stock's "
+            f"own history. "
+            f"**What to monitor:** whether the underlying financials are holding up. A falling price with stable "
+            f"revenue and margins is a different situation from a falling price that reflects a deteriorating "
+            f"business, and this signal alone cannot tell the two apart."
         ),
-        "⚡ Catalyst": (
-            f"**Catalyst-driven trade.** Something is changing — earnings acceleration, analyst upgrades, or sector rotation — "
-            f"and the market hasn't fully priced it in yet. "
-            f"Analyst consensus implies {upside:.0f}% upside. "
-            f"Key event to watch: the next earnings release or any guidance update. Position before the catalyst; tighten stops after."
+        "⚡ Growth": (
+            f"**What the fundamentals show.** Reported growth or analyst estimates have shifted recently. "
+            f"Analyst consensus price targets sit {upside:.0f}% above the current price — this reflects other "
+            f"analysts' published estimates, not a forecast from this platform, and such targets are frequently wrong. "
+            f"**What to monitor:** the next earnings release and any guidance update, which are the events most "
+            f"likely to confirm or contradict these expectations."
         ),
-        "🎯 Breakout": (
-            f"**Pre-breakout coil.** The stock is compressing into a tight range at {pct_rng:.0f}% of its 52-week high — "
-            f"the hallmark of supply/demand equilibrium before a directional move. "
-            f"Entry trigger: a daily close above the prior high on volume ≥1.5× average. "
-            f"False breakouts are common — wait for confirmation before committing full size."
+        "🎯 Consolidating": (
+            f"**What the price is doing.** The shares are trading in a narrow range at {pct_rng:.0f}% of their "
+            f"52-week high, with lower-than-usual volatility. Narrow ranges historically resolve into larger moves, "
+            f"but they resolve in both directions. "
+            f"**What to monitor:** whether the range breaks on above-average volume. Ranges that break on thin "
+            f"volume frequently reverse."
         ),
     }
-    strategy_note = strat_notes.get(strategy, "Monitor price action relative to key moving averages.")
+    strategy_note = strat_notes.get(strategy, "Monitor price movement relative to key moving averages.")
 
-    # ── Risk note ─────────────────────────────────────────────
+    # ── Risk characteristics ──────────────────────────────────
+    # Describes how the shares have behaved. Deliberately contains no entry,
+    # exit, target or position-size guidance -- see the language policy note at
+    # the top of this module.
     risk_note = (
-        f"Stop loss at ${_v('stop_loss'):.2f} ({stop_p:.1f}% below current price). "
-        f"Target ${_v('target'):.2f} ({_v('reward_pct'):.1f}% upside). "
-        f"Suggested position: ${_v('pos_value'):,.0f} ({_v('pos_pct'):.1f}% of portfolio). "
+        f"Typical downside range: about {stop_p:.1f}% below the current price, based on recent volatility. "
+        f"Analyst consensus targets imply {_v('reward_pct'):.1f}% upside, which is other analysts' published "
+        f"estimates rather than a forecast from this platform. "
     )
     if beta > 1.5:
-        risk_note += f"High beta ({beta:.1f}) — consider half-sizing initially and adding on confirmation."
+        risk_note += (
+            f"Beta of {beta:.1f} means the shares have historically moved more than the wider market — "
+            f"roughly {beta:.1f}% for every 1% market move, in both directions."
+        )
     elif beta < 0.8:
-        risk_note += f"Low beta ({beta:.1f}) — less volatile but moves may be slower to develop."
+        risk_note += (
+            f"Beta of {beta:.1f} means the shares have historically moved less than the wider market."
+        )
+    else:
+        risk_note += f"Beta of {beta:.1f} means the shares have broadly tracked the wider market."
 
     return {
         "overview":       overview,
@@ -615,18 +648,18 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-page = st.sidebar.radio("Navigate", ["📊 Hedge Fund", "🔥 Hot Stocks", "💎 Hidden Gems", "⚠️ Sell Watch", "🔍 Screener", "🇬🇧 T212 ISA"], index=0)
+page = st.sidebar.radio("Navigate", ["📊 Research", "🔥 Momentum", "💎 Hidden Gems", "⚠️ Holdings Review", "🔍 Screener", "🇬🇧 UK Investor"], index=0)
 
 # ════════════════════════════════════════════════════════════
 # PAGE 1 — HOT STOCKS
 # ════════════════════════════════════════════════════════════
-if page == "🔥 Hot Stocks":
+if page == "🔥 Momentum":
 
-    st.title("Hot Stocks")
+    st.title("Momentum")
     st.caption("Ranked by a composite momentum score: price change, volume surge, RSI momentum, analyst sentiment, and short-term trend strength.")
 
     # Which universe to scan
-    st.sidebar.markdown("### Hot Stocks settings")
+    st.sidebar.markdown("### Momentum settings")
     hot_universe = st.sidebar.selectbox(
         "Scan universe",
         ["tech", "ai", "all_curated", "nasdaq100"],
@@ -639,14 +672,14 @@ if page == "🔥 Hot Stocks":
         index=0,
     )
     hot_top_n = st.sidebar.slider("Show top N", 5, 20, 10)
-    refresh_hot = st.sidebar.button("🔄 Refresh Hot Stocks", type="primary")
+    refresh_hot = st.sidebar.button("🔄 Refresh momentum scan", type="primary")
 
     # Cache key: refresh when button pressed or universe changes
     cache_key = f"hot_{hot_universe}"
     if refresh_hot or cache_key not in st.session_state:
         st.session_state[cache_key] = None
 
-    if _scan_gate(cache_key, "🔥 Run Hot Stocks scan", forced=refresh_hot,
+    if _scan_gate(cache_key, "🔥 Run momentum scan", forced=refresh_hot,
                   note="Scans your chosen universe for momentum. Pulls live data for "
                        "up to a few hundred tickers, so it takes a moment."):
         tickers_to_scan = get_universe(hot_universe)
@@ -732,7 +765,7 @@ if page == "🔥 Hot Stocks":
     if hot_df.empty:
         st.error(
             "The scan finished but no stocks came back. This is usually a temporary "
-            "data-provider hiccup — press **🔄 Refresh Hot Stocks** to try again, or "
+            "data-provider hiccup — press **🔄 Refresh momentum scan** to try again, or "
             "pick a different universe in the sidebar."
         )
         st.stop()
@@ -863,7 +896,7 @@ elif page == "💎 Hidden Gems":
         index=0,
     )
     gem_top_n   = st.sidebar.slider("Show top N gems", 5, 25, 10)
-    refresh_gem = st.sidebar.button("🔄 Find Gems", type="primary")
+    refresh_gem = st.sidebar.button("🔄 Find Hidden Gems", type="primary")
 
     st.sidebar.markdown("### Score weights")
     w_val    = st.sidebar.slider("Valuation weight",     0, 50, 25) / 100
@@ -1044,7 +1077,7 @@ elif page == "💎 Hidden Gems":
     if gem_df.empty:
         st.error(
             "The scan finished but nothing passed the filters. Try a different universe "
-            "in the sidebar, or press **🔄 Find Gems** to run it again — an empty result "
+            "in the sidebar, or press **🔄 Find Hidden Gems** to run it again — an empty result "
             "is often just a temporary data-provider hiccup."
         )
         st.stop()
@@ -1196,9 +1229,9 @@ elif page == "💎 Hidden Gems":
 # ════════════════════════════════════════════════════════════
 # PAGE 3 — SELL WATCH
 # ════════════════════════════════════════════════════════════
-elif page == "⚠️ Sell Watch":
+elif page == "⚠️ Holdings Review":
 
-    st.title("Sell Watch")
+    st.title("Holdings Review")
     st.caption(
         "Enter stocks you hold and this tool will flag deteriorating fundamentals, "
         "stretched valuations, and momentum reversals — giving you a data-driven reason "
@@ -1216,13 +1249,13 @@ elif page == "⚠️ Sell Watch":
         sell_input = sell_input.replace(sep, ",")
     sell_tickers = [t.strip().upper() for t in sell_input.split(",") if t.strip()]
 
-    st.sidebar.markdown("### Signal weights")
+    st.sidebar.markdown("### Factor weights")
     sw_val   = st.sidebar.slider("Overvaluation",          0, 50, 25)
     sw_fund  = st.sidebar.slider("Fundamental decline",    0, 50, 35)
     sw_bal   = st.sidebar.slider("Balance sheet stress",   0, 50, 20)
     sw_mkt   = st.sidebar.slider("Market / momentum",      0, 50, 20)
 
-    refresh_sell = st.sidebar.button("🔄 Analyse Holdings", type="primary")
+    refresh_sell = st.sidebar.button("🔄 Review my holdings", type="primary")
 
     sell_cache = f"sell_{'_'.join(sell_tickers)}"
     if refresh_sell or sell_cache not in st.session_state:
@@ -1398,7 +1431,7 @@ elif page == "⚠️ Sell Watch":
     if sell_df.empty:
         st.warning(
             "No data came back for those tickers. Check the symbols in the sidebar "
-            "(US tickers work best), then press **🔄 Analyse Holdings** to try again."
+            "(US tickers work best), then press **🔄 Review my holdings** to try again."
         )
         st.stop()
 
@@ -1586,9 +1619,9 @@ elif page == "⚠️ Sell Watch":
     # ── Disclaimer ───────────────────────────────────────────────
     st.markdown("---")
     st.caption(
-        "⚠️ Sell Watch is a data analysis tool, not financial advice. "
+        "⚠️ Holdings Review is a research tool, not financial advice. "
         "A high sell score means the data warrants a closer look — not an automatic exit. "
-        "Always consider your own tax situation, time horizon, and position sizing before acting."
+        "Always consider your own tax situation and time horizon, and seek independent advice if you need it."
     )
 
     st.download_button(
@@ -1881,9 +1914,9 @@ elif page == "🔍 Screener":
 # ════════════════════════════════════════════════════════════
 # PAGE 5 — T212 ISA
 # ════════════════════════════════════════════════════════════
-elif page == "🇬🇧 T212 ISA":
+elif page == "🇬🇧 UK Investor":
 
-    st.title("Trading 212 ISA")
+    st.title("UK Investor")
 
     # ISA benefit banner
     st.markdown("""
@@ -1901,7 +1934,7 @@ elif page == "🇬🇧 T212 ISA":
     """, unsafe_allow_html=True)
 
     # ── Sidebar ──────────────────────────────────────────────
-    st.sidebar.markdown("### T212 ISA settings")
+    st.sidebar.markdown("### UK Investor settings")
 
     t212_sector = st.sidebar.selectbox(
         "Sector filter",
@@ -2442,26 +2475,26 @@ elif page == "🇬🇧 T212 ISA":
 # ════════════════════════════════════════════════════════════
 # PAGE 6 — HEDGE FUND ENGINE
 # ════════════════════════════════════════════════════════════
-elif page == "📊 Hedge Fund":
+elif page == "📊 Research":
 
     st.markdown("""
     <div style="padding:1.4rem 1.8rem 1.2rem; background:#ffffff; border:1px solid #dde3ef;
                 border-left:5px solid #b8960c; border-radius:8px; margin-bottom:1.4rem;
                 box-shadow:0 2px 10px rgba(0,0,0,0.06);">
         <div style="font-size:1.9rem; font-weight:800; color:#0d1117; letter-spacing:-0.02em; line-height:1.1;">
-            📊 Hedge Fund Engine
+            📊 Stock Research
         </div>
         <div style="font-size:0.88rem; color:#475569; margin-top:0.5rem; line-height:1.6; max-width:780px;">
-            Scans your chosen universe and classifies every stock into one of four short-term strategies:
-            <b>Momentum Rockets</b>, <b>Bounce Candidates</b>, <b>Growth Catalysts</b>, and <b>Breakout Watch</b>.
-            Each pick includes a full written analysis, conviction score, position sizing, stop loss guidance,
-            and an investment return projection based on historical average outcomes.
+            Scores every company in your chosen universe and explains, in plain English, what its numbers
+            show. Each company gets a research score, a written summary of its strengths and risks, its
+            risk characteristics, and the profile that best describes it —
+            <b>Momentum</b>, <b>Oversold</b>, <b>Growth</b>, or <b>Consolidating</b>.
         </div>
     </div>
     """, unsafe_allow_html=True)
 
     # ── Sidebar ──────────────────────────────────────────────
-    st.sidebar.markdown("### Fund settings")
+    st.sidebar.markdown("### Research settings")
 
     hf_universe = st.sidebar.selectbox(
         "Scan universe",
@@ -2491,7 +2524,7 @@ elif page == "📊 Hedge Fund":
         min_value=500, max_value=500_000, value=10_000, step=500,
     )
 
-    refresh_hf = st.sidebar.button("🔄 Run Fund Scan", type="primary")
+    refresh_hf = st.sidebar.button("🔄 Run research scan", type="primary")
 
     # Risk profile → position sizing caps
     risk_caps = {
@@ -2505,8 +2538,8 @@ elif page == "📊 Hedge Fund":
         st.session_state[hf_cache_key] = None
 
     # ── Data fetch & scoring ──────────────────────────────────
-    if _scan_gate(hf_cache_key, "📊 Run fund scan", forced=refresh_hf,
-                  note="Classifies your chosen universe into four trading strategies. "
+    if _scan_gate(hf_cache_key, "📊 Run research scan", forced=refresh_hf,
+                  note="Scores and explains every company in your chosen universe. "
                        "This is the heaviest scan in the app — up to ~360 tickers."):
         scan_tickers  = get_universe(hf_universe)
         hf_tup        = tuple(scan_tickers)
@@ -2690,15 +2723,15 @@ elif page == "📊 Hedge Fund":
                         above_mas   * 0.20
                     )
 
-                    # ── OVERALL CONVICTION ─────────────────────
+                    # ── OVERALL RESEARCH SCORE ─────────────────
                     best_score = max(momentum_score, bounce_score, catalyst_score, breakout_score)
 
                     # Primary strategy classification
                     scores_map = {
                         "🚀 Momentum":  momentum_score,
-                        "🔄 Bounce":    bounce_score,
-                        "⚡ Catalyst":  catalyst_score,
-                        "🎯 Breakout":  breakout_score,
+                        "🔄 Oversold":    bounce_score,
+                        "⚡ Growth":  catalyst_score,
+                        "🎯 Consolidating":  breakout_score,
                     }
                     primary_strategy = max(scores_map, key=scores_map.get)
 
@@ -2714,12 +2747,12 @@ elif page == "📊 Hedge Fund":
                     # risk_score 0=low risk, 100=very high risk
 
                     # ── POSITION SIZING ────────────────────────
-                    conviction_tier = (
+                    score_band_tier = (
                         "high" if best_score >= 72 else
                         "med"  if best_score >= 58 else
                         "low"
                     )
-                    pos_pct   = risk_caps[conviction_tier]
+                    pos_pct   = risk_caps[score_band_tier]
                     # Reduce if risk is elevated
                     if risk_score > 65:
                         pos_pct *= 0.6
@@ -2752,7 +2785,7 @@ elif page == "📊 Hedge Fund":
                         "bounce_score":       round(bounce_score,    1),
                         "catalyst_score":     round(catalyst_score,  1),
                         "breakout_score":     round(breakout_score,  1),
-                        "conviction":         conviction_tier,
+                        "score_band":         score_band_tier,
                         "risk_score":         round(risk_score, 1),
                         # Price data
                         "price":              round(price, 2),
@@ -2802,29 +2835,29 @@ elif page == "📊 Hedge Fund":
     if hf_df.empty:
         st.error(
             "The scan finished but no stocks came back. This is usually a temporary "
-            "data-provider hiccup — press **🔄 Run Fund Scan** to try again, or pick a "
+            "data-provider hiccup — press **🔄 Run research scan** to try again, or pick a "
             "smaller universe in the sidebar."
         )
         st.stop()
 
     # ── FUND OVERVIEW CARDS ───────────────────────────────────
     total_picks   = len(hf_df[hf_df["best_score"] >= 55])
-    high_conv     = len(hf_df[hf_df["conviction"] == "high"])
-    avg_rr        = hf_df[hf_df["rr_ratio"] > 0]["rr_ratio"].mean()
-    avg_conviction= hf_df["best_score"].mean()
+    high_scoring     = len(hf_df[hf_df["score_band"] == "high"])
+    avg_volatility = hf_df[hf_df["atr_pct"] > 0]["atr_pct"].mean()
+    avg_research_score= hf_df["best_score"].mean()
 
     c1, c2, c3, c4, c5 = st.columns(5)
     metric_card("Stocks scanned",     str(len(hf_df)),             c1)
-    metric_card("High conviction",    str(high_conv),              c2)
-    metric_card("Avg conviction",     f"{avg_conviction:.1f}",     c3)
-    metric_card("Avg risk/reward",    f"{avg_rr:.1f}x" if not pd.isna(avg_rr) else "—", c4)
+    metric_card("High scoring",       str(high_scoring),              c2)
+    metric_card("Avg research score", f"{avg_research_score:.1f}",     c3)
+    metric_card("Avg volatility",     f"{avg_volatility:.1f}%" if not pd.isna(avg_volatility) else "—", c4)
     metric_card("Risk profile",       risk_profile,                c5)
 
     st.markdown("---")
 
     # ── STRATEGY TABS ─────────────────────────────────────────
     tab_all, tab_mom, tab_bnc, tab_cat, tab_brk, tab_risk, tab_returns = st.tabs([
-        "🎯 All Picks", "🚀 Momentum", "🔄 Bounce", "⚡ Catalyst", "🎯 Breakout", "⚠️ Risk Board", "💰 Return Projections",
+        "🎯 All companies", "🚀 Momentum", "🔄 Oversold", "⚡ Growth", "🎯 Consolidating", "⚠️ Risk", "💰 Scenarios",
     ])
 
     # ── Helper: render a strategy card grid ───────────────────
@@ -2834,10 +2867,8 @@ elif page == "📊 Hedge Fund":
         for idx, (_, row) in enumerate(top.iterrows()):
             col = cols[idx % 3]
             score = row[score_col]
-            conv  = row["conviction"]
-            rr    = row["rr_ratio"]
+            conv  = row["score_band"]
             stop  = row["stop_pct"]
-            pos   = row["pos_value"]
             win_p = row["best_score"] / 100
             exp_r = win_p * (row["reward_pct"] or 0) - (1 - win_p) * (row["stop_pct"] or 0)
 
@@ -2872,8 +2903,8 @@ elif page == "📊 Hedge Fund":
                 f'  <div><span style="color:#94a3b8;font-size:0.68rem;">PRICE</span><br><b>${row["price"]:.2f}</b></div>'
                 f'  <div><span style="color:#94a3b8;font-size:0.68rem;">WEEK</span><br><b style="color:{"#16a34a" if row["chg_1w"]>=0 else "#dc2626"}">{row["chg_1w"]:+.1f}%</b></div>'
                 f'  <div><span style="color:#94a3b8;font-size:0.68rem;">RSI</span><br><b>{row["rsi"]:.0f}</b></div>'
-                f'  <div><span style="color:#94a3b8;font-size:0.68rem;">STOP</span><br><b style="color:#dc2626">−{stop:.1f}%</b></div>'
-                f'  <div><span style="color:#94a3b8;font-size:0.68rem;">R/R</span><br><b style="color:#16a34a">{rr:.1f}×</b></div>'
+                f'  <div><span style="color:#94a3b8;font-size:0.68rem;">TYP. DOWNSIDE</span><br><b style="color:#64748b">−{stop:.1f}%</b></div>'
+                f'  <div><span style="color:#94a3b8;font-size:0.68rem;">VOLATILITY</span><br><b style="color:#64748b">{row["atr_pct"]:.1f}%</b></div>'
                 f'  <div><span style="color:#94a3b8;font-size:0.68rem;">EXP. RET</span><br><b style="color:{"#16a34a" if exp_r>=0 else "#dc2626"}">{exp_r:+.1f}%</b></div>'
                 f'</div>'
 
@@ -2889,7 +2920,7 @@ elif page == "📊 Hedge Fund":
 
                 + f'<div style="padding:0.38rem 0.6rem; background:#f8fafc; border-radius:4px; '
                 f'font-size:0.74rem; color:#475569;">'
-                f'  💼 <b>${pos:,.0f}</b> &nbsp;({row["pos_pct"]:.1f}% of portfolio)'
+                f'  📊 Beta <b>{row["beta"]:.2f}</b> &nbsp;·&nbsp; Analyst upside <b>{row["reward_pct"]:+.0f}%</b>'
                 f'</div>'
                 f'</div>',
                 unsafe_allow_html=True,
@@ -2899,23 +2930,21 @@ elif page == "📊 Hedge Fund":
     def render_strategy_table(df_strat, score_col, label):
         top = df_strat.head(hf_top_n * 2)
         disp = top[[
-            "ticker", "name", score_col, "conviction",
+            "ticker", "name", score_col, "score_band",
             "price", "chg_1w", "chg_1m", "rsi", "vol_surge",
             "vs_sma20", "beta", "atr_pct", "pct_52w_range",
-            "stop_loss", "stop_pct", "target", "reward_pct", "rr_ratio",
-            "pos_value", "pos_pct",
+            "stop_pct", "reward_pct",
             "rev_growth", "earn_growth", "net_margin", "upside",
         ]].copy()
         disp.insert(0, "Rank", range(1, len(disp) + 1))
         rename = {
             "ticker": "Ticker", "name": "Company", score_col: f"📊 {label} Score",
-            "conviction": "Conviction", "price": "Price",
+            "score_band": "Score band", "price": "Price",
             "chg_1w": "Week %", "chg_1m": "Month %", "rsi": "RSI",
             "vol_surge": "Vol Surge", "vs_sma20": "vs SMA20%",
             "beta": "Beta", "atr_pct": "ATR%", "pct_52w_range": "52W Range%",
-            "stop_loss": "Stop $", "stop_pct": "Stop%",
-            "target": "Target $", "reward_pct": "Upside%", "rr_ratio": "R/R",
-            "pos_value": "Position $", "pos_pct": "Alloc%",
+            "stop_pct": "Typical downside%",
+            "reward_pct": "Analyst upside%",
             "rev_growth": "Rev Gr%", "earn_growth": "EPS Gr%",
             "net_margin": "Net Mgn%", "upside": "Analyst Upside%",
         }
@@ -2929,15 +2958,15 @@ elif page == "📊 Hedge Fund":
     with tab_all:
         st.markdown(f"### Top {hf_top_n * 2} picks across all strategies")
         st.markdown(
-            "Ranked by overall conviction score. Each stock is tagged with its primary "
-            "strategy and a secondary strategy when relevant."
+            "Ranked by overall research score. Each company is tagged with the profile that best "
+            "describes its current characteristics, and a secondary profile where relevant."
         )
         top_all = hf_df.head(hf_top_n * 2)
 
         cols = st.columns(3)
         for idx, (_, row) in enumerate(top_all.head(6).iterrows()):
             col = cols[idx % 3]
-            conv  = row["conviction"]
+            conv  = row["score_band"]
             border_clr = "#16a34a" if conv=="high" else "#b8960c" if conv=="med" else "#64748b"
             badge = "🟢 HIGH" if conv=="high" else "🟡 MED" if conv=="med" else "⚪ LOW"
             sec   = f' <span style="font-size:0.7rem;color:#94a3b8;">+{row["secondary_strategy"]}</span>' if row.get("secondary_strategy") else ""
@@ -2964,21 +2993,21 @@ elif page == "📊 Hedge Fund":
                 f'<div style="font-size:0.75rem; color:#475569; display:grid; grid-template-columns:1fr 1fr; gap:0.2rem;">'
                 f'  <div>${row["price"]:.2f}</div>'
                 f'  <div style="color:{"#16a34a" if row["chg_1w"]>=0 else "#dc2626"}">{row["chg_1w"]:+.1f}% wk</div>'
-                f'  <div>Stop: <b style="color:#dc2626">-{row["stop_pct"]:.1f}%</b></div>'
-                f'  <div>R/R: <b style="color:#16a34a">{row["rr_ratio"]:.1f}x</b></div>'
+                f'  <div>Typical swing: <b style="color:#64748b">{row["atr_pct"]:.1f}%</b></div>'
+                f'  <div>Beta: <b style="color:#64748b">{row["beta"]:.2f}</b></div>'
                 f'</div>'
                 + (f'<div style="margin-top:0.5rem; padding:0.4rem 0.5rem; background:#f8fafc; '
                    f'border-radius:4px; font-size:0.72rem; color:#475569; line-height:1.4; '
                    f'border-left:2px solid #16a34a;">'
                    f'▲ {bull1_short}'
                    f'</div>' if bull1 else "")
-                + f'<div style="margin-top:0.4rem;font-size:0.72rem;color:#94a3b8;">💼 ${row["pos_value"]:,.0f} ({row["pos_pct"]:.1f}%)</div>'
+                + f'<div style="margin-top:0.4rem;font-size:0.72rem;color:#94a3b8;">Volatility {row["atr_pct"]:.1f}% · Beta {row["beta"]:.2f}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
 
         st.markdown("---")
-        render_strategy_table(hf_df, "best_score", "Conviction")
+        render_strategy_table(hf_df, "best_score", "Research")
 
         # Strategy distribution chart
         st.markdown("---")
@@ -3014,9 +3043,9 @@ elif page == "📊 Hedge Fund":
         # ── Header strip ─────────────────────────────────────────
         strat      = dive_row.get("primary_strategy", "")
         sec_strat  = dive_row.get("secondary_strategy", "")
-        conv       = dive_row.get("conviction", "med")
+        conv       = dive_row.get("score_band", "med")
         conv_clr   = "#16a34a" if conv=="high" else "#b8960c" if conv=="med" else "#64748b"
-        conv_lbl   = {"high":"🟢 HIGH CONVICTION","med":"🟡 MODERATE","low":"⚪ SPECULATIVE"}.get(conv,"")
+        conv_lbl   = {"high":"🟢 HIGH SCORE","med":"🟡 MID SCORE","low":"⚪ LOW SCORE"}.get(conv,"")
 
         st.markdown(
             f'<div style="background:#ffffff; border:1px solid #dde3ef; border-radius:8px; '
@@ -3125,8 +3154,8 @@ elif page == "📊 Hedge Fund":
         _kpi(m2, "Week chg",    dive_row.get("chg_1w"),     fmt="{:+.1f}", suffix="%")
         _kpi(m3, "RSI (14)",    dive_row.get("rsi"),        fmt="{:.0f}")
         _kpi(m4, "Beta",        dive_row.get("beta"),       fmt="{:.2f}")
-        _kpi(m5, "Stop loss",   dive_row.get("stop_loss"),  fmt="${:.2f}", suffix="")
-        _kpi(m6, "R/R ratio",   dive_row.get("rr_ratio"),   fmt="{:.1f}", suffix="×")
+        _kpi(m5, "Typical low", dive_row.get("stop_loss"),  fmt="${:.2f}", suffix="")
+        _kpi(m6, "Beta",        dive_row.get("beta"),       fmt="{:.2f}", suffix="")
 
         n1, n2, n3, n4, n5, n6 = st.columns(6)
         _kpi(n1, "Rev growth",  dive_row.get("rev_growth"),   fmt="{:+.1f}", suffix="%")
@@ -3164,12 +3193,12 @@ elif page == "📊 Hedge Fund":
                     x=chart_hist.index, y=sma50_c, name="SMA 50",
                     line=dict(color="#2563eb", width=1.5, dash="dash"),
                 ))
-                # Stop loss line
+                # Typical downside band
                 stop_val = dive_row.get("stop_loss")
                 if stop_val:
                     fig_dive.add_hline(
                         y=stop_val, line_dash="dash", line_color="#dc2626", line_width=1.2,
-                        annotation_text=f"Stop ${stop_val:.2f}",
+                        annotation_text=f"Typical downside ${stop_val:.2f}",
                         annotation_position="right",
                         annotation_font=dict(color="#dc2626", size=10),
                     )
@@ -3201,7 +3230,7 @@ elif page == "📊 Hedge Fund":
                     yaxis=dict(gridcolor=CHART_GRID, linecolor=CHART_GRID, zeroline=False, domain=[0.25, 1]),
                     yaxis2=dict(domain=[0, 0.20], showgrid=False, showticklabels=False),
                     title=dict(
-                        text=f"{dive_ticker} — 6 months  |  SMA20 (gold)  ·  SMA50 (blue)  |  Stop (red)  ·  Target (green)",
+                        text=f"{dive_ticker} — 6 months  |  SMA20 (gold)  ·  SMA50 (blue)  |  Typical downside (red)  ·  Analyst target (green)",
                         font=dict(size=11, color=CHART_TEXT),
                     ),
                 ))
@@ -3237,7 +3266,7 @@ elif page == "📊 Hedge Fund":
 
     # ════════════════════════════════
     with tab_bnc:
-        st.markdown("### 🔄 Bounce Candidates")
+        st.markdown("### 🔄 Oversold Candidates")
         st.markdown(
             "Stocks that are **temporarily oversold** — RSI below 38, but sitting in a "
             "broader uptrend with solid fundamentals. The bull thesis is intact; "
@@ -3262,7 +3291,7 @@ elif page == "📊 Hedge Fund":
                               annotation_text="Oversold (30)", annotation_position="right",
                               annotation_font=dict(color="#dc2626", size=10))
             fig_rsi.add_hline(y=45, line_dash="dot", line_color="#b8960c", line_width=1,
-                              annotation_text="Entry zone top (45)", annotation_position="right",
+                              annotation_text="Oversold threshold (45)", annotation_position="right",
                               annotation_font=dict(color="#b8960c", size=10))
             fig_rsi.update_layout(**chart_layout(height=300, yaxis_range=[0, 60], showlegend=False,
                                                   title=dict(text="RSI (gold = extreme oversold)", font=dict(size=11, color=CHART_TEXT))))
@@ -3281,7 +3310,7 @@ elif page == "📊 Hedge Fund":
         st.markdown("---")
         render_strategy_table(cat_df, "catalyst_score", "Catalyst")
 
-        # Analyst upside vs conviction
+        # Analyst upside vs research score
         st.markdown("---")
         st.markdown("### Analyst upside vs catalyst score")
         top_cat = cat_df[cat_df["upside"].notna()].head(min(hf_top_n * 2, 20))
@@ -3312,7 +3341,7 @@ elif page == "📊 Hedge Fund":
 
     # ════════════════════════════════
     with tab_brk:
-        st.markdown("### 🎯 Breakout Watch")
+        st.markdown("### 🎯 Consolidating Watch")
         st.markdown(
             "Stocks **coiling near their 52-week high** with low volatility and starting "
             "volume expansion — classic pre-breakout setup. Best held for "
@@ -3348,17 +3377,19 @@ elif page == "📊 Hedge Fund":
 
     # ════════════════════════════════
     with tab_risk:
-        st.markdown("### ⚠️ Risk Board")
+        st.markdown("### ⚠️ Risk Characteristics")
         st.markdown(
-            "Position sizing, stop losses and risk/reward ratios for your top picks. "
-            f"Based on a **{risk_profile}** profile with a **£${portfolio_size:,}** portfolio."
+            "How volatile these companies have been, and how far their shares have historically moved. "
+            "These are descriptions of past behaviour — they are not guidance on what to buy, how much to "
+            "hold, or when to exit."
         )
 
-        # Risk/reward scatter
-        top_risk = hf_df[hf_df["rr_ratio"] > 0].head(40)
+        # Volatility vs analyst expectations. Deliberately NOT a risk/reward
+        # map with target lines: that framing presents a trade to execute.
+        top_risk = hf_df[hf_df["atr_pct"] > 0].head(40)
         fig_rr = go.Figure(go.Scatter(
-            x=top_risk["stop_pct"],
-            y=top_risk["reward_pct"],
+            x=top_risk["atr_pct"],
+            y=top_risk["beta"],
             mode="markers+text",
             text=top_risk["ticker"],
             textposition="top center",
@@ -3368,44 +3399,42 @@ elif page == "📊 Hedge Fund":
                 color=top_risk["best_score"],
                 colorscale=[[0, "#dde3ef"], [0.5, GOLD], [1, "#16a34a"]],
                 showscale=True,
-                colorbar=dict(title="Conviction", thickness=10, len=0.6),
+                colorbar=dict(title="Research<br>score", thickness=10, len=0.6),
                 line=dict(color="#ffffff", width=1),
             ),
         ))
-        # 1:1, 2:1, 3:1 R/R lines
-        max_stop = float(top_risk["stop_pct"].max()) if not top_risk.empty else 10
-        for rr_target, lbl, clr in [(1, "1:1", "#dc2626"), (2, "2:1", GOLD), (3, "3:1", "#16a34a")]:
-            fig_rr.add_trace(go.Scatter(
-                x=[0, max_stop], y=[0, max_stop * rr_target],
-                mode="lines", name=lbl,
-                line=dict(color=clr, dash="dash", width=1),
-            ))
+        fig_rr.add_hline(y=1.0, line_dash="dot", line_color="#94a3b8",
+                         annotation_text="Moves with the market (beta 1.0)",
+                         annotation_font=dict(color="#94a3b8", size=10))
         fig_rr.update_layout(**chart_layout(
             height=420,
-            xaxis_title="Risk (stop-loss %)",
-            yaxis_title="Reward (target upside %)",
-            title=dict(text="Risk/Reward map — aim for picks above the 2:1 line", font=dict(size=11, color=CHART_TEXT)),
+            xaxis_title="Daily volatility (ATR as % of price)",
+            yaxis_title="Beta (sensitivity to the wider market)",
+            title=dict(text="Further right = larger daily swings. Higher up = amplifies market moves.",
+                       font=dict(size=11, color=CHART_TEXT)),
         ))
         st.plotly_chart(fig_rr, width="stretch")
+        st.caption(
+            "Beta above 1.0 means the shares have historically moved more than the market in both "
+            "directions. ATR is the average daily price range — a higher figure means larger day-to-day swings."
+        )
 
         st.markdown("---")
-        st.markdown("### Full position sizing table")
+        st.markdown("### Risk characteristics table")
 
         pos_cols = [
-            "ticker", "name", "best_score", "primary_strategy", "conviction",
+            "ticker", "name", "best_score", "primary_strategy", "score_band",
             "risk_score", "beta", "atr_pct", "short_pct",
-            "price", "stop_loss", "stop_pct", "target", "reward_pct", "rr_ratio",
-            "pos_pct", "pos_value",
+            "price", "stop_pct", "reward_pct",
         ]
         avail_pos = [c for c in pos_cols if c in hf_df.columns]
         rename_pos = {
             "ticker": "Ticker", "name": "Company",
-            "best_score": "Conviction", "primary_strategy": "Strategy",
-            "conviction": "Tier", "risk_score": "Risk Score",
-            "beta": "Beta", "atr_pct": "ATR%", "short_pct": "Short%",
-            "price": "Price $", "stop_loss": "Stop $", "stop_pct": "Stop%",
-            "target": "Target $", "reward_pct": "Upside%", "rr_ratio": "R/R",
-            "pos_pct": "Alloc%", "pos_value": "Position $",
+            "best_score": "Research score", "primary_strategy": "Profile",
+            "score_band": "Band", "risk_score": "Risk score",
+            "beta": "Beta", "atr_pct": "Volatility%", "short_pct": "Short%",
+            "price": "Price $", "stop_pct": "Typical downside%",
+            "reward_pct": "Analyst upside%",
         }
         st.dataframe(
             hf_df[avail_pos].head(hf_top_n * 2).rename(columns=rename_pos),
@@ -3458,7 +3487,7 @@ elif page == "📊 Hedge Fund":
     with tab_returns:
         st.markdown("### 💰 Investment Return Projections")
         st.markdown(
-            "Filter by strategy and conviction, pick your stocks, set a hold period, "
+            "Filter by profile and score band, pick your companies, set a holding period, "
             "and see projected returns adjust in real time — including compounding across "
             "multiple rotations. Bull returns scale with hold time; stops are fixed."
         )
@@ -3467,9 +3496,9 @@ elif page == "📊 Hedge Fund":
         # These represent the "full expected move" window for each strategy type.
         STRATEGY_REF_HOLD: dict[str, float] = {
             "🚀 Momentum":  4.0,   # ~1 month momentum burst
-            "🔄 Bounce":    3.0,   # ~3-week mean-reversion snap
-            "⚡ Catalyst":  8.0,   # ~2-month catalyst play
-            "🎯 Breakout":  5.0,   # ~5-week breakout development
+            "🔄 Oversold":    3.0,   # ~3-week mean-reversion snap
+            "⚡ Growth":  8.0,   # ~2-month catalyst play
+            "🎯 Consolidating":  5.0,   # ~5-week breakout development
         }
 
         # ── Step 1: Filter controls ───────────────────────────────
@@ -3478,13 +3507,13 @@ elif page == "📊 Hedge Fund":
         with f1:
             strat_filter = st.multiselect(
                 "Strategy types to include",
-                options=["🚀 Momentum", "🔄 Bounce", "⚡ Catalyst", "🎯 Breakout"],
-                default=["🚀 Momentum", "🔄 Bounce", "⚡ Catalyst", "🎯 Breakout"],
+                options=["🚀 Momentum", "🔄 Oversold", "⚡ Growth", "🎯 Consolidating"],
+                default=["🚀 Momentum", "🔄 Oversold", "⚡ Growth", "🎯 Consolidating"],
                 key="ret_strat_filter",
             )
         with f2:
             conv_filter = st.multiselect(
-                "Conviction tiers to include",
+                "Score bands to include",
                 options=["high", "med", "low"],
                 default=["high", "med", "low"],
                 key="ret_conv_filter",
@@ -3493,16 +3522,16 @@ elif page == "📊 Hedge Fund":
         # Build filtered candidate pool
         _cand = hf_df[
             hf_df["primary_strategy"].isin(strat_filter) &
-            hf_df["conviction"].isin(conv_filter)
+            hf_df["score_band"].isin(conv_filter)
         ].copy()
 
         if _cand.empty:
-            st.warning("No stocks match the selected strategy / conviction filters. Adjust the filters above.")
+            st.warning("No companies match the selected profile / score band filters. Adjust the filters above.")
             st.stop()
 
         # Stock picker — label shows strategy + score so user knows what they're picking
         _cand_labels = {
-            row["ticker"]: f"{row['ticker']}  ·  {row['primary_strategy']}  ·  score {row['best_score']:.0f}  ·  {row['conviction']}"
+            row["ticker"]: f"{row['ticker']}  ·  {row['primary_strategy']}  ·  score {row['best_score']:.0f}  ·  {row['score_band']}"
             for _, row in _cand.iterrows()
         }
         default_tickers = list(_cand_labels.keys())[:min(10, len(_cand_labels))]
@@ -3545,16 +3574,16 @@ elif page == "📊 Hedge Fund":
         st.markdown("#### 3 · Allocation method")
         alloc_method = st.radio(
             "How to split capital across stocks",
-            options=["Conviction weighted (auto)", "Equal weight", "Custom allocation"],
+            options=["Score weighted (auto)", "Equal weight", "Custom weighting"],
             horizontal=True,
             key="ret_alloc_method",
         )
 
         n_sel = len(sel_df)
 
-        if alloc_method == "Conviction weighted (auto)":
+        if alloc_method == "Score weighted (auto)":
             _conv_w = {"high": 3, "med": 2, "low": 1}
-            sel_df["_w"] = sel_df["conviction"].map(_conv_w).fillna(1)
+            sel_df["_w"] = sel_df["score_band"].map(_conv_w).fillna(1)
             sel_df["alloc_pct"] = sel_df["_w"] / sel_df["_w"].sum() * 100
         elif alloc_method == "Equal weight":
             sel_df["alloc_pct"] = 100.0 / n_sel
@@ -3565,10 +3594,10 @@ elif page == "📊 Hedge Fund":
             # Normalise seed
             sel_df["alloc_pct"] = sel_df["alloc_pct"] / sel_df["alloc_pct"].sum() * 100
 
-            edit_df = sel_df[["ticker", "primary_strategy", "conviction", "alloc_pct"]].copy()
+            edit_df = sel_df[["ticker", "primary_strategy", "score_band", "alloc_pct"]].copy()
             edit_df = edit_df.rename(columns={
                 "ticker": "Ticker", "primary_strategy": "Strategy",
-                "conviction": "Tier", "alloc_pct": "Allocation %",
+                "score_band": "Tier", "alloc_pct": "Allocation %",
             })
             st.caption("Edit the **Allocation %** column — values will be re-normalised automatically.")
             edited = st.data_editor(
@@ -3669,7 +3698,7 @@ elif page == "📊 Hedge Fund":
             f"<p style='font-size:0.8rem; color:#94a3b8; margin-top:0.5rem;'>"
             f"Bull returns are scaled to your {hold_weeks}-week hold (reference periods: "
             + ", ".join(f"{k} {v}w" for k, v in STRATEGY_REF_HOLD.items()) +
-            f"). Stop losses are fixed regardless of hold time.</p>",
+            f"). Downside estimates are based on volatility and do not vary with holding period.</p>",
             unsafe_allow_html=True,
         )
 
@@ -3715,7 +3744,7 @@ elif page == "📊 Hedge Fund":
         st.markdown("### Full projection table")
 
         proj_disp = sel_df[[
-            "ticker", "name", "primary_strategy", "conviction", "ref_hold", "time_scale",
+            "ticker", "name", "primary_strategy", "score_band", "ref_hold", "time_scale",
             "adj_alloc", "win_prob",
             "bull_ret", "base_ret", "bear_ret",
             "bull_value", "base_value", "bear_value",
@@ -3731,7 +3760,7 @@ elif page == "📊 Hedge Fund":
             proj_disp[c] = proj_disp[c].apply(lambda x: f"${x:,.0f}")
 
         proj_disp = proj_disp.rename(columns={
-            "ticker":"Ticker","name":"Company","primary_strategy":"Strategy","conviction":"Tier",
+            "ticker":"Ticker","name":"Company","primary_strategy":"Strategy","score_band":"Tier",
             "ref_hold":"Ref Hold","time_scale":"Time Scale",
             "adj_alloc":"Invested","win_prob":"Win Prob",
             "bull_ret":"Bull Ret%","base_ret":"Base Ret%","bear_ret":"Bear Ret%",
@@ -3828,7 +3857,7 @@ elif page == "📊 Hedge Fund":
             "⚠️ Bull returns are scaled by your hold period relative to each strategy's reference window. "
             "Bear/stop returns are fixed regardless of hold time. "
             "Compounding assumes the same per-rotation return each cycle. "
-            "Win probability is derived from conviction score (40%–85%). "
+            "Scenario likelihood is derived from the research score (40%–85%). "
             "Illustrative only — not financial advice."
             "</p>",
             unsafe_allow_html=True,
@@ -3837,8 +3866,9 @@ elif page == "📊 Hedge Fund":
     # ── Disclaimer ───────────────────────────────────────────
     st.markdown("---")
     st.caption(
-        "⚠️ The Hedge Fund Engine is a quantitative analysis tool — not financial advice. "
-        "Short-term trading carries significant risk. Stop losses are suggestions based on "
-        "technical levels; adjust to your own risk tolerance. Past momentum does not guarantee "
-        "future returns. Always do your own research before trading."
+        "⚠️ This is a research and education tool, not financial advice, and nothing here is a "
+        "recommendation to buy or sell any investment. Scores describe a company's reported figures "
+        "and past price behaviour; they are not predictions. Analyst upside figures are other "
+        "analysts' published estimates, not forecasts from this platform. Investing carries risk and "
+        "you may get back less than you put in. Consider taking independent financial advice."
     )
