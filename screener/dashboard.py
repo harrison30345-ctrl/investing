@@ -48,6 +48,12 @@ except ImportError:
     from scoring import score_batch
     from universe import get_universe, load_tickers_from_file, get_ai_leaders, get_tech_mega, get_trading212_isa
 
+# Research scoring stack. The UI talks to these services, never to a data
+# provider directly -- see the licensing note in services/market_data.py.
+from services.explanations import GLOSSARY, explain, format_value
+from services.market_data import PROVIDER_IS_LICENSED, PROVIDER_NAME, get_provider
+from services.scoring import SCORING_VERSION, score_company
+
 PACKAGE_DIR = Path(__file__).parent
 # Check multiple locations for config files (local dev vs Streamlit Cloud)
 def _find_configs_dir() -> Path:
@@ -648,12 +654,250 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-page = st.sidebar.radio("Navigate", ["📊 Research", "🔥 Momentum", "💎 Hidden Gems", "⚠️ Holdings Review", "🔍 Screener", "🇬🇧 UK Investor"], index=0)
+page = st.sidebar.radio(
+    "Navigate",
+    ["🔎 Company", "📊 Research", "🔥 Momentum", "💎 Hidden Gems",
+     "⚠️ Holdings Review", "🔍 Screener", "🇬🇧 UK Investor"],
+    index=0,
+)
 
 # ════════════════════════════════════════════════════════════
-# PAGE 1 — HOT STOCKS
+# PAGE 0 — COMPANY  (the individual stock research page)
 # ════════════════════════════════════════════════════════════
-if page == "🔥 Momentum":
+if page == "🔎 Company":
+
+    st.title("Company research")
+    st.caption("Search any company to see what its numbers show, explained in plain English.")
+
+    @st.cache_data(persist="disk", show_spinner=False)
+    def _research(ticker: str, bucket: int) -> dict:
+        """Snapshot + score + explanation for one company. Cached per 6h bucket."""
+        snap = get_provider().get_snapshot(ticker)
+        if not snap.ok:
+            return {"error": snap.error or "No data available."}
+        score = score_company(snap.ticker, snap.fundamentals, snap.sector)
+        return {
+            "name": snap.name, "sector": snap.sector, "industry": snap.industry,
+            "price": snap.price, "currency": snap.currency or "USD",
+            "fetched_at": snap.fetched_at, "fundamentals": snap.fundamentals,
+            "score": score, "explanation": explain(score, snap.name),
+            "history": snap.history,
+        }
+
+    query = st.text_input(
+        "Company ticker", value=st.session_state.get("_co_last", "AAPL"),
+        help="US and UK tickers work best. UK shares usually end in .L, e.g. BP.L or TSCO.L.",
+        placeholder="e.g. AAPL, MSFT, BP.L",
+    ).strip().upper()
+
+    if not query:
+        st.info("Enter a ticker above to research a company.")
+        st.stop()
+
+    st.session_state["_co_last"] = query
+    with st.spinner(f"Looking up {query}…"):
+        res = _research(query, _bucket())
+
+    if "error" in res:
+        st.error(res["error"])
+        st.caption("If the symbol is right, the data provider may be temporarily unavailable — try again shortly.")
+        st.stop()
+
+    score, expl = res["score"], res["explanation"]
+    cur = {"USD": "$", "GBP": "£", "GBp": "p", "EUR": "€"}.get(res["currency"], "")
+
+    # ── Header ───────────────────────────────────────────────
+    head_l, head_r = st.columns([3, 2])
+    with head_l:
+        st.markdown(
+            f'<div style="font-size:1.6rem;font-weight:800;color:#0d1117;line-height:1.15;">'
+            f'{res["name"]}</div>'
+            f'<div style="font-size:0.82rem;color:#64748b;margin-top:0.2rem;">'
+            f'{query} · {res["sector"] or "Sector unknown"}'
+            f'{" · " + res["industry"] if res["industry"] else ""}</div>',
+            unsafe_allow_html=True,
+        )
+    with head_r:
+        if res["price"]:
+            st.markdown(
+                f'<div style="text-align:right;font-size:1.6rem;font-weight:800;color:#0d1117;">'
+                f'{cur}{res["price"]:,.2f}</div>'
+                f'<div style="text-align:right;font-size:0.72rem;color:#94a3b8;">'
+                f'Data as at {res["fetched_at"]:%d %B %Y}. Prices may be delayed.</div>',
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("---")
+
+    # ── Overall score + confidence ───────────────────────────
+    conf_colour = {"high": "#16a34a", "moderate": "#b8960c", "low": "#dc2626"}[score.confidence]
+    s1, s2 = st.columns([1, 2])
+    with s1:
+        if score.available:
+            st.markdown(
+                f'<div style="background:#ffffff;border:1px solid #dde3ef;border-top:3px solid #b8960c;'
+                f'border-radius:6px;padding:1.1rem 1.3rem;box-shadow:0 1px 4px rgba(0,0,0,0.05);">'
+                f'<div style="font-size:0.64rem;letter-spacing:0.12em;text-transform:uppercase;'
+                f'color:#94a3b8;">Research score</div>'
+                f'<div style="font-size:2.6rem;font-weight:800;color:#0d1117;line-height:1;'
+                f'margin:0.25rem 0;">{score.overall:.0f}'
+                f'<span style="font-size:1rem;font-weight:400;color:#94a3b8;"> / 100</span></div>'
+                f'<div style="font-size:0.78rem;color:{conf_colour};font-weight:600;">'
+                f'{score.confidence.title()} confidence</div>'
+                f'<div style="font-size:0.7rem;color:#94a3b8;margin-top:0.15rem;">'
+                f'{score.coverage:.0%} of figures available</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.warning("**Score unavailable** — too few figures were available to score this company fairly.")
+    with s2:
+        st.markdown("##### In simple terms")
+        st.markdown(expl["summary"])
+
+    # ── Category breakdown ───────────────────────────────────
+    st.markdown("---")
+    st.markdown("##### Score breakdown")
+    cat_cols = st.columns(5)
+    for col, (key, cat) in zip(cat_cols, score.categories.items()):
+        with col:
+            if cat.available:
+                bar = "#16a34a" if cat.score >= 70 else ("#b8960c" if cat.score >= 45 else "#dc2626")
+                col.markdown(
+                    f'<div style="background:#ffffff;border:1px solid #dde3ef;border-radius:6px;'
+                    f'padding:0.8rem 0.9rem;text-align:center;">'
+                    f'<div style="font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;'
+                    f'color:#94a3b8;min-height:2.1em;">{cat.label}</div>'
+                    f'<div style="font-size:1.7rem;font-weight:800;color:{bar};line-height:1.1;">'
+                    f'{cat.score:.0f}</div>'
+                    f'<div style="height:3px;background:#eef1f7;border-radius:2px;margin-top:0.4rem;">'
+                    f'<div style="height:3px;width:{cat.score:.0f}%;background:{bar};border-radius:2px;"></div>'
+                    f'</div></div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                col.markdown(
+                    f'<div style="background:#f8fafc;border:1px dashed #cbd5e1;border-radius:6px;'
+                    f'padding:0.8rem 0.9rem;text-align:center;">'
+                    f'<div style="font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;'
+                    f'color:#94a3b8;min-height:2.1em;">{cat.label}</div>'
+                    f'<div style="font-size:0.9rem;font-weight:600;color:#94a3b8;margin-top:0.5rem;">'
+                    f'Unavailable</div>'
+                    f'<div style="font-size:0.64rem;color:#cbd5e1;">insufficient data</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+    # ── Strengths / concerns ─────────────────────────────────
+    st.markdown("---")
+    good_col, bad_col = st.columns(2)
+    with good_col:
+        st.markdown("##### Why it scores well")
+        if expl["strengths"]:
+            for item in expl["strengths"]:
+                st.markdown(f"▲ {item}")
+        else:
+            st.caption("No individual measure stood out as a particular strength.")
+    with bad_col:
+        st.markdown("##### What concerns us")
+        if expl["concerns"]:
+            for item in expl["concerns"]:
+                st.markdown(f"▼ {item}")
+        else:
+            st.caption("No individual measure stood out as a particular weakness.")
+
+    # ── What could change the score ──────────────────────────
+    if expl["could_change"]:
+        st.markdown("---")
+        st.markdown("##### What could change the score")
+        for item in expl["could_change"]:
+            st.markdown(f"→ {item}")
+
+    # ── Key numbers, each with a beginner explanation ────────
+    st.markdown("---")
+    st.markdown("##### Key numbers")
+    st.caption("Hover the ⓘ on any row for what the figure means and why it matters.")
+
+    rows = []
+    for cat in score.categories.values():
+        for metric in cat.metrics:
+            help_ = GLOSSARY.get(metric.field)
+            if not help_:
+                continue
+            if metric.available:
+                shown = format_value(metric.field, metric.raw)
+                rating = f"{metric.score:.0f}/100"
+            else:
+                shown, rating = "Unavailable", metric.reason
+            rows.append({
+                "Measure": help_["label"],
+                "Value": shown,
+                "Rating": rating,
+                "Category": cat.label,
+                "What it means": help_["means"],
+                "Why it matters": help_["matters"],
+                "Better when": help_["better"],
+            })
+
+    key_df = pd.DataFrame(rows)
+    st.dataframe(
+        key_df[["Measure", "Value", "Rating", "Category"]],
+        hide_index=True, width="stretch", height=min(560, 36 * len(key_df) + 40),
+        column_config={
+            "Measure": st.column_config.TextColumn("Measure", width="medium"),
+            "Value": st.column_config.TextColumn("Value", width="small"),
+            "Rating": st.column_config.TextColumn("How it scores", width="medium"),
+        },
+    )
+
+    with st.expander("What do these measures mean?"):
+        for _, r in key_df.iterrows():
+            arrow = "higher is generally better" if r["Better when"] == "higher" else "lower is generally better"
+            st.markdown(
+                f"**{r['Measure']}** — {r['Value']}  \n"
+                f"{r['What it means']}  \n"
+                f"*Why it matters:* {r['Why it matters']}  \n"
+                f"*Generally:* {arrow}."
+            )
+            st.markdown("")
+
+    # ── Price history ────────────────────────────────────────
+    hist = res.get("history")
+    if hist is not None and not hist.empty:
+        st.markdown("---")
+        st.markdown("##### Share price, last 12 months")
+        fig_co = go.Figure(go.Scatter(
+            x=hist.index, y=hist["Close"], mode="lines",
+            line=dict(color=GOLD, width=2), name="Close",
+        ))
+        fig_co.update_layout(**chart_layout(height=280, showlegend=False))
+        st.plotly_chart(fig_co, width="stretch")
+
+    # ── Provenance and limitations ───────────────────────────
+    st.markdown("---")
+    st.caption(
+        f"Scoring methodology v{SCORING_VERSION}. Data from {PROVIDER_NAME}, retrieved "
+        f"{res['fetched_at']:%d %B %Y at %H:%M} UTC. Prices may be delayed."
+        + ("" if PROVIDER_IS_LICENSED else
+           " This data source is for personal and development use and is not licensed for "
+           "commercial redistribution.")
+    )
+    if expl["unavailable"]:
+        with st.expander(f"⚠️ {len(expl['unavailable'])} measure(s) unavailable — see why"):
+            for line in expl["unavailable"]:
+                st.markdown(f"- {line}")
+    st.caption(
+        "⚠️ This is research and education, not financial advice, and nothing here is a "
+        "recommendation to buy or sell any investment. Scores describe reported figures and past "
+        "price behaviour; they are not predictions. Investing carries risk and you may get back "
+        "less than you put in."
+    )
+
+
+# ════════════════════════════════════════════════════════════
+# PAGE 1 — MOMENTUM
+# ════════════════════════════════════════════════════════════
+elif page == "🔥 Momentum":
 
     st.title("Momentum")
     st.caption("Ranked by a composite momentum score: price change, volume surge, RSI momentum, analyst sentiment, and short-term trend strength.")
