@@ -25,7 +25,7 @@ from __future__ import annotations
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -62,6 +62,11 @@ from services.momentum import assess_momentum
 from services.score_history import ScoreHistory, describe_change
 from services.screening import apply_preset, screen
 from services.watchlist import Watchlist
+
+try:
+    from screener import theme
+except ImportError:  # pragma: no cover
+    import theme  # type: ignore
 from services.scoring import SCORING_VERSION, score_company
 
 
@@ -101,277 +106,28 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
-    /* ── Base ── */
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-    .block-container { padding: 1.4rem 2rem 2rem 2rem; max-width: 1400px; }
-
-    /* ── Colour tokens ── */
-    /* bg:      #f4f6fb   surface: #ffffff   sidebar: #1a2236    */
-    /* gold:    #b8960c   text:    #0d1117   muted:   #64748b    */
-    /* border:  #dde3ef   grid:    #e8edf5                       */
-
-    /* ── Sidebar — stays dark for contrast ── */
-    section[data-testid="stSidebar"] {
-        background: #1a2236 !important;
-        border-right: 1px solid #253047;
-    }
-    section[data-testid="stSidebar"] * { color: #b0bad0 !important; }
-    section[data-testid="stSidebar"] .stRadio label,
-    section[data-testid="stSidebar"] .stSelectbox label,
-    section[data-testid="stSidebar"] .stSlider label {
-        font-size: 0.76rem !important;
-        letter-spacing: 0.07em;
-        text-transform: uppercase;
-        color: #8892a4 !important;
-    }
-
-    /* ── Main background ── */
-    .stApp { background: #f4f6fb; }
-    .block-container { background: #f4f6fb; }
-
-    /* ── Metric card ── */
-    .metric-card {
-        background: #ffffff;
-        border: 1px solid #dde3ef;
-        border-top: 3px solid #b8960c;
-        border-radius: 6px;
-        padding: 1rem 1.2rem 0.9rem;
-        margin-bottom: 0.5rem;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.05);
-        transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
-    }
-    .metric-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 14px rgba(13,17,23,0.10);
-        border-color: #c8cfe0;
-    }
-    .metric-card h3 {
-        margin: 0 0 0.35rem 0;
-        font-size: 0.67rem;
-        font-weight: 500;
-        color: #94a3b8;
-        text-transform: uppercase;
-        letter-spacing: 0.12em;
-    }
-    .metric-card p { margin: 0; font-size: 1.55rem; font-weight: 700; color: #0d1117; line-height: 1; }
-
-    /* ── Hot / gem card ── */
-    .hot-card {
-        background: #ffffff;
-        border: 1px solid #dde3ef;
-        border-top: 3px solid #b8960c;
-        border-radius: 6px;
-        padding: 1rem 1.2rem 0.85rem;
-        margin-bottom: 0.5rem;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.05);
-        transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
-    }
-    .hot-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 5px 18px rgba(184,150,12,0.16);
-        border-color: #b8960c;
-    }
-    .hot-card h3 { margin: 0 0 0.3rem 0; font-size: 0.95rem; font-weight: 700; color: #b8960c; letter-spacing: 0.03em; }
-    .hot-card p  { margin: 0 0 0.2rem 0; font-size: 1.3rem; font-weight: 700; color: #0d1117; line-height: 1.15; }
-
-    /* ── Divider ── */
-    hr { border: none; border-top: 1px solid #dde3ef; margin: 1.4rem 0; }
-
-    /* ── Headings ── */
-    h1 { font-size: 1.5rem !important; font-weight: 700 !important; color: #0d1117 !important; letter-spacing: -0.01em !important; }
-    h2, h3 { color: #1e293b !important; }
-    .stMarkdown p { color: #475569; font-size: 0.88rem; }
-
-    /* ── Buttons ── */
-    .stButton > button {
-        background: #b8960c !important;
-        color: #ffffff !important;
-        border: none !important;
-        border-radius: 4px !important;
-        font-weight: 700 !important;
-        font-size: 0.8rem !important;
-        letter-spacing: 0.07em !important;
-        text-transform: uppercase !important;
-        padding: 0.55rem 1.4rem !important;
-        transition: opacity 0.15s;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.12);
-    }
-    .stButton > button:hover { opacity: 0.88 !important; }
-
-    /* ── Tabs ── */
-    .stTabs [data-baseweb="tab-list"] { border-bottom: 1px solid #dde3ef; gap: 0; background: transparent; }
-    .stTabs [data-baseweb="tab"] {
-        font-size: 0.76rem !important;
-        font-weight: 500 !important;
-        letter-spacing: 0.08em !important;
-        text-transform: uppercase !important;
-        padding: 0.55rem 1.2rem !important;
-        color: #94a3b8 !important;
-        border: none !important;
-        background: transparent !important;
-    }
-    .stTabs [aria-selected="true"] {
-        color: #b8960c !important;
-        border-bottom: 2px solid #b8960c !important;
-    }
-
-    /* ── Dataframe ── */
-    div[data-testid="stDataFrame"] { border: 1px solid #dde3ef; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
-
-    /* ── Progress bar ── */
-    .stProgress > div > div { background: #b8960c !important; }
-
-    /* ── Badges ── */
-    .pass-badge { color: #16a34a; font-weight: 600; }
-    .fail-badge { color: #dc2626; font-weight: 600; }
-    .warn-badge { color: #b8960c; font-weight: 600; }
-    .up         { color: #16a34a; font-weight: 700; }
-    .down       { color: #dc2626; font-weight: 700; }
-
-    /* ── Caption / small ── */
-    .stCaption, small { color: #94a3b8 !important; font-size: 0.78rem !important; }
-
-    /* ── Selectbox / inputs ── */
-    .stSelectbox > div > div { background: #ffffff !important; border-color: #dde3ef !important; color: #0d1117 !important; }
-
-    /* ══════════════════════════════════════════════════════════
-       Hover & cursor affordances — make clickable things look
-       clickable, the way a normal website behaves.
-       ══════════════════════════════════════════════════════════ */
-
-    /* Anything actually clickable gets a pointer cursor */
-    .stButton > button,
-    .stDownloadButton > button,
-    .stRadio label,
-    .stCheckbox label,
-    .stSelectbox div[data-baseweb="select"],
-    .stMultiSelect div[data-baseweb="select"],
-    .stTabs [data-baseweb="tab"],
-    details summary,
-    div[data-testid="stExpander"] summary,
-    div[data-baseweb="select"] * ,
-    li[role="option"] {
-        cursor: pointer !important;
-    }
-
-    /* Buttons lift slightly */
-    .stButton > button {
-        transition: opacity 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease !important;
-    }
-    .stButton > button:hover {
-        opacity: 0.92 !important;
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(184,150,12,0.32) !important;
-    }
-    .stButton > button:active { transform: translateY(0); }
-
-    /* Sidebar nav — highlight the row under the cursor */
-    section[data-testid="stSidebar"] .stRadio label {
-        border-radius: 4px;
-        padding: 0.18rem 0.4rem !important;
-        transition: background 0.14s ease, color 0.14s ease;
-    }
-    section[data-testid="stSidebar"] .stRadio label:hover {
-        background: rgba(184,150,12,0.14);
-    }
-    section[data-testid="stSidebar"] .stRadio label:hover * {
-        color: #e2c65a !important;
-    }
-
-    /* Tabs — colour up before you click */
-    .stTabs [data-baseweb="tab"] { transition: color 0.14s ease, background 0.14s ease; }
-    .stTabs [data-baseweb="tab"]:hover {
-        color: #b8960c !important;
-        background: rgba(184,150,12,0.07) !important;
-    }
-
-    /* Table rows — track the cursor like a normal data table */
-    div[data-testid="stDataFrame"] [role="row"]:hover {
-        background: rgba(184,150,12,0.08) !important;
-    }
-
-    /* Dropdown options */
-    li[role="option"]:hover { background: rgba(184,150,12,0.12) !important; }
-
-    /* Inputs / selects — border responds on hover and focus */
-    .stSelectbox div[data-baseweb="select"],
-    .stMultiSelect div[data-baseweb="select"],
-    .stTextInput input, .stNumberInput input, .stTextArea textarea {
-        transition: border-color 0.14s ease, box-shadow 0.14s ease;
-    }
-    .stSelectbox div[data-baseweb="select"]:hover,
-    .stMultiSelect div[data-baseweb="select"]:hover,
-    .stTextInput input:hover, .stNumberInput input:hover, .stTextArea textarea:hover {
-        border-color: #b8960c !important;
-    }
-
-    /* Expanders */
-    div[data-testid="stExpander"] summary { transition: background 0.14s ease; border-radius: 4px; }
-    div[data-testid="stExpander"] summary:hover { background: rgba(184,150,12,0.08); }
-
-    /* Sliders */
-    .stSlider [role="slider"] { cursor: grab !important; transition: box-shadow 0.14s ease; }
-    .stSlider [role="slider"]:hover { box-shadow: 0 0 0 6px rgba(184,150,12,0.18); }
-    .stSlider [role="slider"]:active { cursor: grabbing !important; }
-
-    /* Charts — lift the whole panel on hover */
-    div[data-testid="stPlotlyChart"] {
-        border-radius: 6px;
-        transition: box-shadow 0.18s ease;
-    }
-    div[data-testid="stPlotlyChart"]:hover { box-shadow: 0 4px 16px rgba(13,17,23,0.09); }
-
-    /* Respect users who ask for reduced motion */
-    @media (prefers-reduced-motion: reduce) {
-        .metric-card, .hot-card, .stButton > button,
-        div[data-testid="stPlotlyChart"] {
-            transition: none !important;
-        }
-        .metric-card:hover, .hot-card:hover, .stButton > button:hover {
-            transform: none !important;
-        }
-    }
-</style>
-""", unsafe_allow_html=True)
+theme.inject()
 
 
-st.markdown("""
-<div style="display:flex; align-items:center; gap:1rem; padding:0 0 1.2rem 0; border-bottom:1px solid #dde3ef; margin-bottom:1.4rem;">
-    <span style="font-size:2.2rem; color:#b8960c; line-height:1;">♜</span>
-    <div>
-        <div style="font-size:1.5rem; font-weight:700; color:#0d1117; letter-spacing:-0.01em; line-height:1.1;">Barry's Investor Square</div>
-        <div style="font-size:0.65rem; font-weight:500; letter-spacing:0.22em; text-transform:uppercase; color:#b8960c; margin-top:0.15rem;">Fundamental Analysis Platform</div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
 
 
-CHART_BG     = "#ffffff"
-CHART_PAPER  = "#f4f6fb"
-CHART_GRID   = "#e8edf5"
-CHART_TEXT   = "#64748b"
-GOLD         = "#b8960c"
-PALETTE      = ["#b8960c", "#2563eb", "#16a34a", "#dc2626", "#7c3aed", "#0891b2"]
+CHART_BG     = theme.SURFACE
+CHART_PAPER  = theme.PAPER
+CHART_GRID   = theme.RULE
+CHART_TEXT   = theme.MUTED
+GOLD         = theme.BRASS
+# Desaturated series colours. Bright blue/green/red read as a crypto dashboard.
+PALETTE      = ["#8d7434", "#3f5876", "#2f6b4f", "#8a6a2f", "#59527a", "#6d6a5c"]
 
 
 def chart_layout(**kwargs):
-    """Shared Plotly layout for consistent styling."""
-    base = dict(
-        template="plotly_white",
-        paper_bgcolor=CHART_BG,
-        plot_bgcolor=CHART_BG,
-        font=dict(family="Inter, sans-serif", color=CHART_TEXT, size=11),
-        xaxis=dict(gridcolor=CHART_GRID, linecolor=CHART_GRID, tickcolor=CHART_GRID, zeroline=False),
-        yaxis=dict(gridcolor=CHART_GRID, linecolor=CHART_GRID, tickcolor=CHART_GRID, zeroline=False),
-        margin=dict(t=40, b=20, l=10, r=10),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
-    )
-    base.update(kwargs)
-    return base
+    """Shared Plotly layout.
+
+    Delegates to the theme's quiet layout: transparent ground, no legend, a
+    single horizontal gridline set, small muted type. Charts here answer one
+    question each and should not compete with the type around them.
+    """
+    return theme.chart_layout_quiet(**kwargs)
 
 
 # ── Fast batch data helpers ──────────────────────────────────
@@ -692,7 +448,7 @@ def generate_hf_summary(row: dict) -> dict:
 
     # ── Strategy-specific note ────────────────────────────────
     strat_notes = {
-        "🚀 Momentum": (
+        "Momentum": (
             f"**What the price is doing.** The share price is in a sustained uptrend, sitting above both its 20-day "
             f"and 50-day averages. It changed {chg_1w:+.1f}% over the past week on {vol:.1f}× its normal trading volume, "
             f"which means unusually heavy activity. "
@@ -700,7 +456,7 @@ def generate_hf_summary(row: dict) -> dict:
             f"20-day average, when RSI drops under 45, or when volume dries up. Strong momentum describes past price "
             f"movement — it says nothing about the quality of the underlying business."
         ),
-        "🔄 Oversold": (
+        "Oversold": (
             f"**What the price is doing.** The shares have sold off sharply, and RSI of {rsi:.0f} places them in "
             f"territory historically described as oversold — meaning the fall has been rapid relative to the stock's "
             f"own history. "
@@ -708,14 +464,14 @@ def generate_hf_summary(row: dict) -> dict:
             f"revenue and margins is a different situation from a falling price that reflects a deteriorating "
             f"business, and this signal alone cannot tell the two apart."
         ),
-        "⚡ Growth": (
+        "Growth": (
             f"**What the fundamentals show.** Reported growth or analyst estimates have shifted recently. "
             f"Analyst consensus price targets sit {upside:.0f}% above the current price — this reflects other "
             f"analysts' published estimates, not a forecast from this platform, and such targets are frequently wrong. "
             f"**What to monitor:** the next earnings release and any guidance update, which are the events most "
             f"likely to confirm or contradict these expectations."
         ),
-        "🎯 Consolidating": (
+        "Consolidating": (
             f"**What the price is doing.** The shares are trading in a narrow range at {pct_rng:.0f}% of their "
             f"52-week high, with lower-than-usual volatility. Narrow ranges historically resolve into larger moves, "
             f"but they resolve in both directions. "
@@ -756,84 +512,74 @@ def generate_hf_summary(row: dict) -> dict:
 
 
 def metric_card(label, value, col, hot=False):
-    cls = "hot-card" if hot else "metric-card"
-    col.markdown(f'<div class="{cls}"><h3>{label}</h3><p>{value}</p></div>', unsafe_allow_html=True)
+    """A single figure with its label.
+
+    Deliberately not a card: a bordered tile per metric was the dominant reason
+    the interface read as a template. Label above value, hairline below, and the
+    grid does the grouping.
+    """
+    col.markdown(
+        f'<div style="padding:0.15rem 0 0.7rem 0;border-bottom:1px solid {theme.RULE};">'
+        f'<div style="font-size:0.66rem;letter-spacing:0.08em;text-transform:uppercase;'
+        f'color:{theme.FAINT};margin-bottom:0.25rem;">{label}</div>'
+        f'<div style="font-size:1.15rem;font-weight:600;color:{theme.INK};line-height:1.1;'
+        f'font-variant-numeric:tabular-nums;">{value}</div></div>',
+        unsafe_allow_html=True,
+    )
 
 
 # ── Sidebar ──────────────────────────────────────────────────
 st.sidebar.markdown("""
-<div style="text-align:center; padding:1rem 0 0.8rem 0; border-bottom:1px solid #253047; margin-bottom:0.5rem;">
-    <div style="font-size:1.9rem; color:#b8960c; line-height:1;">♜</div>
-    <div style="font-size:1rem; font-weight:700; color:#e2e8f0; margin-top:0.4rem; letter-spacing:0.01em;">Barry's</div>
-    <div style="font-size:0.6rem; font-weight:500; letter-spacing:0.22em; text-transform:uppercase; color:#b8960c;">Investor Square</div>
+<div style="padding:0.2rem 0.55rem 1.1rem 0.55rem;">
+    <div style="font-size:0.95rem; font-weight:620; color:#e8eaef; letter-spacing:-0.01em;">
+        Investor Square</div>
+    <div style="font-size:0.62rem; font-weight:500; letter-spacing:0.16em;
+                text-transform:uppercase; color:#7b8394; margin-top:0.2rem;">Equity research</div>
 </div>
 """, unsafe_allow_html=True)
 
 page = st.sidebar.radio(
     "Navigate",
-    ["🏠 Home", "🔎 Company", "⚖️ Compare", "🔍 Screener",
-     "💎 Hidden Gems", "🔥 Momentum", "📊 Research",
-     "⚠️ Holdings Review", "🇬🇧 UK Investor"],
+    ["Overview", "Company", "Discover", "Screener",
+     "Compare", "Watchlist", "UK Investor"],
     index=0,
+    label_visibility="collapsed",
 )
+
+# Discover groups the three discovery views. Choosing between them is a
+# secondary control, not a top-level destination.
+_discover_tab = "All companies"
+if page == "Discover":
+    st.sidebar.markdown("---")
+    _discover_tab = st.sidebar.radio(
+        "View", ["All companies", "Hidden Gems", "Momentum"], index=0,
+    )
 
 # ════════════════════════════════════════════════════════════
 # PAGE — HOME
 # ════════════════════════════════════════════════════════════
-if page == "🏠 Home":
+if page == "Overview":
 
-    st.markdown(
-        '<div style="padding:1.5rem 1.9rem 1.3rem; background:#ffffff; border:1px solid #dde3ef;'
-        'border-left:5px solid #b8960c; border-radius:8px; margin-bottom:1.3rem;'
-        'box-shadow:0 2px 10px rgba(0,0,0,0.06);">'
-        '<div style="font-size:1.75rem; font-weight:800; color:#0d1117; letter-spacing:-0.02em;'
-        'line-height:1.15;">Understand stocks without the jargon</div>'
-        '<div style="font-size:0.9rem; color:#475569; margin-top:0.55rem; line-height:1.6;'
-        'max-width:760px;">Every company gets a research score out of 100, built from its '
-        'profitability, growth, valuation, financial health and recent price movement — '
-        'each one explained in plain English, with the risks shown alongside the strengths.'
-        '</div></div>',
-        unsafe_allow_html=True,
-    )
+    _hour = datetime.now().hour
+    _greeting = "Good morning" if _hour < 12 else ("Good afternoon" if _hour < 18 else "Good evening")
+    theme.page_header(_greeting, "What stands out in the market today.")
 
-    # ── How to use it, in one line ───────────────────────────
-    steps = st.columns(5)
-    for col, (icon, title, note) in zip(steps, [
-        ("🔎", "Look up", "Search any company"),
-        ("🔍", "Screen", "Filter by what matters"),
-        ("📖", "Understand", "See why it scores that way"),
-        ("⚖️", "Compare", "Put companies side by side"),
-        ("⭐", "Watch", "Keep an eye on it"),
-    ]):
-        col.markdown(
-            f'<div style="text-align:center;padding:0.7rem 0.4rem;background:#ffffff;'
-            f'border:1px solid #dde3ef;border-radius:6px;height:100%;">'
-            f'<div style="font-size:1.2rem;">{icon}</div>'
-            f'<div style="font-size:0.78rem;font-weight:700;color:#0d1117;margin-top:0.2rem;">{title}</div>'
-            f'<div style="font-size:0.66rem;color:#94a3b8;margin-top:0.15rem;">{note}</div></div>',
-            unsafe_allow_html=True,
-        )
-
-    # ── Market overview ──────────────────────────────────────
-    st.markdown("---")
-    st.markdown("##### Markets today")
+    # ── Market snapshot ──────────────────────────────────────
+    theme.section("Market snapshot")
 
     @st.cache_data(persist="disk", show_spinner=False)
     def _market_overview(bucket: int) -> list:
-        indices = [("^FTSE", "FTSE 100"), ("^GSPC", "S&P 500"),
-                   ("^IXIC", "NASDAQ"), ("^GDAXI", "DAX")]
+        indices = [("^GSPC", "S&P 500"), ("^IXIC", "NASDAQ"), ("^FTSE", "FTSE 100")]
         prices = _batch_prices(tuple(t for t, _ in indices), period="1mo", interval="1d")
         out = []
         for sym, label in indices:
             hist = prices.get(sym)
-            if hist is None or hist.empty or len(hist) < 2:
-                out.append({"label": label, "last": None, "day": None, "month": None})
+            if hist is None or hist.empty or len(hist["Close"].dropna()) < 2:
+                out.append({"label": label, "last": None, "day": None})
                 continue
             closes = hist["Close"].dropna()
-            last = float(closes.iloc[-1])
-            day = (last / float(closes.iloc[-2]) - 1) * 100 if len(closes) > 1 else None
-            month = (last / float(closes.iloc[0]) - 1) * 100 if len(closes) > 5 else None
-            out.append({"label": label, "last": last, "day": day, "month": month})
+            out.append({"label": label, "last": float(closes.iloc[-1]),
+                        "day": (float(closes.iloc[-1]) / float(closes.iloc[-2]) - 1) * 100})
         return out
 
     try:
@@ -842,462 +588,401 @@ if page == "🏠 Home":
         overview = []
 
     if not overview or all(m["last"] is None for m in overview):
-        st.caption("Market data is unavailable right now.")
+        st.caption("Market data unavailable.")
     else:
-        mcols = st.columns(len(overview))
-        for col, m in zip(mcols, overview):
+        cells = []
+        for m in overview:
             if m["last"] is None:
-                col.markdown(
-                    f'<div style="background:#f8fafc;border:1px dashed #cbd5e1;border-radius:6px;'
-                    f'padding:0.75rem 0.9rem;"><div style="font-size:0.64rem;letter-spacing:0.1em;'
-                    f'text-transform:uppercase;color:#94a3b8;">{m["label"]}</div>'
-                    f'<div style="font-size:0.85rem;color:#94a3b8;margin-top:0.3rem;">'
-                    f'Unavailable</div></div>', unsafe_allow_html=True)
+                cells.append(f'<div class="bs-score"><div class="bs-score-label">{m["label"]}</div>'
+                             f'<div class="bs-score-value na">Unavailable</div></div>')
                 continue
-            colour = "#16a34a" if (m["day"] or 0) >= 0 else "#dc2626"
-            arrow = "▲" if (m["day"] or 0) >= 0 else "▼"
-            month_txt = (f'{m["month"]:+.1f}% over the month' if m["month"] is not None else "")
-            col.markdown(
-                f'<div style="background:#ffffff;border:1px solid #dde3ef;border-radius:6px;'
-                f'padding:0.75rem 0.9rem;">'
-                f'<div style="font-size:0.64rem;letter-spacing:0.1em;text-transform:uppercase;'
-                f'color:#94a3b8;">{m["label"]}</div>'
-                f'<div style="font-size:1.25rem;font-weight:800;color:#0d1117;line-height:1.2;">'
-                f'{m["last"]:,.0f}</div>'
-                f'<div style="font-size:0.75rem;color:{colour};font-weight:600;">'
-                f'{arrow} {m["day"]:+.2f}% today</div>'
-                f'<div style="font-size:0.64rem;color:#94a3b8;">{month_txt}</div></div>',
-                unsafe_allow_html=True,
+            cls = "bs-pos" if m["day"] >= 0 else "bs-neg"
+            cells.append(
+                f'<div class="bs-score" style="min-width:130px;">'
+                f'<div class="bs-score-label">{m["label"]}</div>'
+                f'<div class="bs-score-value">{m["last"]:,.0f}</div>'
+                f'<div class="bs-row-r {cls}">{m["day"]:+.2f}%</div></div>'
             )
-        st.caption("Index levels may be delayed. Shown for context only.")
+        st.markdown(f'<div class="bs-scores">{"".join(cells)}</div>', unsafe_allow_html=True)
+        st.caption("Index levels may be delayed. Shown for context.")
+
+    # ── Discover ─────────────────────────────────────────────
+    theme.section("Discover")
+
+    @st.cache_data(persist="disk", show_spinner=False)
+    def _overview_picks(bucket: int) -> dict:
+        """A short list per theme, scored with the standard engine."""
+        tickers = get_universe("all_curated")[:110]
+        prices = _batch_prices(tuple(tickers), period="3mo", interval="1d")
+        valid = tuple(t for t in tickers if t in prices and not prices[t].empty) or tuple(tickers)
+        infos = _batch_info(valid)
+        scored = []
+        for t in valid:
+            info = infos.get(t) or {}
+            if not info.get("shortName"):
+                continue
+            sc = score_company(t, _fundamentals_from_info(info, prices.get(t)), info.get("sector"))
+            if sc.overall is None:
+                continue
+            scored.append((sc, info.get("shortName", t)[:30]))
+
+        def top(key, reason, n=4):
+            ranked = sorted(
+                (x for x in scored if x[0].categories[key].available),
+                key=lambda x: x[0].categories[key].score, reverse=True)[:n]
+            return [{"ticker": sc.ticker, "name": nm, "score": sc.overall,
+                     "detail": f"{sc.categories[key].label} {sc.categories[key].score:.0f}",
+                     "reason": reason} for sc, nm in ranked]
+
+        return {
+            "High quality": top("quality", "Strong profitability and margins"),
+            "Strong momentum": top("momentum", "Share price has risen recently"),
+            "Modestly valued": top("valuation", "Trading on lower multiples"),
+        }
+
+    if st.session_state.get("_ov_loaded") or st.button("Load today's lists"):
+        st.session_state["_ov_loaded"] = True
+        with st.spinner(""):
+            try:
+                picks = _overview_picks(_bucket())
+            except Exception:  # noqa: BLE001
+                picks = {}
+        if not picks:
+            st.caption("Unable to load lists right now.")
+        else:
+            cols = st.columns(3)
+            for col, (heading, rows) in zip(cols, picks.items()):
+                with col:
+                    st.markdown(f'<div class="bs-eyebrow">{heading}</div>', unsafe_allow_html=True)
+                    if not rows:
+                        st.caption("Nothing met the threshold.")
+                        continue
+                    st.markdown("".join(
+                        f'<div class="bs-row">'
+                        f'<div class="bs-row-t">{r["ticker"]}</div>'
+                        f'<div><div class="bs-row-n">{r["name"]}</div>'
+                        f'<div class="bs-row-r">{r["detail"]}</div></div>'
+                        f'<div class="bs-row-s">{r["score"]:.0f}</div></div>'
+                        for r in rows
+                    ), unsafe_allow_html=True)
+                    st.caption(rows[0]["reason"])
+            st.caption(
+                "Highest scoring on our methodology within a curated universe. "
+                "Not recommendations."
+            )
+    else:
+        st.caption(
+            "Lists are scored on demand from live data. Loading takes a moment."
+        )
 
     # ── Watchlist ────────────────────────────────────────────
-    st.markdown("---")
-    wl = _watchlist()
-    entries = wl.all()
-    st.markdown(f"##### Your watchlist ({len(entries)})")
+    theme.section("Watchlist")
+    try:
+        wl = _watchlist()
+        entries = wl.all()
+    except Exception:  # noqa: BLE001
+        entries = []
+
     if not entries:
-        st.info(
-            "Nothing saved yet. Look up a company on the **🔎 Company** page and press "
-            "**Add to watchlist** to keep an eye on it here."
-        )
+        st.caption("Nothing saved. Add companies from the Company page.")
     else:
-        wcols = st.columns(min(4, len(entries)))
-        for i, entry in enumerate(entries[:8]):
-            col = wcols[i % len(wcols)]
+        rows_html = []
+        for entry in entries[:10]:
             snap = None
             try:
                 snap = _score_history().latest(entry.ticker)
             except Exception:  # noqa: BLE001
                 pass
-            score_txt = ("—" if snap is None or snap.overall is None
-                         else f"{snap.overall:.0f}")
-            col.markdown(
-                f'<div class="metric-card"><h3>{entry.ticker}</h3>'
-                f'<p>{score_txt}</p>'
-                f'<div style="font-size:0.64rem;color:#94a3b8;">'
-                f'{(entry.name or "")[:22]}</div></div>',
-                unsafe_allow_html=True,
+            score_txt = "—" if snap is None or snap.overall is None else f"{snap.overall:.0f}"
+            rows_html.append(
+                f'<div class="bs-row"><div class="bs-row-t">{entry.ticker}</div>'
+                f'<div class="bs-row-n">{(entry.name or "")[:40]}</div>'
+                f'<div class="bs-row-s">{score_txt}</div></div>'
             )
-        if len(entries) > 8:
-            st.caption(f"…and {len(entries) - 8} more.")
+        st.markdown("".join(rows_html), unsafe_allow_html=True)
+        if len(entries) > 10:
+            st.caption(f"And {len(entries) - 10} more.")
 
     # ── Recently viewed ──────────────────────────────────────
-    recent = wl.recent(limit=8)
+    try:
+        recent = _watchlist().recent(limit=8)
+    except Exception:  # noqa: BLE001
+        recent = []
     if recent:
-        st.markdown("##### Recently viewed")
-        st.markdown(
-            " ".join(
-                f'<span style="display:inline-block;background:#ffffff;border:1px solid #dde3ef;'
-                f'border-radius:14px;padding:0.2rem 0.7rem;margin:0 0.3rem 0.35rem 0;'
-                f'font-size:0.78rem;color:#334155;">{e.ticker}</span>'
-                for e in recent
-            ),
-            unsafe_allow_html=True,
-        )
+        theme.section("Recently viewed")
+        st.markdown(" ".join(f'<span class="bs-tag">{e.ticker}</span>' for e in recent),
+                    unsafe_allow_html=True)
 
-    # ── One idea at a time ───────────────────────────────────
-    st.markdown("---")
-    st.markdown("##### Learn one thing")
+    # ── One concept ──────────────────────────────────────────
+    theme.section("Briefly")
     LESSONS = [
-        ("What a P/E ratio actually tells you",
-         "The P/E ratio is the share price divided by the profit per share over the last "
-         "year. A P/E of 20 means you are paying £20 for every £1 of annual profit. A high "
-         "P/E can reflect strong expectations for growth — or simply that a lot of optimism "
-         "is already in the price, leaving less room for disappointment. It is most useful "
-         "compared against companies in the same industry, not across the whole market."),
-        ("Why a rising share price tells you little about a company",
-         "Price movement and business quality are separate things. A company can rise "
-         "sharply while its revenue shrinks, and a strong business can go nowhere for years. "
-         "That is why this platform scores them separately and never blends them into one "
-         "number — a stock that has gone up is not the same as a company doing well."),
-        ("What a Stocks & Shares ISA actually does",
-         "An ISA is a wrapper around your investments, not an investment itself. Gains and "
-         "dividends inside one are free of UK capital gains and dividend tax. It does not "
-         "protect you from losses: the investments inside can still fall, and the tax "
-         "advantage only matters if there are gains to shelter."),
+        ("What a P/E ratio tells you",
+         "The P/E ratio is the share price divided by profit per share over the last year. "
+         "A P/E of 20 means paying £20 for every £1 of annual profit. A high figure can "
+         "reflect growth expectations, or simply optimism already priced in. It is most "
+         "useful compared with companies in the same industry."),
+        ("Price movement and business quality are different things",
+         "A company can rise sharply while its revenue shrinks, and a strong business can "
+         "go nowhere for years. That is why the two are scored separately here and never "
+         "combined into one figure."),
+        ("What a Stocks and Shares ISA does",
+         "An ISA is a wrapper around investments, not an investment. Gains and dividends "
+         "inside one are free of UK capital gains and dividend tax. It does not protect "
+         "against losses."),
         ("Why missing data matters",
          "If a company has not reported a figure, no score can honestly be calculated from "
-         "it. Some tools quietly treat a missing number as zero — which can make a company "
-         "with no reported debt look debt-free. Here, missing data is shown as unavailable "
-         "and lowers the confidence rating instead."),
-        ("What diversification does and does not do",
-         "Holding several unrelated investments reduces the damage any single one can do. "
-         "It does not protect against a fall in the whole market, and holding many companies "
-         "in the same industry is far less diversified than it looks."),
+         "it. Treating a missing number as zero can make a company with no reported debt "
+         "look debt-free. Here it is shown as unavailable and lowers confidence."),
+        ("What diversification does",
+         "Holding several unrelated investments limits the damage any one can do. It does "
+         "not protect against a fall in the whole market, and several companies in one "
+         "industry are less diversified than they look."),
     ]
-    lesson_title, lesson_body = LESSONS[date.today().toordinal() % len(LESSONS)]
+    _title, _body = LESSONS[date.today().toordinal() % len(LESSONS)]
     st.markdown(
-        f'<div style="background:#ffffff;border:1px solid #dde3ef;border-left:4px solid #b8960c;'
-        f'border-radius:6px;padding:1rem 1.2rem;">'
-        f'<div style="font-size:0.95rem;font-weight:700;color:#0d1117;">{lesson_title}</div>'
-        f'<div style="font-size:0.86rem;color:#475569;line-height:1.6;margin-top:0.4rem;">'
-        f'{lesson_body}</div></div>',
+        f'<div style="font-size:0.875rem;font-weight:600;color:{theme.INK};">{_title}</div>'
+        f'<div style="font-size:0.85rem;color:{theme.MUTED};line-height:1.62;margin-top:0.3rem;'
+        f'max-width:72ch;">{_body}</div>',
         unsafe_allow_html=True,
     )
 
-    st.markdown("---")
+    theme.hairline()
     st.caption(
-        f"Scoring methodology v{SCORING_VERSION}. Data from {PROVIDER_NAME}; prices may be "
-        f"delayed."
-        + ("" if PROVIDER_IS_LICENSED else
-           " This data source is for personal and development use and is not licensed for "
-           "commercial redistribution.")
+        f"Methodology v{SCORING_VERSION}. {PROVIDER_NAME}; prices may be delayed."
+        + ("" if PROVIDER_IS_LICENSED else " Not licensed for commercial redistribution.")
     )
     st.caption(
-        "⚠️ This is research and education, not financial advice, and nothing here is a "
-        "recommendation to buy or sell any investment. Scores describe reported figures and "
-        "past price behaviour; they are not predictions. Investing carries risk and you may "
-        "get back less than you put in."
+        "Research and education only. Not financial advice, and not a recommendation to "
+        "buy or sell."
     )
 
 
-# ════════════════════════════════════════════════════════════
-# PAGE 0 — COMPANY  (the individual stock research page)
-# ════════════════════════════════════════════════════════════
-elif page == "🔎 Company":
 
-    st.title("Company research")
-    st.caption("Search any company to see what its numbers show, explained in plain English.")
+elif page == "Company":
+
+    theme.page_header(
+        "Company research",
+        "Search a company to see what its reported figures show.",
+    )
 
     query = st.text_input(
-        "Company ticker", value=st.session_state.get("_co_last", "AAPL"),
-        help="US and UK tickers work best. UK shares usually end in .L, e.g. BP.L or TSCO.L.",
-        placeholder="e.g. AAPL, MSFT, BP.L",
+        "Ticker", value=st.session_state.get("_co_last", "AAPL"),
+        help="US and UK tickers. UK shares usually end in .L, for example BP.L.",
+        placeholder="AAPL",
+        label_visibility="collapsed",
     ).strip().upper()
 
     if not query:
-        st.info("Enter a ticker above to research a company.")
+        st.caption("Enter a ticker to begin.")
         st.stop()
 
     st.session_state["_co_last"] = query
-    with st.spinner(f"Looking up {query}…"):
+    with st.spinner(""):
         res = _research(query, _bucket())
 
     if "error" in res:
         st.error(res["error"])
-        st.caption("If the symbol is right, the data provider may be temporarily unavailable — try again shortly.")
         st.stop()
 
-    # Record today's score. One row per company per day; re-running overwrites
-    # today's row rather than adding another. Failing to record must never
-    # break the page a user came here to read.
     try:
         _score_history().record(res["score"])
-    except Exception:  # noqa: BLE001 - history is secondary to showing the research
+    except Exception:  # noqa: BLE001 - history is secondary to the research
         pass
 
     score, expl = res["score"], res["explanation"]
     cur = {"USD": "$", "GBP": "£", "GBp": "p", "EUR": "€"}.get(res["currency"], "")
 
-    # ── Header ───────────────────────────────────────────────
-    head_l, head_r = st.columns([3, 2])
-    with head_l:
+    # ── Identity line ────────────────────────────────────────
+    hist = res.get("history")
+    day_change = None
+    if hist is not None and not hist.empty and len(hist["Close"].dropna()) > 1:
+        closes = hist["Close"].dropna()
+        day_change = (float(closes.iloc[-1]) / float(closes.iloc[-2]) - 1) * 100
+
+    meta = " · ".join(x for x in (query, res["sector"], res["industry"]) if x)
+    price_html = ""
+    if res["price"]:
+        chg = ""
+        if day_change is not None:
+            cls = "bs-pos" if day_change >= 0 else "bs-neg"
+            chg = f' <span class="{cls}" style="font-size:0.9rem;">{day_change:+.2f}%</span>'
+        price_html = (f'<div style="text-align:right;"><span style="font-size:1.35rem;'
+                      f'font-weight:600;color:{theme.INK};font-variant-numeric:tabular-nums;">'
+                      f'{cur}{res["price"]:,.2f}</span>{chg}</div>')
+
+    left, right = st.columns([3, 1])
+    with left:
         st.markdown(
-            f'<div style="font-size:1.6rem;font-weight:800;color:#0d1117;line-height:1.15;">'
-            f'{res["name"]}</div>'
-            f'<div style="font-size:0.82rem;color:#64748b;margin-top:0.2rem;">'
-            f'{query} · {res["sector"] or "Sector unknown"}'
-            f'{" · " + res["industry"] if res["industry"] else ""}</div>',
+            f'<div style="font-size:1.4rem;font-weight:620;color:{theme.INK};'
+            f'letter-spacing:-0.018em;line-height:1.2;">{res["name"]}</div>'
+            f'<div style="font-size:0.78rem;color:{theme.FAINT};margin-top:0.15rem;">{meta}</div>',
             unsafe_allow_html=True,
         )
-    with head_r:
-        if res["price"]:
-            st.markdown(
-                f'<div style="text-align:right;font-size:1.6rem;font-weight:800;color:#0d1117;">'
-                f'{cur}{res["price"]:,.2f}</div>'
-                f'<div style="text-align:right;font-size:0.72rem;color:#94a3b8;">'
-                f'Data as at {res["fetched_at"]:%d %B %Y}. Prices may be delayed.</div>',
-                unsafe_allow_html=True,
-            )
+    with right:
+        if price_html:
+            st.markdown(price_html, unsafe_allow_html=True)
 
-    # ── Watchlist + recently viewed ──────────────────────────
+    # Watchlist control, deliberately quiet
     try:
         _wl = _watchlist()
         _wl.record_view(query, res["name"])
-        already = _wl.contains(query)
-        wl_col, _sp = st.columns([1, 3])
-        with wl_col:
-            if already:
-                if st.button("★ Remove from watchlist", key=f"_wl_rm_{query}"):
-                    _wl.remove(query)
-                    st.rerun()
-            else:
-                if st.button("☆ Add to watchlist", key=f"_wl_add_{query}"):
-                    _wl.add(query, res["name"])
-                    st.rerun()
-    except Exception:  # noqa: BLE001 - the watchlist must never block the research
+        in_list = _wl.contains(query)
+        if st.button("Remove from watchlist" if in_list else "Add to watchlist",
+                     key=f"_wl_{query}"):
+            _wl.remove(query) if in_list else _wl.add(query, res["name"])
+            st.rerun()
+    except Exception:  # noqa: BLE001
         pass
 
-    st.markdown("---")
+    theme.hairline()
 
-    # ── Overall score + confidence ───────────────────────────
-    conf_colour = {"high": "#16a34a", "moderate": "#b8960c", "low": "#dc2626"}[score.confidence]
-    s1, s2 = st.columns([1, 2])
-    with s1:
-        if score.available:
-            st.markdown(
-                f'<div style="background:#ffffff;border:1px solid #dde3ef;border-top:3px solid #b8960c;'
-                f'border-radius:6px;padding:1.1rem 1.3rem;box-shadow:0 1px 4px rgba(0,0,0,0.05);">'
-                f'<div style="font-size:0.64rem;letter-spacing:0.12em;text-transform:uppercase;'
-                f'color:#94a3b8;">Research score</div>'
-                f'<div style="font-size:2.6rem;font-weight:800;color:#0d1117;line-height:1;'
-                f'margin:0.25rem 0;">{score.overall:.0f}'
-                f'<span style="font-size:1rem;font-weight:400;color:#94a3b8;"> / 100</span></div>'
-                f'<div style="font-size:0.78rem;color:{conf_colour};font-weight:600;">'
-                f'{score.confidence.title()} confidence</div>'
-                f'<div style="font-size:0.7rem;color:#94a3b8;margin-top:0.15rem;">'
-                f'{score.coverage:.0%} of figures available</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            st.warning("**Score unavailable** — too few figures were available to score this company fairly.")
-    with s2:
-        st.markdown("##### In simple terms")
-        st.markdown(expl["summary"])
+    # ── Scores, one row ──────────────────────────────────────
+    conf_note = f"{score.confidence.title()} confidence · {score.coverage:.0%} of figures available"
+    if score.available:
+        st.markdown(
+            f'<div class="bs-eyebrow" style="margin-bottom:0.35rem;">Research score</div>'
+            f'<div style="display:flex;align-items:baseline;gap:0.7rem;margin-bottom:1.4rem;">'
+            f'<span style="font-size:2rem;font-weight:620;color:{theme.INK};line-height:1;'
+            f'font-variant-numeric:tabular-nums;">{score.overall:.0f}</span>'
+            f'<span style="font-size:0.85rem;color:{theme.FAINT};">out of 100</span>'
+            f'<span style="font-size:0.78rem;color:{theme.MUTED};margin-left:auto;">{conf_note}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f'<div style="font-size:0.9rem;color:{theme.MUTED};margin-bottom:1rem;">'
+            f'No overall score — too few figures were available to score this company fairly.</div>',
+            unsafe_allow_html=True,
+        )
 
-    # ── Category breakdown ───────────────────────────────────
-    st.markdown("---")
-    st.markdown("##### Score breakdown")
-    cat_cols = st.columns(5)
-    for col, (key, cat) in zip(cat_cols, score.categories.items()):
-        with col:
-            if cat.available:
-                bar = "#16a34a" if cat.score >= 70 else ("#b8960c" if cat.score >= 45 else "#dc2626")
-                col.markdown(
-                    f'<div style="background:#ffffff;border:1px solid #dde3ef;border-radius:6px;'
-                    f'padding:0.8rem 0.9rem;text-align:center;">'
-                    f'<div style="font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;'
-                    f'color:#94a3b8;min-height:2.1em;">{cat.label}</div>'
-                    f'<div style="font-size:1.7rem;font-weight:800;color:{bar};line-height:1.1;">'
-                    f'{cat.score:.0f}</div>'
-                    f'<div style="height:3px;background:#eef1f7;border-radius:2px;margin-top:0.4rem;">'
-                    f'<div style="height:3px;width:{cat.score:.0f}%;background:{bar};border-radius:2px;"></div>'
-                    f'</div></div>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                col.markdown(
-                    f'<div style="background:#f8fafc;border:1px dashed #cbd5e1;border-radius:6px;'
-                    f'padding:0.8rem 0.9rem;text-align:center;">'
-                    f'<div style="font-size:0.62rem;letter-spacing:0.1em;text-transform:uppercase;'
-                    f'color:#94a3b8;min-height:2.1em;">{cat.label}</div>'
-                    f'<div style="font-size:0.9rem;font-weight:600;color:#94a3b8;margin-top:0.5rem;">'
-                    f'Unavailable</div>'
-                    f'<div style="font-size:0.64rem;color:#cbd5e1;">insufficient data</div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
+    theme.score_row([
+        (c.label, c.score if c.available else None) for c in score.categories.values()
+    ])
 
-    # ── Strengths / concerns ─────────────────────────────────
-    st.markdown("---")
-    good_col, bad_col = st.columns(2)
-    with good_col:
-        st.markdown("##### Why it scores well")
-        if expl["strengths"]:
-            for item in expl["strengths"]:
-                st.markdown(f"▲ {item}")
-        else:
-            st.caption("No individual measure stood out as a particular strength.")
-    with bad_col:
-        st.markdown("##### What concerns us")
-        if expl["concerns"]:
-            for item in expl["concerns"]:
-                st.markdown(f"▼ {item}")
-        else:
-            st.caption("No individual measure stood out as a particular weakness.")
+    # ── Summary ──────────────────────────────────────────────
+    theme.section("Summary")
+    st.markdown(f'<div style="font-size:0.9rem;color:{theme.MUTED};line-height:1.65;'
+                f'max-width:70ch;">{expl["summary"]}</div>', unsafe_allow_html=True)
 
-    # ── What could change the score ──────────────────────────
-    if expl["could_change"]:
-        st.markdown("---")
-        st.markdown("##### What could change the score")
-        for item in expl["could_change"]:
-            st.markdown(f"→ {item}")
+    # ── Strengths / risks ────────────────────────────────────
+    def _trim(items):
+        out = []
+        for item in items:
+            head = item.split("—")[0].strip().strip("*").strip()
+            tail = item.split("—", 1)[1].strip() if "—" in item else ""
+            first = tail.split(".")[0].strip()
+            out.append(f"<b>{head}</b>{' — ' + first + '.' if first else ''}")
+        return out
 
-    # ── Key numbers, each with a beginner explanation ────────
-    st.markdown("---")
-    st.markdown("##### Key numbers")
-    st.caption("Hover the ⓘ on any row for what the figure means and why it matters.")
+    st.markdown("<div style='height:1.6rem;'></div>", unsafe_allow_html=True)
+    theme.two_column_list("Key strengths", _trim(expl["strengths"][:4]),
+                          "Risks to monitor", _trim(expl["concerns"][:4]))
 
-    rows = []
+    # ── Financial snapshot ───────────────────────────────────
+    theme.section("Financial snapshot")
+    snapshot = []
     for cat in score.categories.values():
         for metric in cat.metrics:
             help_ = GLOSSARY.get(metric.field)
             if not help_:
                 continue
-            if metric.available:
-                shown = format_value(metric.field, metric.raw)
-                rating = f"{metric.score:.0f}/100"
-            else:
-                shown, rating = "Unavailable", metric.reason
-            rows.append({
-                "Measure": help_["label"],
-                "Value": shown,
-                "Rating": rating,
-                "Category": cat.label,
-                "What it means": help_["means"],
-                "Why it matters": help_["matters"],
-                "Better when": help_["better"],
-            })
+            snapshot.append((help_["label"],
+                             format_value(metric.field, metric.raw) if metric.available else None))
+    theme.stat_grid(snapshot)
 
-    key_df = pd.DataFrame(rows)
-    st.dataframe(
-        key_df[["Measure", "Value", "Rating", "Category"]],
-        hide_index=True, width="stretch", height=min(560, 36 * len(key_df) + 40),
-        column_config={
-            "Measure": st.column_config.TextColumn("Measure", width="medium"),
-            "Value": st.column_config.TextColumn("Value", width="small"),
-            "Rating": st.column_config.TextColumn("How it scores", width="medium"),
-        },
-    )
+    # ── Deeper detail, behind a click ────────────────────────
+    st.markdown("<div style='height:1.4rem;'></div>", unsafe_allow_html=True)
+    with st.expander("What these measures mean"):
+        for cat in score.categories.values():
+            for metric in cat.metrics:
+                help_ = GLOSSARY.get(metric.field)
+                if not help_:
+                    continue
+                direction = ("Higher is generally better." if help_["better"] == "higher"
+                             else "Lower is generally better.")
+                value = format_value(metric.field, metric.raw) if metric.available else "Not reported"
+                st.markdown(
+                    f'<div style="padding:0.55rem 0;border-bottom:1px solid {theme.RULE};">'
+                    f'<span style="font-size:0.83rem;font-weight:550;color:{theme.INK};">'
+                    f'{help_["label"]}</span>'
+                    f'<span style="font-size:0.83rem;color:{theme.MUTED};float:right;">{value}</span>'
+                    f'<div style="font-size:0.79rem;color:{theme.MUTED};margin-top:0.2rem;'
+                    f'max-width:70ch;">{help_["means"]} {help_["matters"]} {direction}</div></div>',
+                    unsafe_allow_html=True,
+                )
 
-    with st.expander("What do these measures mean?"):
-        for _, r in key_df.iterrows():
-            arrow = "higher is generally better" if r["Better when"] == "higher" else "lower is generally better"
-            st.markdown(
-                f"**{r['Measure']}** — {r['Value']}  \n"
-                f"{r['What it means']}  \n"
-                f"*Why it matters:* {r['Why it matters']}  \n"
-                f"*Generally:* {arrow}."
-            )
-            st.markdown("")
+    if expl["could_change"]:
+        with st.expander("What could change the score"):
+            for item in expl["could_change"]:
+                st.markdown(f'<div style="font-size:0.845rem;color:{theme.MUTED};'
+                            f'margin-bottom:0.4rem;">{item}</div>', unsafe_allow_html=True)
+
+    if expl["unavailable"]:
+        with st.expander(f"{len(expl['unavailable'])} measures unavailable"):
+            for line in expl["unavailable"]:
+                st.markdown(f'<div style="font-size:0.82rem;color:{theme.MUTED};">{line}</div>',
+                            unsafe_allow_html=True)
+
+    # ── Price ────────────────────────────────────────────────
+    if hist is not None and not hist.empty:
+        theme.section("Share price, 12 months")
+        fig_co = go.Figure(go.Scatter(
+            x=hist.index, y=hist["Close"], mode="lines",
+            line=dict(color=theme.INK, width=1.4), hovertemplate="%{y:.2f}<extra></extra>",
+        ))
+        fig_co.update_layout(**theme.chart_layout_quiet(height=200))
+        st.plotly_chart(fig_co, width="stretch", config={"displayModeBar": False})
 
     # ── Score history ────────────────────────────────────────
-    # Only shown from real recorded snapshots. Nothing here is reconstructed:
-    # a past score cannot be recomputed from today's fundamentals.
-    st.markdown("---")
-    st.markdown("##### Score history")
+    theme.section("Score history")
     try:
         store = _score_history()
         snapshots = store.history(query)
-        summary = store.coverage_summary()
     except Exception:  # noqa: BLE001
-        snapshots, summary = [], {"days_of_history": 0}
+        snapshots = []
 
     if len(snapshots) < 2:
-        first_day = snapshots[0].taken_on.strftime("%d %B %Y") if snapshots else "today"
-        st.info(
-            f"**Score history starts building from {first_day}.** "
-            f"Past scores cannot be shown for earlier dates because the data source only "
-            f"provides today's financial figures — recalculating an old score from them "
-            f"would produce a number that looks like history but isn't. "
-            f"Come back after a few days of tracking and the change will appear here."
+        st.caption(
+            "Tracking began today. Earlier scores are not shown because they cannot be "
+            "recalculated — the data source provides only current figures."
         )
     else:
-        cols = st.columns(4)
-        latest = snapshots[-1]
-        cols[0].markdown(
-            f'<div style="font-size:0.64rem;letter-spacing:0.1em;text-transform:uppercase;'
-            f'color:#94a3b8;">Today</div><div style="font-size:1.5rem;font-weight:800;'
-            f'color:#0d1117;">{latest.overall:.0f}</div>' if latest.overall is not None else
-            '<div style="color:#94a3b8;">Today — unavailable</div>',
-            unsafe_allow_html=True,
-        )
-        for col, days, label in ((cols[1], 30, "30 days ago"),
-                                 (cols[2], 90, "90 days ago"),
-                                 (cols[3], 365, "1 year ago")):
+        cells = [("Today", snapshots[-1].overall, None)]
+        for days, label in ((30, "30 days"), (90, "90 days"), (365, "1 year")):
             snap = store.nearest(query, days, tolerance_days=max(7, days // 5))
-            if snap is None or snap.overall is None:
-                col.markdown(
-                    f'<div style="font-size:0.64rem;letter-spacing:0.1em;'
-                    f'text-transform:uppercase;color:#94a3b8;">{label}</div>'
-                    f'<div style="font-size:0.9rem;color:#cbd5e1;margin-top:0.35rem;">'
-                    f'Not tracked yet</div>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                col.markdown(
-                    f'<div style="font-size:0.64rem;letter-spacing:0.1em;'
-                    f'text-transform:uppercase;color:#94a3b8;">{label}</div>'
-                    f'<div style="font-size:1.5rem;font-weight:800;color:#0d1117;">'
-                    f'{snap.overall:.0f}</div>'
-                    f'<div style="font-size:0.62rem;color:#94a3b8;">'
-                    f'actually {snap.age_days} days ago</div>',
-                    unsafe_allow_html=True,
-                )
+            cells.append((label, snap.overall if snap else None,
+                          f"{snap.age_days}d ago" if snap else None))
+        st.markdown(
+            '<div class="bs-scores">' + "".join(
+                f'<div class="bs-score"><div class="bs-score-label">{label}</div>'
+                + (f'<div class="bs-score-value">{value:.0f}</div>' if value is not None
+                   else '<div class="bs-score-value na">Not tracked</div>')
+                + (f'<div class="bs-row-r">{note}</div>' if note else "")
+                + '</div>'
+                for label, value, note in cells
+            ) + '</div>', unsafe_allow_html=True)
 
-        earliest = store.nearest(query, 30, tolerance_days=400) or snapshots[0]
-        change = describe_change(latest, earliest)
-        st.markdown(f"<div style='margin-top:0.7rem;font-size:0.88rem;color:#334155;'>"
-                    f"{change['summary']}</div>", unsafe_allow_html=True)
+        earlier = store.nearest(query, 30, tolerance_days=400) or snapshots[0]
+        change = describe_change(snapshots[-1], earlier)
+        st.markdown(f'<div style="font-size:0.845rem;color:{theme.MUTED};margin-top:0.9rem;'
+                    f'max-width:70ch;">{change["summary"]}</div>', unsafe_allow_html=True)
 
-        chart_df = pd.DataFrame(
-            [{"Date": s.taken_on, "Score": s.overall}
-             for s in snapshots if s.overall is not None]
-        )
-        if len(chart_df) >= 2:
-            fig_hist = go.Figure(go.Scatter(
-                x=chart_df["Date"], y=chart_df["Score"], mode="lines+markers",
-                line=dict(color=GOLD, width=2),
-            ))
-            fig_hist.update_layout(**chart_layout(height=240, showlegend=False,
-                                                  yaxis_range=[0, 100]))
-            st.plotly_chart(fig_hist, width="stretch")
-
+    theme.hairline()
     st.caption(
-        f"Tracking {summary.get('days_of_history', 0)} day(s) of score history. "
-        f"Scores are recorded when a company is researched — they are never "
-        f"back-calculated for dates before tracking began."
-    )
-
-    # ── Price history ────────────────────────────────────────
-    hist = res.get("history")
-    if hist is not None and not hist.empty:
-        st.markdown("---")
-        st.markdown("##### Share price, last 12 months")
-        fig_co = go.Figure(go.Scatter(
-            x=hist.index, y=hist["Close"], mode="lines",
-            line=dict(color=GOLD, width=2), name="Close",
-        ))
-        fig_co.update_layout(**chart_layout(height=280, showlegend=False))
-        st.plotly_chart(fig_co, width="stretch")
-
-    # ── Provenance and limitations ───────────────────────────
-    st.markdown("---")
-    st.caption(
-        f"Scoring methodology v{SCORING_VERSION}. Data from {PROVIDER_NAME}, retrieved "
-        f"{res['fetched_at']:%d %B %Y at %H:%M} UTC. Prices may be delayed."
+        f"Methodology v{SCORING_VERSION}. {PROVIDER_NAME}, retrieved "
+        f"{res['fetched_at']:%d %b %Y}. Prices may be delayed."
         + ("" if PROVIDER_IS_LICENSED else
-           " This data source is for personal and development use and is not licensed for "
-           "commercial redistribution.")
+           " Not licensed for commercial redistribution.")
     )
-    if expl["unavailable"]:
-        with st.expander(f"⚠️ {len(expl['unavailable'])} measure(s) unavailable — see why"):
-            for line in expl["unavailable"]:
-                st.markdown(f"- {line}")
     st.caption(
-        "⚠️ This is research and education, not financial advice, and nothing here is a "
-        "recommendation to buy or sell any investment. Scores describe reported figures and past "
-        "price behaviour; they are not predictions. Investing carries risk and you may get back "
-        "less than you put in."
+        "Research and education only. Not financial advice, and not a recommendation to "
+        "buy or sell. Scores describe reported figures and past prices, not future returns."
     )
 
 
-# ════════════════════════════════════════════════════════════
-# PAGE 0b — COMPARE
-# ════════════════════════════════════════════════════════════
-elif page == "⚖️ Compare":
+
+elif page == "Compare":
 
     st.title("Compare companies")
     st.caption(
@@ -1348,16 +1033,16 @@ elif page == "⚖️ Compare":
     for col, tk in zip(cols, comp.tickers):
         overall = comp.overall[tk]
         conf = comp.confidence[tk]
-        conf_colour = {"high": "#16a34a", "moderate": "#b8960c", "low": "#dc2626"}[conf]
+        conf_colour = {"high": "#2f6b4f", "moderate": "#8d7434", "low": "#9b3b3b"}[conf]
         col.markdown(
-            f'<div style="background:#ffffff;border:1px solid #dde3ef;border-top:3px solid #b8960c;'
-            f'border-radius:6px;padding:0.9rem 1rem;">'
-            f'<div style="font-size:0.85rem;font-weight:700;color:#0d1117;">{names[tk]}</div>'
-            f'<div style="font-size:0.66rem;color:#94a3b8;margin-bottom:0.4rem;">{tk}</div>'
-            + (f'<div style="font-size:2rem;font-weight:800;color:#0d1117;line-height:1;">'
-               f'{overall:.0f}<span style="font-size:0.8rem;font-weight:400;color:#94a3b8;">'
+            f'<div style="background:#ffffff;border:1px solid #e7e4dd;border-top:3px solid #8d7434;'
+            f'border-radius:3px;padding:0.9rem 1rem;">'
+            f'<div style="font-size:0.85rem;font-weight:700;color:#12161f;">{names[tk]}</div>'
+            f'<div style="font-size:0.66rem;color:#9aa1ad;margin-bottom:0.4rem;">{tk}</div>'
+            + (f'<div style="font-size:2rem;font-weight:800;color:#12161f;line-height:1;">'
+               f'{overall:.0f}<span style="font-size:0.8rem;font-weight:400;color:#9aa1ad;">'
                f' / 100</span></div>' if overall is not None else
-               '<div style="font-size:0.95rem;color:#94a3b8;">Not scored</div>')
+               '<div style="font-size:0.95rem;color:#9aa1ad;">Not scored</div>')
             + f'<div style="font-size:0.7rem;color:{conf_colour};font-weight:600;">'
               f'{conf.title()} confidence</div></div>',
             unsafe_allow_html=True,
@@ -1405,12 +1090,12 @@ elif page == "⚖️ Compare":
     if comp.caveats:
         st.markdown("##### Worth knowing")
         for caveat in comp.caveats:
-            st.markdown(f"<div style='font-size:0.85rem;color:#334155;margin-bottom:0.3rem;'>"
+            st.markdown(f"<div style='font-size:0.85rem;color:#5f6672;margin-bottom:0.3rem;'>"
                         f"• {caveat}</div>", unsafe_allow_html=True)
 
     st.markdown("---")
     st.caption(
-        "⚠️ This is research and education, not financial advice, and nothing here is a "
+        "This is research and education, not financial advice, and nothing here is a "
         "recommendation to buy or sell any investment. Scores describe reported figures "
         "and past price behaviour; they are not predictions."
     )
@@ -1419,7 +1104,7 @@ elif page == "⚖️ Compare":
 # ════════════════════════════════════════════════════════════
 # PAGE 1 — MOMENTUM
 # ════════════════════════════════════════════════════════════
-elif page == "🔥 Momentum":
+elif page == "Discover" and _discover_tab == "Momentum":
 
     st.title("Momentum")
     st.caption("Ranked by a composite momentum score: price change, volume surge, RSI momentum, analyst sentiment, and short-term trend strength.")
@@ -1438,14 +1123,14 @@ elif page == "🔥 Momentum":
         index=0,
     )
     hot_top_n = st.sidebar.slider("Show top N", 5, 20, 10)
-    refresh_hot = st.sidebar.button("🔄 Refresh momentum scan", type="primary")
+    refresh_hot = st.sidebar.button("Refresh momentum scan", type="primary")
 
     # Cache key: refresh when button pressed or universe changes
     cache_key = f"hot_{hot_universe}"
     if refresh_hot or cache_key not in st.session_state:
         st.session_state[cache_key] = None
 
-    if _scan_gate(cache_key, "🔥 Run momentum scan", forced=refresh_hot,
+    if _scan_gate(cache_key, "Run momentum scan", forced=refresh_hot,
                   note="Scans your chosen universe for momentum. Pulls live data for "
                        "up to a few hundred tickers, so it takes a moment."):
         tickers_to_scan = get_universe(hot_universe)
@@ -1537,7 +1222,7 @@ elif page == "🔥 Momentum":
     if hot_df.empty:
         st.error(
             "The scan finished but no stocks came back. This is usually a temporary "
-            "data-provider hiccup — press **🔄 Refresh momentum scan** to try again, or "
+            "data-provider hiccup — press Refresh momentum scan to try again, or "
             "pick a different universe in the sidebar."
         )
         st.stop()
@@ -1557,19 +1242,19 @@ elif page == "🔥 Momentum":
         col_cls = "up" if row["week_chg"] >= 0 else "down"
         fund = row["fundamentals"]
         fund_txt = "—" if pd.isna(fund) else f"{fund:.0f}"
-        fund_col = ("#94a3b8" if pd.isna(fund)
-                    else "#16a34a" if fund >= 60 else "#dc2626" if fund < 45 else "#b8960c")
+        fund_col = ("#9aa1ad" if pd.isna(fund)
+                    else "#2f6b4f" if fund >= 60 else "#9b3b3b" if fund < 45 else "#8d7434")
         cols[i % 5].markdown(
-            f'<div class="hot-card">'
+            f'<div class="bs-panel">'
             f'<h3>{row["ticker"]}</h3>'
             f'<p><span class="{col_cls}">{arrow} {row["week_chg"]:+.1f}%</span></p>'
             f'<div style="display:flex;gap:0.9rem;margin:0.3rem 0 0.35rem;">'
-            f'  <div><div style="font-size:0.58rem;letter-spacing:0.08em;color:#94a3b8;">MOMENTUM</div>'
-            f'  <b style="font-size:1rem;color:#b8960c;">{row["momentum"]:.0f}</b></div>'
-            f'  <div><div style="font-size:0.58rem;letter-spacing:0.08em;color:#94a3b8;">BUSINESS</div>'
+            f'  <div><div style="font-size:0.58rem;letter-spacing:0.08em;color:#9aa1ad;">MOMENTUM</div>'
+            f'  <b style="font-size:1rem;color:#8d7434;">{row["momentum"]:.0f}</b></div>'
+            f'  <div><div style="font-size:0.58rem;letter-spacing:0.08em;color:#9aa1ad;">BUSINESS</div>'
             f'  <b style="font-size:1rem;color:{fund_col};">{fund_txt}</b></div>'
             f'</div>'
-            f'<small style="color:#64748b;font-size:0.66rem;">{row["profile"]}</small>'
+            f'<small style="color:#5f6672;font-size:0.66rem;">{row["profile"]}</small>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -1621,8 +1306,8 @@ elif page == "🔥 Momentum":
                 open=hist["Open"], high=hist["High"],
                 low=hist["Low"],   close=hist["Close"],
                 name=chart_ticker,
-                increasing_line_color="#16a34a",
-                decreasing_line_color="#dc2626",
+                increasing_line_color="#2f6b4f",
+                decreasing_line_color="#9b3b3b",
             ))
             sma20 = hist["Close"].rolling(20).mean()
             fig.add_trace(go.Scatter(x=hist.index, y=sma20, name="SMA 20",
@@ -1640,7 +1325,7 @@ elif page == "🔥 Momentum":
         hist = yf.Ticker(chart_ticker).history(period="1mo", interval="1d", auto_adjust=True)
         if not hist.empty:
             avg_vol = hist["Volume"].mean()
-            colors = [GOLD if v > avg_vol else "#dde3ef" for v in hist["Volume"]]
+            colors = [GOLD if v > avg_vol else "#e7e4dd" for v in hist["Volume"]]
             fig2 = go.Figure(go.Bar(
                 x=hist.index, y=hist["Volume"],
                 marker_color=colors, name="Volume",
@@ -1677,7 +1362,7 @@ elif page == "🔥 Momentum":
 # ════════════════════════════════════════════════════════════
 # PAGE 2 — HIDDEN GEMS
 # ════════════════════════════════════════════════════════════
-elif page == "💎 Hidden Gems":
+elif page == "Discover" and _discover_tab == "Hidden Gems":
 
     st.title("Hidden Gems")
     st.caption(
@@ -1718,7 +1403,7 @@ elif page == "💎 Hidden Gems":
         index=0,
     )
     gem_top_n   = st.sidebar.slider("Show top N gems", 5, 25, 10)
-    refresh_gem = st.sidebar.button("🔄 Find Hidden Gems", type="primary")
+    refresh_gem = st.sidebar.button("Find Hidden Gems", type="primary")
 
     st.sidebar.markdown("### Coverage threshold")
     st.sidebar.caption(
@@ -1730,7 +1415,7 @@ elif page == "💎 Hidden Gems":
     if refresh_gem or gem_cache_key not in st.session_state:
         st.session_state[gem_cache_key] = None
 
-    if _scan_gate(gem_cache_key, "💎 Find Hidden Gems", forced=refresh_gem,
+    if _scan_gate(gem_cache_key, "Find Hidden Gems", forced=refresh_gem,
                   note="Screens for sound businesses that few analysts follow. "
                        "Pulls live data for several hundred tickers."):
         scan_tickers  = get_universe(gem_universe)
@@ -1767,7 +1452,7 @@ elif page == "💎 Hidden Gems":
     if not assessed:
         st.warning(
             "No data came back for this universe. This is usually a temporary "
-            "data-provider issue — press **🔄 Find Hidden Gems** to try again."
+            "data-provider issue — press Find Hidden Gems to try again."
         )
         st.stop()
 
@@ -1826,17 +1511,17 @@ elif page == "💎 Hidden Gems":
             head, score_col = st.columns([3, 1])
             with head:
                 st.markdown(
-                    f'<div style="font-size:1.05rem;font-weight:700;color:#0d1117;">'
-                    f'{r.ticker} <span style="font-weight:400;color:#64748b;font-size:0.85rem;">'
+                    f'<div style="font-size:1.05rem;font-weight:700;color:#12161f;">'
+                    f'{r.ticker} <span style="font-weight:400;color:#5f6672;font-size:0.85rem;">'
                     f'{r.name}</span></div>',
                     unsafe_allow_html=True,
                 )
             with score_col:
                 st.markdown(
-                    f'<div style="text-align:right;font-size:1.3rem;font-weight:800;color:#b8960c;">'
-                    f'{sc.overall:.0f}<span style="font-size:0.75rem;font-weight:400;color:#94a3b8;">'
+                    f'<div style="text-align:right;font-size:1.3rem;font-weight:800;color:#8d7434;">'
+                    f'{sc.overall:.0f}<span style="font-size:0.75rem;font-weight:400;color:#9aa1ad;">'
                     f' / 100</span></div>'
-                    f'<div style="text-align:right;font-size:0.66rem;color:#94a3b8;">'
+                    f'<div style="text-align:right;font-size:0.66rem;color:#9aa1ad;">'
                     f'{sc.confidence} confidence</div>',
                     unsafe_allow_html=True,
                 )
@@ -1844,8 +1529,8 @@ elif page == "💎 Hidden Gems":
             st.markdown("**Why this company appears**")
             for label, evidence in r.passed:
                 st.markdown(
-                    f'<div style="font-size:0.83rem;color:#334155;margin-bottom:0.2rem;">'
-                    f'<span style="color:#16a34a;">✓</span> <b>{label}</b> — {evidence}</div>',
+                    f'<div style="font-size:0.83rem;color:#5f6672;margin-bottom:0.2rem;">'
+                    f'<span style="color:#2f6b4f;">✓</span> <b>{label}</b> — {evidence}</div>',
                     unsafe_allow_html=True,
                 )
             if r.unknown:
@@ -1855,14 +1540,14 @@ elif page == "💎 Hidden Gems":
             st.markdown("---")
 
     st.caption(
-        "⚠️ This is research and education, not financial advice, and nothing here is a "
+        "This is research and education, not financial advice, and nothing here is a "
         "recommendation to buy or sell any investment. Passing these tests does not mean a "
         "company is undervalued or that its share price will rise. Investing carries risk and "
         "you may get back less than you put in."
     )
 
 
-elif page == "⚠️ Holdings Review":
+elif page == "Watchlist":
 
     st.title("Holdings Review")
     st.caption(
@@ -1889,13 +1574,13 @@ elif page == "⚠️ Holdings Review":
     sw_bal   = st.sidebar.slider("Balance sheet stress",   0, 50, 20)
     sw_mkt   = st.sidebar.slider("Market / momentum",      0, 50, 20)
 
-    refresh_sell = st.sidebar.button("🔄 Review my holdings", type="primary")
+    refresh_sell = st.sidebar.button("Review my holdings", type="primary")
 
     sell_cache = f"sell_{'_'.join(sell_tickers)}"
     if refresh_sell or sell_cache not in st.session_state:
         st.session_state[sell_cache] = None
 
-    if _scan_gate(sell_cache, "⚠️ Analyse my holdings", forced=refresh_sell,
+    if _scan_gate(sell_cache, "Analyse my holdings", forced=refresh_sell,
                   note="Checks your holdings for warning signs. Pulls live data for "
                        "each ticker you listed in the sidebar."):
         rows = []
@@ -2053,9 +1738,9 @@ elif page == "⚠️ Holdings Review":
                 confidence = ("high" if overall_cov >= 0.85 else
                               "moderate" if overall_cov >= 0.60 else "low")
 
-                if sell_score >= 62:   verdict, verdict_cls = "⛔  Several factors to review", "fail-badge"
-                elif sell_score >= 40: verdict, verdict_cls = "⚠️  Some factors to review",    "warn-badge"
-                else:                  verdict, verdict_cls = "✅  Few factors flagged",        "pass-badge"
+                if sell_score >= 62:   verdict, verdict_cls = "Several factors to review", "fail-badge"
+                elif sell_score >= 40: verdict, verdict_cls = "Some factors to review",    "warn-badge"
+                else:                  verdict, verdict_cls = "Few factors flagged",        "pass-badge"
 
                 research = score_company(
                     ticker, _fundamentals_from_info(info, hist), info.get("sector"),
@@ -2115,7 +1800,7 @@ elif page == "⚠️ Holdings Review":
     if sell_df.empty:
         st.warning(
             "No data came back for those tickers. Check the symbols in the sidebar "
-            "(US tickers work best), then press **🔄 Review my holdings** to try again."
+            "(US tickers work best), then press Review my holdings to try again."
         )
         st.stop()
 
@@ -2152,10 +1837,10 @@ elif page == "⚠️ Holdings Review":
                 st.caption(f"**{tk}** — {change['summary']}")
                 continue
             arrow = "▲" if change["delta"] > 0 else ("▼" if change["delta"] < 0 else "▬")
-            colour = ("#16a34a" if change["delta"] > 0
-                      else "#dc2626" if change["delta"] < 0 else "#94a3b8")
+            colour = ("#2f6b4f" if change["delta"] > 0
+                      else "#9b3b3b" if change["delta"] < 0 else "#9aa1ad")
             st.markdown(
-                f"<div style='margin-bottom:0.45rem;font-size:0.9rem;color:#334155;'>"
+                f"<div style='margin-bottom:0.45rem;font-size:0.9rem;color:#5f6672;'>"
                 f"<b>{tk}</b> <span style='color:{colour};font-weight:700;'>{arrow} "
                 f"{change['delta']:+.0f}</span> — {change['summary']}</div>",
                 unsafe_allow_html=True,
@@ -2169,17 +1854,17 @@ elif page == "⚠️ Holdings Review":
     for i, (_, row) in enumerate(sell_df.iterrows()):
         score = row["sell_score"]
         if score >= 62:
-            bg, border = "#fff5f5", "#dc2626"
+            bg, border = "#fff5f5", "#9b3b3b"
         elif score >= 40:
-            bg, border = "#fffbeb", "#b8960c"
+            bg, border = "#fffbeb", "#8d7434"
         else:
-            bg, border = "#f0fdf4", "#16a34a"
+            bg, border = "#f0fdf4", "#2f6b4f"
         cols[i].markdown(
             f'<div style="background:{bg}; border:1px solid {border}; border-top:3px solid {border}; '
-            f'border-radius:6px; padding:0.85rem 1rem; box-shadow:0 1px 4px rgba(0,0,0,0.05);">'
-            f'<div style="font-size:0.85rem; font-weight:700; color:#0d1117;">{row["ticker"]}</div>'
+            f'border-radius:3px; padding:0.85rem 1rem;">'
+            f'<div style="font-size:0.85rem; font-weight:700; color:#12161f;">{row["ticker"]}</div>'
             f'<div style="font-size:1.6rem; font-weight:800; color:{border}; line-height:1.1; margin:0.2rem 0;">{score:.0f}</div>'
-            f'<div style="font-size:0.68rem; color:#64748b; text-transform:uppercase; letter-spacing:0.07em;">Factors flagged</div>'
+            f'<div style="font-size:0.68rem; color:#5f6672; text-transform:uppercase; letter-spacing:0.07em;">Factors flagged</div>'
             f'<div style="font-size:0.75rem; font-weight:600; color:{border}; margin-top:0.35rem;">{row["verdict"]}</div>'
             f'</div>',
             unsafe_allow_html=True,
@@ -2192,7 +1877,7 @@ elif page == "⚠️ Holdings Review":
     fig_sell = go.Figure()
     comp_cols  = ["val_warn", "fund_warn", "bal_warn", "mkt_warn"]
     comp_names = ["Overvaluation", "Fundamental Decline", "Balance Sheet Stress", "Market/Momentum"]
-    comp_clrs  = ["#dc2626", "#b8960c", "#7c3aed", "#2563eb"]
+    comp_clrs  = ["#9b3b3b", "#8d7434", "#7c3aed", "#2563eb"]
 
     for col, name, clr in zip(comp_cols, comp_names, comp_clrs):
         fig_sell.add_trace(go.Bar(
@@ -2201,12 +1886,12 @@ elif page == "⚠️ Holdings Review":
         ))
 
     # Threshold lines
-    fig_sell.add_hline(y=62, line_dash="dash", line_color="#dc2626", line_width=1.2,
+    fig_sell.add_hline(y=62, line_dash="dash", line_color="#9b3b3b", line_width=1.2,
                        annotation_text="Several factors flagged", annotation_position="right",
-                       annotation_font=dict(color="#dc2626", size=10))
-    fig_sell.add_hline(y=40, line_dash="dot",  line_color="#b8960c", line_width=1,
+                       annotation_font=dict(color="#9b3b3b", size=10))
+    fig_sell.add_hline(y=40, line_dash="dot",  line_color="#8d7434", line_width=1,
                        annotation_text="Watch zone", annotation_position="right",
-                       annotation_font=dict(color="#b8960c", size=10))
+                       annotation_font=dict(color="#8d7434", size=10))
 
     fig_sell.update_layout(**chart_layout(
         barmode="group", height=380,
@@ -2226,7 +1911,7 @@ elif page == "⚠️ Holdings Review":
                   "insider_sell", "near_52h_pct"]
     rename_sell = {
         "ticker": "Ticker", "name": "Company",
-        "sell_score": "⚠️ Factors flagged", "verdict": "Summary",
+        "sell_score": "Factors flagged", "verdict": "Summary",
         "pe": "P/E", "peg": "PEG",
         "rev_growth": "Rev Gr%", "earn_growth": "EPS Gr%",
         "net_margin": "Net Mgn%", "roe": "ROE%",
@@ -2253,9 +1938,9 @@ elif page == "⚠️ Holdings Review":
         # reassuring green badge built from data we never had.
         if score is None or pd.isna(score):
             return '<span class="warn-badge">Not assessed — data unavailable</span>'
-        if score >= 62: return f'<span class="fail-badge">⛔ High ({score:.0f})</span>'
-        if score >= 40: return f'<span class="warn-badge">⚠️ Medium ({score:.0f})</span>'
-        return f'<span class="pass-badge">✅ Low ({score:.0f})</span>'
+        if score >= 62: return f'<span style="color:#9b3b3b;">High ({score:.0f})</span>'
+        if score >= 40: return f'<span style="color:#8a6a2f;">Medium ({score:.0f})</span>'
+        return f'<span style="color:#2f6b4f;">Low ({score:.0f})</span>'
 
     with c1:
         st.markdown("**Overvaluation**")
@@ -2329,7 +2014,7 @@ elif page == "⚠️ Holdings Review":
             fig_price = go.Figure()
             fig_price.add_trace(go.Scatter(
                 x=hist6.index, y=closes, name="Price",
-                line=dict(color="#0d1117", width=1.8),
+                line=dict(color="#12161f", width=1.8),
                 fill="tozeroy", fillcolor="rgba(184,150,12,0.07)",
             ))
             fig_price.add_trace(go.Scatter(
@@ -2338,7 +2023,7 @@ elif page == "⚠️ Holdings Review":
             ))
             fig_price.add_trace(go.Scatter(
                 x=hist6.index, y=sma200_line, name="SMA 200",
-                line=dict(color="#dc2626", width=1.4, dash="dash"),
+                line=dict(color="#9b3b3b", width=1.4, dash="dash"),
             ))
             fig_price.update_layout(**chart_layout(
                 height=340,
@@ -2351,7 +2036,7 @@ elif page == "⚠️ Holdings Review":
     # ── Disclaimer ───────────────────────────────────────────────
     st.markdown("---")
     st.caption(
-        "⚠️ Holdings Review is a research tool, not financial advice. "
+        "Holdings Review is a research tool, not financial advice. "
         "A high sell score means the data warrants a closer look — not an automatic exit. "
         "Always consider your own tax situation and time horizon, and seek independent advice if you need it."
     )
@@ -2367,7 +2052,7 @@ elif page == "⚠️ Holdings Review":
 # ════════════════════════════════════════════════════════════
 # PAGE 4 — SCREENER
 # ════════════════════════════════════════════════════════════
-elif page == "🔍 Screener":
+elif page == "Screener":
     st.title("Screener")
 
     st.sidebar.markdown("### Mode")
@@ -2413,12 +2098,12 @@ elif page == "🔍 Screener":
                 custom_limits[key] = st.sidebar.slider(label, 0, 100, (0, 100), key=f"_scr_{key}")
             custom_limits = {k: v for k, v in custom_limits.items() if v != (0, 100)}
 
-        sc_refresh = st.sidebar.button("🔍 Run screen", type="primary")
+        sc_refresh = st.sidebar.button("Run screen", type="primary")
         sc_key = f"screen_{sc_universe}"
         if sc_refresh or sc_key not in st.session_state:
             st.session_state[sc_key] = None
 
-        if _scan_gate(sc_key, "🔍 Run screen", forced=sc_refresh,
+        if _scan_gate(sc_key, "Run screen", forced=sc_refresh,
                       note="Scores every company in the universe, then applies your "
                            "filters. Pulls live data for several hundred tickers."):
             tickers = get_universe(sc_universe)
@@ -2444,7 +2129,7 @@ elif page == "🔍 Screener":
         if scored is None:
             st.stop()
         if not scored:
-            st.warning("No data came back. Press **🔍 Run screen** to try again.")
+            st.warning("No data came back. Press Run screen to try again.")
             st.stop()
 
         names = {sc.ticker: nm for sc, nm, _ in scored}
@@ -2511,7 +2196,7 @@ elif page == "🔍 Screener":
         )
         st.markdown("---")
         st.caption(
-            "⚠️ This is research and education, not financial advice, and nothing here is "
+            "This is research and education, not financial advice, and nothing here is "
             "a recommendation to buy or sell any investment. Passing a screen means a "
             "company's reported figures match a pattern — nothing more."
         )
@@ -2668,7 +2353,7 @@ elif page == "🔍 Screener":
     df = pd.DataFrame(results)
 
     # ── Tabs ─────────────────────────────────────────────────
-    tab1, tab2, tab3 = st.tabs(["📋 Results table", "📊 Score breakdown", "🔎 Stock deep dive"])
+    tab1, tab2, tab3 = st.tabs(["Results table", "Score breakdown", "Stock deep dive"])
 
     with tab1:
         st.markdown(f"**Top {min(top_n, len(results))} results — ranked by composite score**")
@@ -2795,18 +2480,17 @@ elif page == "🔍 Screener":
 # ════════════════════════════════════════════════════════════
 # PAGE 5 — T212 ISA
 # ════════════════════════════════════════════════════════════
-elif page == "🇬🇧 UK Investor":
+elif page == "UK Investor":
 
     st.title("UK Investor")
 
     # ISA benefit banner
     st.markdown("""
-    <div style="background:#ffffff; border:1px solid #dde3ef; border-left:4px solid #b8960c;
-                border-radius:6px; padding:0.85rem 1.2rem; margin-bottom:1.2rem;
-                box-shadow:0 1px 4px rgba(0,0,0,0.05);">
-        <div style="font-size:0.8rem; font-weight:700; color:#b8960c; letter-spacing:0.1em;
+    <div style="background:#ffffff; border:1px solid #e7e4dd; border-left:4px solid #8d7434;
+                border-radius:3px; padding:0.85rem 1.2rem; margin-bottom:1.2rem;">
+        <div style="font-size:0.8rem; font-weight:700; color:#8d7434; letter-spacing:0.1em;
                     text-transform:uppercase; margin-bottom:0.3rem;">🇬🇧 Stocks & Shares ISA</div>
-        <div style="font-size:0.85rem; color:#475569; line-height:1.5;">
+        <div style="font-size:0.85rem; color:#5f6672; line-height:1.5;">
             All gains and dividends earned inside a Stocks & Shares ISA are
             <strong>completely tax-free</strong> — no Capital Gains Tax, no dividend income tax.
             This page screens stocks that are available on Trading 212's ISA platform.
@@ -2826,12 +2510,12 @@ elif page == "🇬🇧 UK Investor":
 
     t212_mode = st.sidebar.radio(
         "Analysis mode",
-        ["🔥 Top Movers", "💎 Best Opportunities", "🔍 Screen"],
+        ["Top Movers", "Best Opportunities", "Screen"],
         index=0,
     )
 
     t212_top_n = st.sidebar.slider("Show top N", 5, 25, 12)
-    refresh_t212 = st.sidebar.button("🔄 Refresh Data", type="primary")
+    refresh_t212 = st.sidebar.button("Refresh Data", type="primary")
 
     # ── Sector filtering ─────────────────────────────────────
     ALL_T212 = get_trading212_isa()
@@ -2876,7 +2560,7 @@ elif page == "🇬🇧 UK Investor":
     # ══════════════════════════════════════════════════════════
     # MODE A — TOP MOVERS (momentum)
     # ══════════════════════════════════════════════════════════
-    if t212_mode == "🔥 Top Movers":
+    if t212_mode == "Top Movers":
 
         t212_cache_key = f"t212_hot_{t212_sector}"
         if refresh_t212 or t212_cache_key not in st.session_state:
@@ -2973,7 +2657,7 @@ elif page == "🇬🇧 UK Investor":
             arrow = "▲" if row["week_chg"] >= 0 else "▼"
             cls   = "up" if row["week_chg"] >= 0 else "down"
             cols[i % 5].markdown(
-                f'<div class="hot-card">'
+                f'<div class="bs-panel">'
                 f'<h3>{row["ticker"]}</h3>'
                 f'<p><span class="{cls}">{arrow} {row["week_chg"]:+.1f}%</span></p>'
                 f'<small style="color:#a0a0b0">Score: {row["hot_score"]:.0f} &nbsp;|&nbsp; '
@@ -2991,7 +2675,7 @@ elif page == "🇬🇧 UK Investor":
             "ticker": "Ticker", "currency": "CCY", "price": "Price",
             "week_chg": "Week %", "month_chg": "Month %",
             "vol_surge": "Vol Surge", "rsi": "RSI (14)",
-            "vs_sma20": "vs SMA20%", "hot_score": "🔥 Score",
+            "vs_sma20": "vs SMA20%", "hot_score": "Score",
         })
         st.dataframe(display_df, hide_index=True, width="stretch")
 
@@ -3006,7 +2690,7 @@ elif page == "🇬🇧 UK Investor":
                 fig.add_trace(go.Candlestick(
                     x=hist.index, open=hist["Open"], high=hist["High"],
                     low=hist["Low"], close=hist["Close"], name=chart_t,
-                    increasing_line_color="#16a34a", decreasing_line_color="#dc2626",
+                    increasing_line_color="#2f6b4f", decreasing_line_color="#9b3b3b",
                 ))
                 fig.add_trace(go.Scatter(
                     x=hist.index, y=hist["Close"].rolling(20).mean(),
@@ -3023,7 +2707,7 @@ elif page == "🇬🇧 UK Investor":
     # ══════════════════════════════════════════════════════════
     # MODE B — BEST OPPORTUNITIES (fundamental value score)
     # ══════════════════════════════════════════════════════════
-    elif t212_mode == "💎 Best Opportunities":
+    elif t212_mode == "Best Opportunities":
 
         st.markdown(
             "Ranks T212 stocks by a combined **value + growth + quality** score — "
@@ -3158,7 +2842,7 @@ elif page == "🇬🇧 UK Investor":
         for i, (_, row) in enumerate(top_opp.head(5).iterrows()):
             peg_str = f"PEG {row['peg']:.2f}" if row["peg"] else f"P/E {row['pe']}" if row["pe"] else "—"
             cols[i % 5].markdown(
-                f'<div class="hot-card">'
+                f'<div class="bs-panel">'
                 f'<h3>{row["ticker"]}</h3>'
                 f'<p style="font-size:1.4rem">{row["isa_score"]:.0f}'
                 f'<small style="font-size:0.8rem;color:#a0a0b0"> / 100</small></p>'
@@ -3214,7 +2898,7 @@ elif page == "🇬🇧 UK Investor":
     # ══════════════════════════════════════════════════════════
     # MODE C — FULL SCREENER (within T212 universe)
     # ══════════════════════════════════════════════════════════
-    elif t212_mode == "🔍 Screen":
+    elif t212_mode == "Screen":
 
         st.markdown(
             "Run a full fundamental screen — using the same long-term or swing filters — "
@@ -3353,7 +3037,7 @@ elif page == "🇬🇧 UK Investor":
     # ── ISA disclaimer ───────────────────────────────────────
     st.markdown("---")
     st.caption(
-        "⚠️ This tool provides data-driven analysis only — not financial advice. "
+        "This tool provides data-driven analysis only — not financial advice. "
         "ISA allowances, tax rules and T212 instrument availability are subject to change. "
         "Always verify stock availability directly in the Trading 212 app before investing."
     )
@@ -3362,16 +3046,15 @@ elif page == "🇬🇧 UK Investor":
 # ════════════════════════════════════════════════════════════
 # PAGE 6 — HEDGE FUND ENGINE
 # ════════════════════════════════════════════════════════════
-elif page == "📊 Research":
+elif page == "Discover" and _discover_tab == "All companies":
 
     st.markdown("""
-    <div style="padding:1.4rem 1.8rem 1.2rem; background:#ffffff; border:1px solid #dde3ef;
-                border-left:5px solid #b8960c; border-radius:8px; margin-bottom:1.4rem;
-                box-shadow:0 2px 10px rgba(0,0,0,0.06);">
-        <div style="font-size:1.9rem; font-weight:800; color:#0d1117; letter-spacing:-0.02em; line-height:1.1;">
+    <div style="padding:1.4rem 1.8rem 1.2rem; background:#ffffff; border:1px solid #e7e4dd;
+                border-left:5px solid #8d7434; border-radius:4px; margin-bottom:1.4rem;">
+        <div style="font-size:1.9rem; font-weight:800; color:#12161f; letter-spacing:-0.02em; line-height:1.1;">
             📊 Stock Research
         </div>
-        <div style="font-size:0.88rem; color:#475569; margin-top:0.5rem; line-height:1.6; max-width:780px;">
+        <div style="font-size:0.88rem; color:#5f6672; margin-top:0.5rem; line-height:1.6; max-width:780px;">
             Scores every company in your chosen universe and explains, in plain English, what its numbers
             show. Each company gets a research score, a written summary of its strengths and risks, its
             risk characteristics, and the profile that best describes it —
@@ -3411,7 +3094,7 @@ elif page == "📊 Research":
         min_value=500, max_value=500_000, value=10_000, step=500,
     )
 
-    refresh_hf = st.sidebar.button("🔄 Run research scan", type="primary")
+    refresh_hf = st.sidebar.button("Run research scan", type="primary")
 
     # Risk profile → position sizing caps
     risk_caps = {
@@ -3425,7 +3108,7 @@ elif page == "📊 Research":
         st.session_state[hf_cache_key] = None
 
     # ── Data fetch & scoring ──────────────────────────────────
-    if _scan_gate(hf_cache_key, "📊 Run research scan", forced=refresh_hf,
+    if _scan_gate(hf_cache_key, "Run research scan", forced=refresh_hf,
                   note="Scores and explains every company in your chosen universe. "
                        "This is the heaviest scan in the app — up to ~360 tickers."):
         scan_tickers  = get_universe(hf_universe)
@@ -3615,10 +3298,10 @@ elif page == "📊 Research":
 
                     # Primary strategy classification
                     scores_map = {
-                        "🚀 Momentum":  momentum_score,
-                        "🔄 Oversold":    bounce_score,
-                        "⚡ Growth":  catalyst_score,
-                        "🎯 Consolidating":  breakout_score,
+                        "Momentum":  momentum_score,
+                        "Oversold":    bounce_score,
+                        "Growth":  catalyst_score,
+                        "Consolidating":  breakout_score,
                     }
                     primary_strategy = max(scores_map, key=scores_map.get)
 
@@ -3729,7 +3412,7 @@ elif page == "📊 Research":
     if hf_df.empty:
         st.error(
             "The scan finished but no stocks came back. This is usually a temporary "
-            "data-provider hiccup — press **🔄 Run research scan** to try again, or pick a "
+            "data-provider hiccup — press Run research scan to try again, or pick a "
             "smaller universe in the sidebar."
         )
         st.stop()
@@ -3751,7 +3434,7 @@ elif page == "📊 Research":
 
     # ── STRATEGY TABS ─────────────────────────────────────────
     tab_all, tab_mom, tab_bnc, tab_cat, tab_brk, tab_risk, tab_returns = st.tabs([
-        "🎯 All companies", "🚀 Momentum", "🔄 Oversold", "⚡ Growth", "🎯 Consolidating", "⚠️ Risk", "💰 Scenarios",
+        "All companies", "Momentum", "Oversold", "Growth", "Consolidating", "Risk", "Scenarios",
     ])
 
     # ── Helper: render a strategy card grid ───────────────────
@@ -3766,54 +3449,54 @@ elif page == "📊 Research":
             win_p = row["best_score"] / 100
             exp_r = win_p * (row["reward_pct"] or 0) - (1 - win_p) * (row["stop_pct"] or 0)
 
-            border_clr = "#16a34a" if conv=="high" else "#b8960c" if conv=="med" else "#64748b"
-            badge = "🟢 HIGH" if conv=="high" else "🟡 MED" if conv=="med" else "⚪ LOW"
-            sec   = f'<span style="font-size:0.72rem;color:#94a3b8;">&nbsp;+{row["secondary_strategy"]}</span>' if row.get("secondary_strategy") else ""
+            border_clr = "#2f6b4f" if conv=="high" else "#8d7434" if conv=="med" else "#5f6672"
+            badge = "HIGH" if conv=="high" else "MED" if conv=="med" else "LOW"
+            sec   = f'<span style="font-size:0.72rem;color:#9aa1ad;">&nbsp;+{row["secondary_strategy"]}</span>' if row.get("secondary_strategy") else ""
 
             snap   = generate_hf_summary(row.to_dict())
             bull1  = snap["bull_factors"][0][:95] + "…" if snap["bull_factors"] and len(snap["bull_factors"][0]) > 95 else (snap["bull_factors"][0] if snap["bull_factors"] else "")
             bear1  = snap["bear_factors"][0][:85] + "…" if snap["bear_factors"] and len(snap["bear_factors"][0]) > 85 else (snap["bear_factors"][0] if snap["bear_factors"] else "")
 
             col.markdown(
-                f'<div style="background:#ffffff; border:1px solid #dde3ef; '
-                f'border-top:4px solid {border_clr}; border-radius:8px; '
+                f'<div style="background:#ffffff; border:1px solid #e7e4dd; '
+                f'border-top:4px solid {border_clr}; border-radius:4px; '
                 f'padding:1.2rem 1.3rem 1.1rem; margin-bottom:0.8rem; '
-                f'box-shadow:0 2px 8px rgba(0,0,0,0.07);">'
+                f'">'
 
                 # Header row
                 f'<div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.2rem;">'
-                f'  <div style="font-size:1.15rem; font-weight:800; color:#b8960c; letter-spacing:0.01em;">{row["ticker"]}{sec}</div>'
+                f'  <div style="font-size:1.15rem; font-weight:800; color:#8d7434; letter-spacing:0.01em;">{row["ticker"]}{sec}</div>'
                 f'  <div style="font-size:0.68rem; font-weight:700; color:{border_clr}; letter-spacing:0.07em;">{badge}</div>'
                 f'</div>'
-                f'<div style="font-size:0.76rem; color:#64748b; margin-bottom:0.6rem;">{row["name"]} &nbsp;·&nbsp; {row["primary_strategy"]}</div>'
+                f'<div style="font-size:0.76rem; color:#5f6672; margin-bottom:0.6rem;">{row["name"]} &nbsp;·&nbsp; {row["primary_strategy"]}</div>'
 
                 # Score
-                f'<div style="font-size:2rem; font-weight:900; color:#0d1117; line-height:1; margin-bottom:0.5rem;">{score:.0f}'
-                f'  <span style="font-size:0.8rem; font-weight:400; color:#94a3b8;">/ 100</span>'
+                f'<div style="font-size:2rem; font-weight:900; color:#12161f; line-height:1; margin-bottom:0.5rem;">{score:.0f}'
+                f'  <span style="font-size:0.8rem; font-weight:400; color:#9aa1ad;">/ 100</span>'
                 f'</div>'
 
                 # Metrics grid
-                f'<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.3rem; font-size:0.78rem; color:#475569; margin-bottom:0.5rem;">'
-                f'  <div><span style="color:#94a3b8;font-size:0.68rem;">PRICE</span><br><b>${row["price"]:.2f}</b></div>'
-                f'  <div><span style="color:#94a3b8;font-size:0.68rem;">WEEK</span><br><b style="color:{"#16a34a" if row["chg_1w"]>=0 else "#dc2626"}">{row["chg_1w"]:+.1f}%</b></div>'
-                f'  <div><span style="color:#94a3b8;font-size:0.68rem;">RSI</span><br><b>{row["rsi"]:.0f}</b></div>'
-                f'  <div><span style="color:#94a3b8;font-size:0.68rem;">TYP. DOWNSIDE</span><br><b style="color:#64748b">−{stop:.1f}%</b></div>'
-                f'  <div><span style="color:#94a3b8;font-size:0.68rem;">VOLATILITY</span><br><b style="color:#64748b">{row["atr_pct"]:.1f}%</b></div>'
-                f'  <div><span style="color:#94a3b8;font-size:0.68rem;">EXP. RET</span><br><b style="color:{"#16a34a" if exp_r>=0 else "#dc2626"}">{exp_r:+.1f}%</b></div>'
+                f'<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.3rem; font-size:0.78rem; color:#5f6672; margin-bottom:0.5rem;">'
+                f'  <div><span style="color:#9aa1ad;font-size:0.68rem;">PRICE</span><br><b>${row["price"]:.2f}</b></div>'
+                f'  <div><span style="color:#9aa1ad;font-size:0.68rem;">WEEK</span><br><b style="color:{"#2f6b4f" if row["chg_1w"]>=0 else "#9b3b3b"}">{row["chg_1w"]:+.1f}%</b></div>'
+                f'  <div><span style="color:#9aa1ad;font-size:0.68rem;">RSI</span><br><b>{row["rsi"]:.0f}</b></div>'
+                f'  <div><span style="color:#9aa1ad;font-size:0.68rem;">TYP. DOWNSIDE</span><br><b style="color:#5f6672">−{stop:.1f}%</b></div>'
+                f'  <div><span style="color:#9aa1ad;font-size:0.68rem;">VOLATILITY</span><br><b style="color:#5f6672">{row["atr_pct"]:.1f}%</b></div>'
+                f'  <div><span style="color:#9aa1ad;font-size:0.68rem;">EXP. RET</span><br><b style="color:{"#2f6b4f" if exp_r>=0 else "#9b3b3b"}">{exp_r:+.1f}%</b></div>'
                 f'</div>'
 
                 # Bull snippet
-                + (f'<div style="padding:0.4rem 0.6rem; background:#f0fdf4; border-left:2px solid #16a34a; '
+                + (f'<div style="padding:0.4rem 0.6rem; background:#f0fdf4; border-left:2px solid #2f6b4f; '
                    f'border-radius:0 4px 4px 0; font-size:0.74rem; color:#1e4a2f; line-height:1.4; margin-bottom:0.3rem;">'
                    f'▲ {bull1}</div>' if bull1 else "")
 
                 # Bear snippet
-                + (f'<div style="padding:0.4rem 0.6rem; background:#fff5f5; border-left:2px solid #dc2626; '
+                + (f'<div style="padding:0.4rem 0.6rem; background:#fff5f5; border-left:2px solid #9b3b3b; '
                    f'border-radius:0 4px 4px 0; font-size:0.74rem; color:#4a1e1e; line-height:1.4; margin-bottom:0.5rem;">'
                    f'▼ {bear1}</div>' if bear1 else "")
 
                 + f'<div style="padding:0.38rem 0.6rem; background:#f8fafc; border-radius:4px; '
-                f'font-size:0.74rem; color:#475569;">'
+                f'font-size:0.74rem; color:#5f6672;">'
                 f'  📊 Beta <b>{row["beta"]:.2f}</b> &nbsp;·&nbsp; Analyst upside <b>{row["reward_pct"]:+.0f}%</b>'
                 f'</div>'
                 f'</div>',
@@ -3861,41 +3544,41 @@ elif page == "📊 Research":
         for idx, (_, row) in enumerate(top_all.head(6).iterrows()):
             col = cols[idx % 3]
             conv  = row["score_band"]
-            border_clr = "#16a34a" if conv=="high" else "#b8960c" if conv=="med" else "#64748b"
-            badge = "🟢 HIGH" if conv=="high" else "🟡 MED" if conv=="med" else "⚪ LOW"
-            sec   = f' <span style="font-size:0.7rem;color:#94a3b8;">+{row["secondary_strategy"]}</span>' if row.get("secondary_strategy") else ""
+            border_clr = "#2f6b4f" if conv=="high" else "#8d7434" if conv=="med" else "#5f6672"
+            badge = "HIGH" if conv=="high" else "MED" if conv=="med" else "LOW"
+            sec   = f' <span style="font-size:0.7rem;color:#9aa1ad;">+{row["secondary_strategy"]}</span>' if row.get("secondary_strategy") else ""
             # Quick one-liner from the summary engine
             snap  = generate_hf_summary(row.to_dict())
             bull1 = snap["bull_factors"][0] if snap["bull_factors"] else ""
             bull1_short = bull1[:90] + "…" if len(bull1) > 90 else bull1
             col.markdown(
-                f'<div style="background:#ffffff; border:1px solid #dde3ef; '
-                f'border-top:3px solid {border_clr}; border-radius:6px; '
+                f'<div style="background:#ffffff; border:1px solid #e7e4dd; '
+                f'border-top:3px solid {border_clr}; border-radius:3px; '
                 f'padding:1rem 1.1rem 0.9rem; margin-bottom:0.6rem; '
-                f'box-shadow:0 1px 4px rgba(0,0,0,0.05);">'
+                f'">'
                 f'<div style="display:flex; justify-content:space-between;">'
-                f'  <span style="font-size:1rem; font-weight:700; color:#b8960c;">{row["ticker"]}</span>'
+                f'  <span style="font-size:1rem; font-weight:700; color:#8d7434;">{row["ticker"]}</span>'
                 f'  <span style="font-size:0.65rem; font-weight:600; color:{border_clr};">{badge}</span>'
                 f'</div>'
-                f'<div style="font-size:0.7rem; color:#94a3b8; margin:0.1rem 0 0.4rem;">'
+                f'<div style="font-size:0.7rem; color:#9aa1ad; margin:0.1rem 0 0.4rem;">'
                 f'  {row["primary_strategy"]}{sec}'
                 f'</div>'
-                f'<div style="font-size:1.6rem; font-weight:800; color:#0d1117; line-height:1;">'
-                f'  {row["best_score"]:.0f}<span style="font-size:0.75rem;font-weight:400;color:#94a3b8;"> / 100</span>'
+                f'<div style="font-size:1.6rem; font-weight:800; color:#12161f; line-height:1;">'
+                f'  {row["best_score"]:.0f}<span style="font-size:0.75rem;font-weight:400;color:#9aa1ad;"> / 100</span>'
                 f'</div>'
                 f'<hr style="border:none;border-top:1px solid #f0f4fa;margin:0.45rem 0;">'
-                f'<div style="font-size:0.75rem; color:#475569; display:grid; grid-template-columns:1fr 1fr; gap:0.2rem;">'
+                f'<div style="font-size:0.75rem; color:#5f6672; display:grid; grid-template-columns:1fr 1fr; gap:0.2rem;">'
                 f'  <div>${row["price"]:.2f}</div>'
-                f'  <div style="color:{"#16a34a" if row["chg_1w"]>=0 else "#dc2626"}">{row["chg_1w"]:+.1f}% wk</div>'
-                f'  <div>Typical swing: <b style="color:#64748b">{row["atr_pct"]:.1f}%</b></div>'
-                f'  <div>Beta: <b style="color:#64748b">{row["beta"]:.2f}</b></div>'
+                f'  <div style="color:{"#2f6b4f" if row["chg_1w"]>=0 else "#9b3b3b"}">{row["chg_1w"]:+.1f}% wk</div>'
+                f'  <div>Typical swing: <b style="color:#5f6672">{row["atr_pct"]:.1f}%</b></div>'
+                f'  <div>Beta: <b style="color:#5f6672">{row["beta"]:.2f}</b></div>'
                 f'</div>'
                 + (f'<div style="margin-top:0.5rem; padding:0.4rem 0.5rem; background:#f8fafc; '
-                   f'border-radius:4px; font-size:0.72rem; color:#475569; line-height:1.4; '
-                   f'border-left:2px solid #16a34a;">'
+                   f'border-radius:4px; font-size:0.72rem; color:#5f6672; line-height:1.4; '
+                   f'border-left:2px solid #2f6b4f;">'
                    f'▲ {bull1_short}'
                    f'</div>' if bull1 else "")
-                + f'<div style="margin-top:0.4rem;font-size:0.72rem;color:#94a3b8;">Volatility {row["atr_pct"]:.1f}% · Beta {row["beta"]:.2f}</div>'
+                + f'<div style="margin-top:0.4rem;font-size:0.72rem;color:#9aa1ad;">Volatility {row["atr_pct"]:.1f}% · Beta {row["beta"]:.2f}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -3911,7 +3594,7 @@ elif page == "📊 Research":
             labels=strat_counts.index.tolist(),
             values=strat_counts.values.tolist(),
             hole=0.55,
-            marker_colors=[GOLD, "#2563eb", "#16a34a", "#7c3aed"],
+            marker_colors=[GOLD, "#2563eb", "#2f6b4f", "#7c3aed"],
             textinfo="label+percent",
             textfont=dict(size=12),
         ))
@@ -3923,7 +3606,7 @@ elif page == "📊 Research":
 
         # ── Deep Dive panel ──────────────────────────────────────
         st.markdown("---")
-        st.markdown("### 🔎 Stock deep dive — full analysis")
+        st.markdown("### Stock deep dive")
         st.markdown("Select any stock from the scan to get a detailed narrative breakdown.")
 
         dive_ticker = st.selectbox(
@@ -3938,27 +3621,27 @@ elif page == "📊 Research":
         strat      = dive_row.get("primary_strategy", "")
         sec_strat  = dive_row.get("secondary_strategy", "")
         conv       = dive_row.get("score_band", "med")
-        conv_clr   = "#16a34a" if conv=="high" else "#b8960c" if conv=="med" else "#64748b"
-        conv_lbl   = {"high":"🟢 HIGH SCORE","med":"🟡 MID SCORE","low":"⚪ LOW SCORE"}.get(conv,"")
+        conv_clr   = "#2f6b4f" if conv=="high" else "#8d7434" if conv=="med" else "#5f6672"
+        conv_lbl   = {"high":"HIGH SCORE","med":"MID SCORE","low":"LOW SCORE"}.get(conv,"")
 
         st.markdown(
-            f'<div style="background:#ffffff; border:1px solid #dde3ef; border-radius:8px; '
-            f'padding:1.2rem 1.5rem; margin-bottom:1rem; box-shadow:0 2px 8px rgba(0,0,0,0.06);">'
+            f'<div style="background:#ffffff; border:1px solid #e7e4dd; border-radius:4px; '
+            f'padding:1.2rem 1.5rem; margin-bottom:1rem;">'
             f'<div style="display:flex; justify-content:space-between; align-items:start; flex-wrap:wrap; gap:0.5rem;">'
             f'  <div>'
-            f'    <div style="font-size:1.6rem; font-weight:800; color:#b8960c; line-height:1;">{dive_ticker}</div>'
-            f'    <div style="font-size:0.82rem; color:#64748b; margin-top:0.2rem;">{dive_row.get("name","")}</div>'
+            f'    <div style="font-size:1.6rem; font-weight:800; color:#8d7434; line-height:1;">{dive_ticker}</div>'
+            f'    <div style="font-size:0.82rem; color:#5f6672; margin-top:0.2rem;">{dive_row.get("name","")}</div>'
             f'  </div>'
             f'  <div style="text-align:right;">'
             f'    <div style="font-size:0.72rem; font-weight:700; color:{conv_clr}; letter-spacing:0.1em; '
             f'text-transform:uppercase;">{conv_lbl}</div>'
-            f'    <div style="font-size:0.78rem; color:#64748b; margin-top:0.2rem;">'
+            f'    <div style="font-size:0.78rem; color:#5f6672; margin-top:0.2rem;">'
             f'      {strat}{("  ·  " + sec_strat) if sec_strat else ""}'
             f'    </div>'
             f'  </div>'
             f'</div>'
             f'<hr style="border:none; border-top:1px solid #f0f4fa; margin:0.8rem 0;">'
-            f'<p style="font-size:0.88rem; color:#334155; line-height:1.65; margin:0;">{summary["overview"]}</p>'
+            f'<p style="font-size:0.88rem; color:#5f6672; line-height:1.65; margin:0;">{summary["overview"]}</p>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -3968,8 +3651,8 @@ elif page == "📊 Research":
 
         with col_bull:
             st.markdown(
-                '<div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; padding:1rem 1.2rem;">'
-                '<div style="font-size:0.75rem; font-weight:700; color:#16a34a; letter-spacing:0.1em; '
+                '<div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:3px; padding:1rem 1.2rem;">'
+                '<div style="font-size:0.75rem; font-weight:700; color:#2f6b4f; letter-spacing:0.1em; '
                 'text-transform:uppercase; margin-bottom:0.6rem;">📈 Bull Case</div>',
                 unsafe_allow_html=True,
             )
@@ -3977,19 +3660,19 @@ elif page == "📊 Research":
                 for pt in summary["bull_factors"]:
                     st.markdown(
                         f'<div style="display:flex; gap:0.5rem; margin-bottom:0.5rem; font-size:0.83rem; color:#1e3a2f;">'
-                        f'  <span style="color:#16a34a; flex-shrink:0; font-weight:700; margin-top:0.05rem;">▲</span>'
+                        f'  <span style="color:#2f6b4f; flex-shrink:0; font-weight:700; margin-top:0.05rem;">▲</span>'
                         f'  <span style="line-height:1.5;">{pt}</span>'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
             else:
-                st.markdown('<p style="font-size:0.83rem; color:#64748b;">No strong bull signals identified.</p>', unsafe_allow_html=True)
+                st.markdown('<p style="font-size:0.83rem; color:#5f6672;">No strong bull signals identified.</p>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
         with col_bear:
             st.markdown(
-                '<div style="background:#fff5f5; border:1px solid #fecaca; border-radius:6px; padding:1rem 1.2rem;">'
-                '<div style="font-size:0.75rem; font-weight:700; color:#dc2626; letter-spacing:0.1em; '
+                '<div style="background:#fff5f5; border:1px solid #fecaca; border-radius:3px; padding:1rem 1.2rem;">'
+                '<div style="font-size:0.75rem; font-weight:700; color:#9b3b3b; letter-spacing:0.1em; '
                 'text-transform:uppercase; margin-bottom:0.6rem;">📉 Bear Case & Risks</div>',
                 unsafe_allow_html=True,
             )
@@ -3997,18 +3680,18 @@ elif page == "📊 Research":
                 for pt in summary["bear_factors"]:
                     st.markdown(
                         f'<div style="display:flex; gap:0.5rem; margin-bottom:0.5rem; font-size:0.83rem; color:#3b1a1a;">'
-                        f'  <span style="color:#dc2626; flex-shrink:0; font-weight:700; margin-top:0.05rem;">▼</span>'
+                        f'  <span style="color:#9b3b3b; flex-shrink:0; font-weight:700; margin-top:0.05rem;">▼</span>'
                         f'  <span style="line-height:1.5;">{pt}</span>'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
             else:
-                st.markdown('<p style="font-size:0.83rem; color:#64748b;">No major risk flags on this metric set.</p>', unsafe_allow_html=True)
+                st.markdown('<p style="font-size:0.83rem; color:#5f6672;">No major risk flags on this metric set.</p>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
         # ── Strategy note ────────────────────────────────────────
         st.markdown(
-            f'<div style="background:#fffbeb; border:1px solid #fde68a; border-radius:6px; '
+            f'<div style="background:#fffbeb; border:1px solid #fde68a; border-radius:3px; '
             f'padding:0.9rem 1.2rem; margin-top:0.8rem;">'
             f'<div style="font-size:0.75rem; font-weight:700; color:#92400e; letter-spacing:0.1em; '
             f'text-transform:uppercase; margin-bottom:0.4rem;">🎯 Strategy rationale</div>'
@@ -4019,11 +3702,11 @@ elif page == "📊 Research":
 
         # ── Risk management box ───────────────────────────────────
         st.markdown(
-            f'<div style="background:#f8fafc; border:1px solid #dde3ef; border-radius:6px; '
+            f'<div style="background:#f8fafc; border:1px solid #e7e4dd; border-radius:3px; '
             f'padding:0.9rem 1.2rem; margin-top:0.7rem;">'
-            f'<div style="font-size:0.75rem; font-weight:700; color:#64748b; letter-spacing:0.1em; '
+            f'<div style="font-size:0.75rem; font-weight:700; color:#5f6672; letter-spacing:0.1em; '
             f'text-transform:uppercase; margin-bottom:0.4rem;">⚖️ Risk management</div>'
-            f'<p style="font-size:0.84rem; color:#475569; line-height:1.6; margin:0;">{summary["risk_note"]}</p>'
+            f'<p style="font-size:0.84rem; color:#5f6672; line-height:1.6; margin:0;">{summary["risk_note"]}</p>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -4037,10 +3720,10 @@ elif page == "📊 Research":
             except Exception:
                 val_str = str(value)
             col.markdown(
-                f'<div style="background:#ffffff; border:1px solid #dde3ef; border-top:3px solid #b8960c; '
+                f'<div style="background:#ffffff; border:1px solid #e7e4dd; border-top:3px solid #8d7434; '
                 f'border-radius:5px; padding:0.7rem 0.9rem; text-align:center;">'
-                f'<div style="font-size:0.62rem; color:#94a3b8; text-transform:uppercase; letter-spacing:0.1em;">{label}</div>'
-                f'<div style="font-size:1.2rem; font-weight:800; color:#0d1117; margin-top:0.2rem;">{val_str}</div>'
+                f'<div style="font-size:0.62rem; color:#9aa1ad; text-transform:uppercase; letter-spacing:0.1em;">{label}</div>'
+                f'<div style="font-size:1.2rem; font-weight:800; color:#12161f; margin-top:0.2rem;">{val_str}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -4074,10 +3757,10 @@ elif page == "📊 Research":
                     open=chart_hist["Open"], high=chart_hist["High"],
                     low=chart_hist["Low"],   close=chart_hist["Close"],
                     name=dive_ticker,
-                    increasing_line_color="#16a34a",
-                    decreasing_line_color="#dc2626",
-                    increasing_fillcolor="#16a34a",
-                    decreasing_fillcolor="#dc2626",
+                    increasing_line_color="#2f6b4f",
+                    decreasing_line_color="#9b3b3b",
+                    increasing_fillcolor="#2f6b4f",
+                    decreasing_fillcolor="#9b3b3b",
                 ))
                 fig_dive.add_trace(go.Scatter(
                     x=chart_hist.index, y=sma20_c, name="SMA 20",
@@ -4091,25 +3774,25 @@ elif page == "📊 Research":
                 stop_val = dive_row.get("stop_loss")
                 if stop_val:
                     fig_dive.add_hline(
-                        y=stop_val, line_dash="dash", line_color="#dc2626", line_width=1.2,
+                        y=stop_val, line_dash="dash", line_color="#9b3b3b", line_width=1.2,
                         annotation_text=f"Typical downside ${stop_val:.2f}",
                         annotation_position="right",
-                        annotation_font=dict(color="#dc2626", size=10),
+                        annotation_font=dict(color="#9b3b3b", size=10),
                     )
                 # Target line
                 target_val = dive_row.get("target")
                 if target_val:
                     fig_dive.add_hline(
-                        y=target_val, line_dash="dot", line_color="#16a34a", line_width=1.2,
+                        y=target_val, line_dash="dot", line_color="#2f6b4f", line_width=1.2,
                         annotation_text=f"Target ${target_val:.2f}",
                         annotation_position="right",
-                        annotation_font=dict(color="#16a34a", size=10),
+                        annotation_font=dict(color="#2f6b4f", size=10),
                     )
 
                 # Volume subplot
                 vol_colors = [
-                    "#16a34a" if chart_hist["Close"].iloc[i] >= chart_hist["Open"].iloc[i]
-                    else "#dc2626"
+                    "#2f6b4f" if chart_hist["Close"].iloc[i] >= chart_hist["Open"].iloc[i]
+                    else "#9b3b3b"
                     for i in range(len(chart_hist))
                 ]
                 fig_dive.add_trace(go.Bar(
@@ -4134,7 +3817,7 @@ elif page == "📊 Research":
 
     # ════════════════════════════════
     with tab_mom:
-        st.markdown("### 🚀 Momentum Rockets")
+        st.markdown("### Momentum")
         st.markdown(
             "Stocks in a **strong, confirmed uptrend** — above both moving averages, "
             "RSI in the continuation sweet spot (52–72), and volume expanding. "
@@ -4160,7 +3843,7 @@ elif page == "📊 Research":
 
     # ════════════════════════════════
     with tab_bnc:
-        st.markdown("### 🔄 Oversold Candidates")
+        st.markdown("### Oversold")
         st.markdown(
             "Stocks that are **temporarily oversold** — RSI below 38, but sitting in a "
             "broader uptrend with solid fundamentals. The bull thesis is intact; "
@@ -4181,19 +3864,19 @@ elif page == "📊 Research":
             fig_rsi = go.Figure()
             bar_clrs = [GOLD if r < 30 else "#2563eb" for r in top_bnc["rsi"]]
             fig_rsi.add_trace(go.Bar(x=top_bnc["ticker"], y=top_bnc["rsi"], marker_color=bar_clrs, name="RSI (14)"))
-            fig_rsi.add_hline(y=30, line_dash="dash", line_color="#dc2626", line_width=1.2,
+            fig_rsi.add_hline(y=30, line_dash="dash", line_color="#9b3b3b", line_width=1.2,
                               annotation_text="Oversold (30)", annotation_position="right",
-                              annotation_font=dict(color="#dc2626", size=10))
-            fig_rsi.add_hline(y=45, line_dash="dot", line_color="#b8960c", line_width=1,
+                              annotation_font=dict(color="#9b3b3b", size=10))
+            fig_rsi.add_hline(y=45, line_dash="dot", line_color="#8d7434", line_width=1,
                               annotation_text="Oversold threshold (45)", annotation_position="right",
-                              annotation_font=dict(color="#b8960c", size=10))
+                              annotation_font=dict(color="#8d7434", size=10))
             fig_rsi.update_layout(**chart_layout(height=300, yaxis_range=[0, 60], showlegend=False,
                                                   title=dict(text="RSI (gold = extreme oversold)", font=dict(size=11, color=CHART_TEXT))))
             st.plotly_chart(fig_rsi, width="stretch")
 
     # ════════════════════════════════
     with tab_cat:
-        st.markdown("### ⚡ Growth Catalysts")
+        st.markdown("### Growth")
         st.markdown(
             "Stocks with **accelerating fundamentals** — revenue beating expectations, "
             "earnings growing fast, analyst price targets well above current price. "
@@ -4219,7 +3902,7 @@ elif page == "📊 Research":
                 marker=dict(
                     size=top_cat["earn_growth"].clip(5, 60) / 3,
                     color=top_cat["catalyst_score"],
-                    colorscale=[[0, "#dde3ef"], [0.5, GOLD], [1, "#16a34a"]],
+                    colorscale=[[0, "#e7e4dd"], [0.5, GOLD], [1, "#2f6b4f"]],
                     showscale=True,
                     colorbar=dict(title="Catalyst Score", thickness=10, len=0.6),
                     line=dict(color="#ffffff", width=1),
@@ -4235,7 +3918,7 @@ elif page == "📊 Research":
 
     # ════════════════════════════════
     with tab_brk:
-        st.markdown("### 🎯 Consolidating Watch")
+        st.markdown("### Consolidating")
         st.markdown(
             "Stocks **coiling near their 52-week high** with low volatility and starting "
             "volume expansion — classic pre-breakout setup. Best held for "
@@ -4254,7 +3937,7 @@ elif page == "📊 Research":
             st.markdown("### Position in 52-week range (85–97% = ideal breakout zone)")
             top_brk = brk_df.head(min(hf_top_n * 2, 15))
             bar_clrs_brk = [
-                "#16a34a" if 85 <= r <= 97 else GOLD if r > 75 else "#dde3ef"
+                "#2f6b4f" if 85 <= r <= 97 else GOLD if r > 75 else "#e7e4dd"
                 for r in top_brk["pct_52w_range"]
             ]
             fig_brk = go.Figure(go.Bar(
@@ -4264,14 +3947,14 @@ elif page == "📊 Research":
             fig_brk.add_hrect(y0=85, y1=97, fillcolor="rgba(22,163,74,0.07)",
                                line_width=0, annotation_text="Ideal breakout zone",
                                annotation_position="right",
-                               annotation_font=dict(color="#16a34a", size=10))
+                               annotation_font=dict(color="#2f6b4f", size=10))
             fig_brk.update_layout(**chart_layout(height=300, yaxis_range=[60, 105], showlegend=False,
                                                   title=dict(text="Green = ideal breakout zone (85–97%)", font=dict(size=11, color=CHART_TEXT))))
             st.plotly_chart(fig_brk, width="stretch")
 
     # ════════════════════════════════
     with tab_risk:
-        st.markdown("### ⚠️ Risk Characteristics")
+        st.markdown("### Risk characteristics")
         st.markdown(
             "How volatile these companies have been, and how far their shares have historically moved. "
             "These are descriptions of past behaviour — they are not guidance on what to buy, how much to "
@@ -4291,15 +3974,15 @@ elif page == "📊 Research":
             marker=dict(
                 size=12,
                 color=top_risk["best_score"],
-                colorscale=[[0, "#dde3ef"], [0.5, GOLD], [1, "#16a34a"]],
+                colorscale=[[0, "#e7e4dd"], [0.5, GOLD], [1, "#2f6b4f"]],
                 showscale=True,
                 colorbar=dict(title="Research<br>score", thickness=10, len=0.6),
                 line=dict(color="#ffffff", width=1),
             ),
         ))
-        fig_rr.add_hline(y=1.0, line_dash="dot", line_color="#94a3b8",
+        fig_rr.add_hline(y=1.0, line_dash="dot", line_color="#9aa1ad",
                          annotation_text="Moves with the market (beta 1.0)",
-                         annotation_font=dict(color="#94a3b8", size=10))
+                         annotation_font=dict(color="#9aa1ad", size=10))
         fig_rr.update_layout(**chart_layout(
             height=420,
             xaxis_title="Daily volatility (ATR as % of price)",
@@ -4346,10 +4029,10 @@ elif page == "📊 Research":
                 marker_color=GOLD, opacity=0.75,
                 name="Risk score",
             ))
-            fig_risk_hist.add_vline(x=45, line_dash="dot", line_color="#b8960c",
-                                    annotation_text="Moderate risk", annotation_font=dict(color="#b8960c", size=10))
-            fig_risk_hist.add_vline(x=65, line_dash="dash", line_color="#dc2626",
-                                    annotation_text="High risk", annotation_font=dict(color="#dc2626", size=10))
+            fig_risk_hist.add_vline(x=45, line_dash="dot", line_color="#8d7434",
+                                    annotation_text="Moderate risk", annotation_font=dict(color="#8d7434", size=10))
+            fig_risk_hist.add_vline(x=65, line_dash="dash", line_color="#9b3b3b",
+                                    annotation_text="High risk", annotation_font=dict(color="#9b3b3b", size=10))
             fig_risk_hist.update_layout(**chart_layout(height=280, showlegend=False,
                                                          xaxis_title="Risk score (0=low, 100=high)"))
             st.plotly_chart(fig_risk_hist, width="stretch")
@@ -4362,8 +4045,8 @@ elif page == "📊 Research":
                 marker_color="#2563eb", opacity=0.75,
                 name="Beta",
             ))
-            fig_beta.add_vline(x=1.0, line_dash="dot",  line_color="#64748b",
-                               annotation_text="Market (β=1)", annotation_font=dict(color="#64748b", size=10))
+            fig_beta.add_vline(x=1.0, line_dash="dot",  line_color="#5f6672",
+                               annotation_text="Market (β=1)", annotation_font=dict(color="#5f6672", size=10))
             fig_beta.add_vline(x=1.5, line_dash="dash", line_color=GOLD,
                                annotation_text="β=1.5", annotation_font=dict(color=GOLD, size=10))
             fig_beta.update_layout(**chart_layout(height=280, showlegend=False, xaxis_title="Beta"))
@@ -4379,7 +4062,7 @@ elif page == "📊 Research":
 
     # ════════════════════════════════
     with tab_returns:
-        st.markdown("### 💰 Investment Return Projections")
+        st.markdown("### Return scenarios")
         st.markdown(
             "Filter by profile and score band, pick your companies, set a holding period, "
             "and see projected returns adjust in real time — including compounding across "
@@ -4389,10 +4072,10 @@ elif page == "📊 Research":
         # Reference hold periods per strategy (weeks) — used to time-scale bull returns.
         # These represent the "full expected move" window for each strategy type.
         STRATEGY_REF_HOLD: dict[str, float] = {
-            "🚀 Momentum":  4.0,   # ~1 month momentum burst
-            "🔄 Oversold":    3.0,   # ~3-week mean-reversion snap
-            "⚡ Growth":  8.0,   # ~2-month catalyst play
-            "🎯 Consolidating":  5.0,   # ~5-week breakout development
+            "Momentum":  4.0,   # ~1 month momentum burst
+            "Oversold":    3.0,   # ~3-week mean-reversion snap
+            "Growth":  8.0,   # ~2-month catalyst play
+            "Consolidating":  5.0,   # ~5-week breakout development
         }
 
         # ── Step 1: Filter controls ───────────────────────────────
@@ -4401,8 +4084,8 @@ elif page == "📊 Research":
         with f1:
             strat_filter = st.multiselect(
                 "Strategy types to include",
-                options=["🚀 Momentum", "🔄 Oversold", "⚡ Growth", "🎯 Consolidating"],
-                default=["🚀 Momentum", "🔄 Oversold", "⚡ Growth", "🎯 Consolidating"],
+                options=["Momentum", "Oversold", "Growth", "Consolidating"],
+                default=["Momentum", "Oversold", "Growth", "Consolidating"],
                 key="ret_strat_filter",
             )
         with f2:
@@ -4554,42 +4237,42 @@ elif page == "📊 Research":
         sc1, sc2, sc3, sc4 = st.columns(4)
 
         sc1.markdown(
-            f'<div style="background:#ffffff; border:1px solid #dde3ef; border-top:4px solid #64748b; '
-            f'border-radius:8px; padding:1.1rem 1.3rem; box-shadow:0 2px 8px rgba(0,0,0,0.06);">'
-            f'<div style="font-size:0.68rem; color:#94a3b8; text-transform:uppercase; letter-spacing:0.1em;">Invested</div>'
-            f'<div style="font-size:1.8rem; font-weight:900; color:#0d1117; margin:0.2rem 0;">${invest_total:,.0f}</div>'
-            f'<div style="font-size:0.78rem; color:#64748b;">{n_sel} positions · {alloc_method}</div>'
+            f'<div style="background:#ffffff; border:1px solid #e7e4dd; border-top:4px solid #5f6672; '
+            f'border-radius:4px; padding:1.1rem 1.3rem;">'
+            f'<div style="font-size:0.68rem; color:#9aa1ad; text-transform:uppercase; letter-spacing:0.1em;">Invested</div>'
+            f'<div style="font-size:1.8rem; font-weight:900; color:#12161f; margin:0.2rem 0;">${invest_total:,.0f}</div>'
+            f'<div style="font-size:0.78rem; color:#5f6672;">{n_sel} positions · {alloc_method}</div>'
             f'</div>', unsafe_allow_html=True,
         )
         sc2.markdown(
-            f'<div style="background:#f0fdf4; border:1px solid #bbf7d0; border-top:4px solid #16a34a; '
-            f'border-radius:8px; padding:1.1rem 1.3rem; box-shadow:0 2px 8px rgba(0,0,0,0.06);">'
-            f'<div style="font-size:0.68rem; color:#16a34a; text-transform:uppercase; letter-spacing:0.1em; font-weight:700;">🐂 Bull Case</div>'
-            f'<div style="font-size:1.8rem; font-weight:900; color:#16a34a; margin:0.2rem 0;">${port_bull:,.0f}</div>'
-            f'<div style="font-size:0.9rem; font-weight:700; color:#16a34a;">+{port_bull_pct:.1f}%'
+            f'<div style="background:#f0fdf4; border:1px solid #bbf7d0; border-top:4px solid #2f6b4f; '
+            f'border-radius:4px; padding:1.1rem 1.3rem;">'
+            f'<div style="font-size:0.68rem; color:#2f6b4f; text-transform:uppercase; letter-spacing:0.1em; font-weight:700;">🐂 Bull Case</div>'
+            f'<div style="font-size:1.8rem; font-weight:900; color:#2f6b4f; margin:0.2rem 0;">${port_bull:,.0f}</div>'
+            f'<div style="font-size:0.9rem; font-weight:700; color:#2f6b4f;">+{port_bull_pct:.1f}%'
             f'  <span style="font-size:0.75rem; font-weight:400; color:#4ade80;">(+${port_bull-port_invested:,.0f})</span></div>'
             f'</div>', unsafe_allow_html=True,
         )
         sc3.markdown(
-            f'<div style="background:#fffbeb; border:1px solid #fde68a; border-top:4px solid #b8960c; '
-            f'border-radius:8px; padding:1.1rem 1.3rem; box-shadow:0 2px 8px rgba(0,0,0,0.06);">'
+            f'<div style="background:#fffbeb; border:1px solid #fde68a; border-top:4px solid #8d7434; '
+            f'border-radius:4px; padding:1.1rem 1.3rem;">'
             f'<div style="font-size:0.68rem; color:#92400e; text-transform:uppercase; letter-spacing:0.1em; font-weight:700;">📊 Base Case</div>'
-            f'<div style="font-size:1.8rem; font-weight:900; color:#b8960c; margin:0.2rem 0;">${port_base:,.0f}</div>'
-            f'<div style="font-size:0.9rem; font-weight:700; color:#b8960c;">{port_base_pct:+.1f}%'
+            f'<div style="font-size:1.8rem; font-weight:900; color:#8d7434; margin:0.2rem 0;">${port_base:,.0f}</div>'
+            f'<div style="font-size:0.9rem; font-weight:700; color:#8d7434;">{port_base_pct:+.1f}%'
             f'  <span style="font-size:0.75rem; font-weight:400; color:#d97706;">(${port_base-port_invested:+,.0f})</span></div>'
             f'</div>', unsafe_allow_html=True,
         )
         sc4.markdown(
-            f'<div style="background:#fff5f5; border:1px solid #fecaca; border-top:4px solid #dc2626; '
-            f'border-radius:8px; padding:1.1rem 1.3rem; box-shadow:0 2px 8px rgba(0,0,0,0.06);">'
-            f'<div style="font-size:0.68rem; color:#dc2626; text-transform:uppercase; letter-spacing:0.1em; font-weight:700;">🐻 Bear Case</div>'
-            f'<div style="font-size:1.8rem; font-weight:900; color:#dc2626; margin:0.2rem 0;">${port_bear:,.0f}</div>'
-            f'<div style="font-size:0.9rem; font-weight:700; color:#dc2626;">{port_bear_pct:+.1f}%'
+            f'<div style="background:#fff5f5; border:1px solid #fecaca; border-top:4px solid #9b3b3b; '
+            f'border-radius:4px; padding:1.1rem 1.3rem;">'
+            f'<div style="font-size:0.68rem; color:#9b3b3b; text-transform:uppercase; letter-spacing:0.1em; font-weight:700;">🐻 Bear Case</div>'
+            f'<div style="font-size:1.8rem; font-weight:900; color:#9b3b3b; margin:0.2rem 0;">${port_bear:,.0f}</div>'
+            f'<div style="font-size:0.9rem; font-weight:700; color:#9b3b3b;">{port_bear_pct:+.1f}%'
             f'  <span style="font-size:0.75rem; font-weight:400; color:#f87171;">(${port_bear-port_invested:+,.0f})</span></div>'
             f'</div>', unsafe_allow_html=True,
         )
         st.markdown(
-            f"<p style='font-size:0.8rem; color:#94a3b8; margin-top:0.5rem;'>"
+            f"<p style='font-size:0.8rem; color:#9aa1ad; margin-top:0.5rem;'>"
             f"Bull returns are scaled to your {hold_weeks}-week hold (reference periods: "
             + ", ".join(f"{k} {v}w" for k, v in STRATEGY_REF_HOLD.items()) +
             f"). Downside estimates are based on volatility and do not vary with holding period.</p>",
@@ -4602,30 +4285,30 @@ elif page == "📊 Research":
 
         fig_proj = go.Figure()
         fig_proj.add_trace(go.Bar(
-            name="🐂 Bull",
+            name="Bull",
             x=sel_df["ticker"],
             y=sel_df["bull_profit"].round(0),
-            marker_color="#16a34a", opacity=0.85,
+            marker_color="#2f6b4f", opacity=0.85,
             text=sel_df["bull_profit"].apply(lambda x: f"+${x:,.0f}"),
-            textposition="outside", textfont=dict(size=9, color="#16a34a"),
+            textposition="outside", textfont=dict(size=9, color="#2f6b4f"),
         ))
         fig_proj.add_trace(go.Bar(
-            name="📊 Base",
+            name="Base",
             x=sel_df["ticker"],
             y=sel_df["base_profit"].round(0),
             marker_color=GOLD, opacity=0.85,
             text=sel_df["base_profit"].apply(lambda x: f"${x:+,.0f}"),
-            textposition="outside", textfont=dict(size=9, color="#b8960c"),
+            textposition="outside", textfont=dict(size=9, color="#8d7434"),
         ))
         fig_proj.add_trace(go.Bar(
-            name="🐻 Bear",
+            name="Bear",
             x=sel_df["ticker"],
             y=sel_df["bear_profit"].round(0),
-            marker_color="#dc2626", opacity=0.75,
+            marker_color="#9b3b3b", opacity=0.75,
             text=sel_df["bear_profit"].apply(lambda x: f"${x:+,.0f}"),
-            textposition="outside", textfont=dict(size=9, color="#dc2626"),
+            textposition="outside", textfont=dict(size=9, color="#9b3b3b"),
         ))
-        fig_proj.add_hline(y=0, line_color="#dde3ef", line_width=1)
+        fig_proj.add_hline(y=0, line_color="#e7e4dd", line_width=1)
         fig_proj.update_layout(**chart_layout(
             barmode="group", height=400,
             yaxis_title="Projected profit / loss ($)",
@@ -4667,7 +4350,7 @@ elif page == "📊 Research":
 
         # ── Compounding projection ────────────────────────────────
         st.markdown("---")
-        st.markdown("### 📈 Compounding projection — multiple rotations")
+        st.markdown("### Compounding scenario")
         st.markdown(
             f"Reinvesting the full portfolio after each **{hold_weeks}-week** rotation, "
             f"running **{n_rotations} rotations** in total. "
@@ -4690,26 +4373,26 @@ elif page == "📊 Research":
 
         fig_compound = go.Figure()
         fig_compound.add_trace(go.Scatter(
-            x=rotation_labels, y=bull_values_c, name="🐂 Bull",
-            line=dict(color="#16a34a", width=2.5),
+            x=rotation_labels, y=bull_values_c, name="Bull",
+            line=dict(color="#2f6b4f", width=2.5),
             fill="tozeroy", fillcolor="rgba(22,163,74,0.07)",
-            mode="lines+markers", marker=dict(size=7, color="#16a34a"),
+            mode="lines+markers", marker=dict(size=7, color="#2f6b4f"),
         ))
         fig_compound.add_trace(go.Scatter(
-            x=rotation_labels, y=base_values_c, name="📊 Base",
+            x=rotation_labels, y=base_values_c, name="Base",
             line=dict(color=GOLD, width=2.5),
             fill="tozeroy", fillcolor="rgba(184,150,12,0.07)",
             mode="lines+markers", marker=dict(size=7, color=GOLD),
         ))
         fig_compound.add_trace(go.Scatter(
-            x=rotation_labels, y=bear_values_c, name="🐻 Bear",
-            line=dict(color="#dc2626", width=2, dash="dot"),
-            mode="lines+markers", marker=dict(size=6, color="#dc2626"),
+            x=rotation_labels, y=bear_values_c, name="Bear",
+            line=dict(color="#9b3b3b", width=2, dash="dot"),
+            mode="lines+markers", marker=dict(size=6, color="#9b3b3b"),
         ))
         fig_compound.add_hline(
-            y=invest_total, line_dash="dot", line_color="#94a3b8", line_width=1,
+            y=invest_total, line_dash="dot", line_color="#9aa1ad", line_width=1,
             annotation_text="Starting capital", annotation_position="right",
-            annotation_font=dict(color="#94a3b8", size=10),
+            annotation_font=dict(color="#9aa1ad", size=10),
         )
         fig_compound.update_layout(**chart_layout(
             height=400,
@@ -4730,25 +4413,25 @@ elif page == "📊 Research":
 
         total_weeks = hold_weeks * n_rotations
         for col, label, val, pct, bg, bc in [
-            (e1, f"🐂 Bull · {n_rotations}×", bull_values_c[-1], final_bull_pct, "#f0fdf4", "#16a34a"),
-            (e2, f"📊 Base · {n_rotations}×", base_values_c[-1], final_base_pct, "#fffbeb", "#b8960c"),
-            (e3, f"🐻 Bear · {n_rotations}×", bear_values_c[-1], final_bear_pct, "#fff5f5", "#dc2626"),
+            (e1, f"Bull · {n_rotations}×", bull_values_c[-1], final_bull_pct, "#f0fdf4", "#2f6b4f"),
+            (e2, f"Base · {n_rotations}×", base_values_c[-1], final_base_pct, "#fffbeb", "#8d7434"),
+            (e3, f"Bear · {n_rotations}×", bear_values_c[-1], final_bear_pct, "#fff5f5", "#9b3b3b"),
         ]:
             col.markdown(
-                f'<div style="background:{bg}; border:1px solid #dde3ef; border-top:4px solid {bc}; '
-                f'border-radius:8px; padding:1rem 1.2rem; text-align:center;">'
+                f'<div style="background:{bg}; border:1px solid #e7e4dd; border-top:4px solid {bc}; '
+                f'border-radius:4px; padding:1rem 1.2rem; text-align:center;">'
                 f'<div style="font-size:0.72rem; color:{bc}; font-weight:700; text-transform:uppercase; letter-spacing:0.1em;">{label}</div>'
                 f'<div style="font-size:2rem; font-weight:900; color:{bc}; margin:0.3rem 0;">${val:,.0f}</div>'
                 f'<div style="font-size:0.9rem; font-weight:700; color:{bc};">{pct:+.1f}% total return</div>'
-                f'<div style="font-size:0.75rem; color:#64748b; margin-top:0.2rem;">'
+                f'<div style="font-size:0.75rem; color:#5f6672; margin-top:0.2rem;">'
                 f'${val - invest_total:+,.0f} over {total_weeks}w ({n_rotations} rotations)</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
 
         st.markdown(
-            "<p style='font-size:0.78rem; color:#94a3b8; margin-top:0.8rem;'>"
-            "⚠️ Bull returns are scaled by your hold period relative to each strategy's reference window. "
+            "<p style='font-size:0.78rem; color:#9aa1ad; margin-top:0.8rem;'>"
+            "Bull returns are scaled by your hold period relative to each strategy's reference window. "
             "Bear/stop returns are fixed regardless of hold time. "
             "Compounding assumes the same per-rotation return each cycle. "
             "Scenario likelihood is derived from the research score (40%–85%). "
@@ -4760,7 +4443,7 @@ elif page == "📊 Research":
     # ── Disclaimer ───────────────────────────────────────────
     st.markdown("---")
     st.caption(
-        "⚠️ This is a research and education tool, not financial advice, and nothing here is a "
+        "This is a research and education tool, not financial advice, and nothing here is a "
         "recommendation to buy or sell any investment. Scores describe a company's reported figures "
         "and past price behaviour; they are not predictions. Analyst upside figures are other "
         "analysts' published estimates, not forecasts from this platform. Investing carries risk and "
