@@ -139,3 +139,45 @@ def test_complete_data_beats_partial_data_on_confidence():
                                      if k not in ("debtToEquity", "currentRatio")})
     assert full.confidence == "high"
     assert partial.coverage < full.coverage
+
+
+# ── The legacy pages' weighted-average helper ────────────────────────────────
+# These pages score *warnings*, where a LOW number means "nothing to worry
+# about". Coercing a missing input to 0 therefore made a holding look safe.
+
+def _weighted_known(parts):
+    """Mirror of the helper in screener/dashboard.py (which cannot be imported
+    here because importing it executes Streamlit calls)."""
+    total = sum(w for _, w in parts)
+    known = [(v, w) for v, w in parts if v is not None]
+    have = sum(w for _, w in known)
+    if not known or total <= 0:
+        return None, 0.0
+    return sum(v * w for v, w in known) / have, have / total
+
+
+def test_unknown_component_is_excluded_not_zeroed():
+    """A missing warning component must not drag the warning down toward zero."""
+    all_known = _weighted_known([(80.0, 0.4), (60.0, 0.35), (70.0, 0.25)])[0]
+    one_unknown = _weighted_known([(80.0, 0.4), (60.0, 0.35), (None, 0.25)])[0]
+    zeroed = (80.0 * 0.4 + 60.0 * 0.35 + 0.0 * 0.25)
+    assert one_unknown > zeroed, "excluding beats zeroing"
+    assert 60.0 <= one_unknown <= 80.0, "result stays within the known range"
+    assert abs(all_known - 70.5) < 0.1   # 80*.4 + 60*.35 + 70*.25
+
+
+def test_coverage_falls_as_components_go_unknown():
+    assert _weighted_known([(50.0, 0.5), (50.0, 0.5)])[1] == 1.0
+    assert _weighted_known([(50.0, 0.5), (None, 0.5)])[1] == 0.5
+    assert _weighted_known([(None, 0.5), (None, 0.5)]) == (None, 0.0)
+
+
+def test_all_unknown_returns_none_not_a_safe_looking_zero():
+    value, coverage = _weighted_known([(None, 0.4), (None, 0.6)])
+    assert value is None and coverage == 0.0
+
+
+@pytest.mark.parametrize("known_value", [0.0, 25.0, 50.0, 100.0])
+def test_result_never_leaves_the_range_of_known_values(known_value):
+    value, _ = _weighted_known([(known_value, 0.3), (None, 0.7)])
+    assert value == known_value, "a single known component defines the result"

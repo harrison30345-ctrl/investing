@@ -462,6 +462,30 @@ def _fundamentals_from_info(info: dict, hist=None) -> dict:
     return out
 
 
+def _weighted_known(parts: list) -> tuple:
+    """Weighted average over the components that are actually known.
+
+    `parts` is a list of (value_or_None, weight). Components whose input was
+    unavailable are EXCLUDED and the remaining weights renormalised. They are
+    never replaced with a stand-in value.
+
+    This exists because the legacy inline scoring coerced missing inputs with
+    `or 0`. On these pages the scores are *warnings*, where a low number means
+    "nothing to worry about" -- so a company with no reported debt figure was
+    scored as having no debt problem, and missing data made a holding look
+    safer than one with real data. Unknown is now unknown.
+
+    Returns (score_or_None, coverage) where coverage is the share of total
+    weight that was known. Returns (None, 0.0) if nothing was known.
+    """
+    total = sum(w for _, w in parts)
+    known = [(v, w) for v, w in parts if v is not None]
+    have = sum(w for _, w in known)
+    if not known or total <= 0:
+        return None, 0.0
+    return sum(v * w for v, w in known) / have, have / total
+
+
 def _scan_gate(state_key: str, label: str, forced: bool = False, note: str = "") -> bool:
     """Decide whether an expensive scan should run on this page load.
 
@@ -1410,46 +1434,69 @@ elif page == "⚠️ Holdings Review":
                 price_52h  = _f("fiftyTwoWeekHigh")
                 price_now  = _f("currentPrice") or _f("regularMarketPrice")
 
-                # PE > 40 is pricey, > 60 is very stretched
-                pe_warn    = max(0, min(100, ((pe or 0) - 15) / 55 * 100))
-                # PEG > 2 is a warning, > 3 is red
-                peg_warn   = max(0, min(100, ((peg or 0) - 1)  / 2  * 100)) if peg else 50
-                # P/S > 15 is expensive
-                ps_warn    = max(0, min(100, ((ps or 0) - 3)   / 17 * 100))
-                # Trading near 52-week high while fundamentals soft = risk
-                near_52h   = (price_now / price_52h * 100) if price_52h and price_now else 50
-                near_52h_warn = max(0, min(100, (near_52h - 70) / 30 * 100))
+                # Warning scores: HIGHER means more to look at. A missing input
+                # must therefore be None, not 0 -- a 0 here reads as "no concern".
+                pe_warn    = max(0, min(100, (pe  - 15) / 55 * 100)) if pe  is not None else None
+                peg_warn   = max(0, min(100, (peg - 1)  / 2  * 100)) if peg is not None else None
+                ps_warn    = max(0, min(100, (ps  - 3)  / 17 * 100)) if ps  is not None else None
+                if price_52h and price_now:
+                    near_52h_warn = max(0, min(100, ((price_now / price_52h * 100) - 70) / 30 * 100))
+                else:
+                    near_52h_warn = None
 
-                val_warn   = pe_warn * 0.35 + peg_warn * 0.30 + ps_warn * 0.20 + near_52h_warn * 0.15
+                val_warn, val_cov = _weighted_known([
+                    (pe_warn, 0.35), (peg_warn, 0.30), (ps_warn, 0.20), (near_52h_warn, 0.15),
+                ])
 
                 # ── Fundamental deterioration ──────────────────────────
-                rev_growth   = (_f("revenueGrowth")  or 0) * 100
-                earn_growth  = (_f("earningsGrowth") or 0) * 100
-                net_margin   = (_f("profitMargins")  or 0) * 100
-                op_margin    = (_f("operatingMargins") or 0) * 100
-                gross_margin = (_f("grossMargins")   or 0) * 100
-                roe          = (_f("returnOnEquity") or 0) * 100
+                def _pct(field):
+                    raw = _f(field)
+                    return raw * 100 if raw is not None else None
 
-                # Negative or decelerating revenue
-                rev_warn    = max(0, min(100, (-rev_growth + 5)    / 30 * 100))
-                earn_warn   = max(0, min(100, (-earn_growth + 10)  / 40 * 100))
-                margin_warn = max(0, min(100, (15 - net_margin)    / 25 * 100)) if net_margin < 15 else 0
-                roe_warn    = max(0, min(100, (15 - roe)           / 20 * 100)) if roe < 15 else 0
+                rev_growth   = _pct("revenueGrowth")
+                earn_growth  = _pct("earningsGrowth")
+                net_margin   = _pct("profitMargins")
+                op_margin    = _pct("operatingMargins")
+                gross_margin = _pct("grossMargins")
+                roe          = _pct("returnOnEquity")
 
-                fund_warn  = rev_warn * 0.35 + earn_warn * 0.30 + margin_warn * 0.20 + roe_warn * 0.15
+                rev_warn    = (max(0, min(100, (-rev_growth + 5) / 30 * 100))
+                               if rev_growth is not None else None)
+                earn_warn   = (max(0, min(100, (-earn_growth + 10) / 40 * 100))
+                               if earn_growth is not None else None)
+                margin_warn = (max(0, min(100, (15 - net_margin) / 25 * 100)) if net_margin is not None
+                               and net_margin < 15 else (0 if net_margin is not None else None))
+                roe_warn    = (max(0, min(100, (15 - roe) / 20 * 100)) if roe is not None
+                               and roe < 15 else (0 if roe is not None else None))
+
+                fund_warn, fund_cov = _weighted_known([
+                    (rev_warn, 0.35), (earn_warn, 0.30), (margin_warn, 0.20), (roe_warn, 0.15),
+                ])
 
                 # ── Balance sheet stress ───────────────────────────────
-                de          = (_f("debtToEquity") or 0) / 100
+                de_raw      = _f("debtToEquity")
+                de          = de_raw / 100 if de_raw is not None else None
                 curr_ratio  = _f("currentRatio")
                 fcf         = _f("freeCashflow")
                 market_cap  = _f("marketCap")
                 fcf_yield   = (fcf / market_cap * 100) if fcf and market_cap else None
 
-                de_warn     = max(0, min(100, (de - 0.5)  / 2   * 100))
-                cr_warn     = max(0, min(100, (1.5 - (curr_ratio or 1.5)) / 1.5 * 100))
-                fcf_warn    = 80 if (fcf or 1) < 0 else (40 if (fcf_yield or 5) < 1 else 0)
+                # No debt figure is not the same as no debt.
+                de_warn  = max(0, min(100, (de - 0.5) / 2 * 100)) if de is not None else None
+                cr_warn  = (max(0, min(100, (1.5 - curr_ratio) / 1.5 * 100))
+                            if curr_ratio is not None else None)
+                if fcf is None:
+                    fcf_warn = None
+                elif fcf < 0:
+                    fcf_warn = 80
+                elif fcf_yield is not None:
+                    fcf_warn = 40 if fcf_yield < 1 else 0
+                else:
+                    fcf_warn = 0
 
-                bal_warn   = de_warn * 0.40 + fcf_warn * 0.35 + cr_warn * 0.25
+                bal_warn, bal_cov = _weighted_known([
+                    (de_warn, 0.40), (fcf_warn, 0.35), (cr_warn, 0.25),
+                ])
 
                 # ── Market / momentum warnings ─────────────────────────
                 hist  = sell_all_prices.get(ticker)
@@ -1479,10 +1526,15 @@ elif page == "⚠️ Holdings Review":
                 # Low insider ownership + high short interest = sell pressure
                 insider_sell_warn = 50.0
                 held_ins  = _f("heldPercentInsiders", None)
-                short_pct = (_f("shortPercentOfFloat") or 0) * 100
+                _short_hr = _f("shortPercentOfFloat")
+                short_pct = _short_hr * 100 if _short_hr is not None else None
                 if held_ins is not None:
                     # Low insider ownership is a mild sell signal
-                    insider_sell_warn = max(0, min(100, (0.05 - held_ins) / 0.05 * 50 + short_pct * 2))
+                    # With short interest unknown, the warning rests on insider
+                    # ownership alone -- the unknown component contributes
+                    # nothing rather than being invented.
+                    insider_sell_warn = max(0, min(100, (0.05 - held_ins) / 0.05 * 50
+                                                        + (short_pct or 0) * 2))
 
                 # Analyst rec worsening (3 = hold, 4-5 = underperform/sell)
                 rec_mean   = _f("recommendationMean")
@@ -1490,27 +1542,38 @@ elif page == "⚠️ Holdings Review":
 
                 mkt_warn   = rsi_warn * 0.25 + sma50_warn * 0.20 + sma200_warn * 0.20 + insider_sell_warn * 0.20 + rec_warn * 0.15
 
-                # ── Composite sell pressure ───────────────────────────
-                total_w  = (sw_val + sw_fund + sw_bal + sw_mkt) or 100
-                sell_score = (
-                    val_warn  * (sw_val  / total_w) +
-                    fund_warn * (sw_fund / total_w) +
-                    bal_warn  * (sw_bal  / total_w) +
-                    mkt_warn  * (sw_mkt  / total_w)
-                )
+                # ── Composite attention score ─────────────────────────
+                # Categories that could not be assessed are excluded and the
+                # remaining weights renormalised, so a holding with missing data
+                # is reported as less certain rather than as less concerning.
+                sell_score, data_cov = _weighted_known([
+                    (val_warn, sw_val), (fund_warn, sw_fund),
+                    (bal_warn, sw_bal), (mkt_warn, sw_mkt),
+                ])
+                if sell_score is None:
+                    continue  # nothing measurable; do not invent a verdict
 
-                if sell_score >= 62:   verdict, verdict_cls = "⛔  Consider Selling",  "fail-badge"
-                elif sell_score >= 40: verdict, verdict_cls = "⚠️  Watch Closely",     "warn-badge"
-                else:                  verdict, verdict_cls = "✅  Hold",               "pass-badge"
+                overall_cov = data_cov * (
+                    (val_cov * sw_val + fund_cov * sw_fund + bal_cov * sw_bal + 1.0 * sw_mkt)
+                    / ((sw_val + sw_fund + sw_bal + sw_mkt) or 1)
+                )
+                confidence = ("high" if overall_cov >= 0.85 else
+                              "moderate" if overall_cov >= 0.60 else "low")
+
+                if sell_score >= 62:   verdict, verdict_cls = "⛔  Several factors to review", "fail-badge"
+                elif sell_score >= 40: verdict, verdict_cls = "⚠️  Some factors to review",    "warn-badge"
+                else:                  verdict, verdict_cls = "✅  Few factors flagged",        "pass-badge"
 
                 rows.append({
                     "ticker":          ticker,
                     "name":            info.get("shortName", ticker)[:28],
                     "sell_score":      round(sell_score,   1),
-                    "val_warn":        round(val_warn,     1),
-                    "fund_warn":       round(fund_warn,    1),
-                    "bal_warn":        round(bal_warn,     1),
-                    "mkt_warn":        round(mkt_warn,     1),
+                    "val_warn":        round(val_warn,  1) if val_warn  is not None else None,
+                    "fund_warn":       round(fund_warn, 1) if fund_warn is not None else None,
+                    "bal_warn":        round(bal_warn,  1) if bal_warn  is not None else None,
+                    "mkt_warn":        round(mkt_warn,  1) if mkt_warn  is not None else None,
+                    "data_coverage":   round(overall_cov * 100, 0),
+                    "confidence":      confidence,
                     "verdict":         verdict,
                     "verdict_cls":     verdict_cls,
                     # Raw metrics
@@ -1528,7 +1591,8 @@ elif page == "⚠️ Holdings Review":
                     "vs_sma200":       round(vs_sma200, 1),
                     "insider_sell":    round(insider_sell_warn, 0),
                     "rec_mean":        round(rec_mean, 1)   if rec_mean   else None,
-                    "near_52h_pct":    round(near_52h, 1)   if near_52h   else None,
+                    "near_52h_pct":    (round(price_now / price_52h * 100, 1)
+                                        if price_52h and price_now else None),
                 })
 
             except Exception:
@@ -1638,6 +1702,10 @@ elif page == "⚠️ Holdings Review":
     c1, c2, c3, c4 = st.columns(4)
 
     def warn_badge(score):
+        # A category that could not be assessed must say so, not show a
+        # reassuring green badge built from data we never had.
+        if score is None or pd.isna(score):
+            return '<span class="warn-badge">Not assessed — data unavailable</span>'
         if score >= 62: return f'<span class="fail-badge">⛔ High ({score:.0f})</span>'
         if score >= 40: return f'<span class="warn-badge">⚠️ Medium ({score:.0f})</span>'
         return f'<span class="pass-badge">✅ Low ({score:.0f})</span>'
@@ -2304,7 +2372,8 @@ elif page == "🇬🇧 UK Investor":
                         rev_growth  = (_f("revenueGrowth")  or 0) * 100
                         earn_growth = (_f("earningsGrowth") or 0) * 100
 
-                        de_ratio    = (_f("debtToEquity") or 0) / 100
+                        _de_raw     = _f("debtToEquity")
+                        de_ratio    = _de_raw / 100 if _de_raw is not None else None
                         curr_ratio  = _f("currentRatio")
                         fcf         = _f("freeCashflow")
                         market_cap  = _f("marketCap")
@@ -2330,9 +2399,14 @@ elif page == "🇬🇧 UK Investor":
                         qual_s = roe_s * 0.50 + mgn_s * 0.50
 
                         # Health
-                        de_s   = max(0, min(100, (2 - de_ratio) / 2 * 100)) if de_ratio is not None else 50
+                        # Missing debt data is unknown, not "no debt". Excluded from
+                        # the health score rather than scored as perfect.
+                        de_s   = (max(0, min(100, (2 - de_ratio) / 2 * 100))
+                                  if de_ratio is not None else None)
                         fcf_h  = 80 if (fcf or 0) > 0 else 20
-                        hlth_s = de_s * 0.55 + fcf_h * 0.45
+                        hlth_s, _hlth_cov = _weighted_known([(de_s, 0.55), (fcf_h, 0.45)])
+                        if hlth_s is None:
+                            hlth_s = 50.0   # nothing measurable; neutral, never favourable
 
                         # Overall ISA score (value 30, growth 30, quality 25, health 15)
                         isa_score = val_s * 0.30 + grow_s * 0.30 + qual_s * 0.25 + hlth_s * 0.15
@@ -2752,13 +2826,13 @@ elif page == "📊 Research":
                     earn_growth = (_f("earningsGrowth") or 0) * 100
                     net_margin  = (_f("profitMargins")  or 0) * 100
                     roe         = (_f("returnOnEquity") or 0) * 100
-                    de_ratio    = (_f("debtToEquity")   or 0) / 100
                     pe          = _f("trailingPE")
                     forward_pe  = _f("forwardPE")
                     beta        = _f("beta", 1.0)
                     market_cap  = _f("marketCap", 0)
                     fcf         = _f("freeCashflow", 0)
-                    short_pct   = (_f("shortPercentOfFloat") or 0) * 100  # short interest
+                    _short_raw  = _f("shortPercentOfFloat")
+                    short_pct   = _short_raw * 100 if _short_raw is not None else None
 
                     # ── Analyst data ───────────────────────────
                     rec_mean    = _f("recommendationMean")  # 1=strong buy, 5=sell
@@ -2859,8 +2933,15 @@ elif page == "📊 Research":
                     # ── RISK METRICS ───────────────────────────
                     beta_risk    = min(100, max(0, abs((beta or 1.0) - 1.3) * 30))  # ideal beta ~1.3 for short-term
                     vol_risk     = min(100, atr_pct / 8 * 100)                       # ATR > 8% is high risk
-                    short_risk   = min(100, short_pct / 20 * 100)                   # high short interest = squeeze risk
-                    risk_score   = beta_risk * 0.40 + vol_risk * 0.35 + short_risk * 0.25
+                    short_risk   = (min(100, short_pct / 20 * 100)
+                                    if short_pct is not None else None)
+                    # An unknown short interest is excluded, not scored as zero
+                    # risk -- absent data must never make a company look safer.
+                    risk_score, risk_cov = _weighted_known([
+                        (beta_risk, 0.40), (vol_risk, 0.35), (short_risk, 0.25),
+                    ])
+                    if risk_score is None:
+                        risk_score = vol_risk
                     # risk_score 0=low risk, 100=very high risk
 
                     # ── POSITION SIZING ────────────────────────
@@ -2916,7 +2997,7 @@ elif page == "📊 Research":
                         "atr_pct":            round(atr_pct, 2),
                         "pct_52w_range":      round(pct_range, 1),
                         "beta":               round(beta, 2) if beta else None,
-                        "short_pct":          round(short_pct, 1),
+                        "short_pct":          round(short_pct, 1) if short_pct is not None else None,
                         # Fundamentals
                         "rev_growth":         round(rev_growth, 1),
                         "earn_growth":        round(earn_growth, 1),
