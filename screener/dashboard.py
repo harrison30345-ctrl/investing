@@ -55,9 +55,11 @@ from services.market_data import PROVIDER_IS_LICENSED, PROVIDER_NAME, get_provid
 from services.hidden_gems import (
     GEM_GATES, MAX_ANALYSTS, METHODOLOGY_VERSION as GEM_METHODOLOGY_VERSION, assess_gem,
 )
+from config.screener_presets import FILTERABLE, PRESETS, PRESETS_BY_KEY
 from services.comparison import MAX_COMPANIES, MIN_MEANINGFUL_GAP, compare
 from services.momentum import assess_momentum
 from services.score_history import ScoreHistory, describe_change
+from services.screening import apply_preset, screen
 from services.scoring import SCORING_VERSION, score_company
 
 
@@ -2143,10 +2145,159 @@ elif page == "⚠️ Holdings Review":
 # PAGE 4 — SCREENER
 # ════════════════════════════════════════════════════════════
 elif page == "🔍 Screener":
-    st.title("Fundamental Screener")
+    st.title("Screener")
 
-    # ── Sidebar controls ─────────────────────────────────────
     st.sidebar.markdown("### Mode")
+    screen_mode = st.sidebar.radio(
+        "What to screen on",
+        ["Research scores", "Classic filters"],
+        index=0,
+        help="Research scores filters on the five scored categories. Classic filters "
+             "uses the older raw-metric thresholds from the YAML configs.",
+    )
+
+    # ════════════════════════════════════════════════════════
+    # SCORE-BASED SCREEN
+    # ════════════════════════════════════════════════════════
+    if screen_mode == "Research scores":
+        st.caption(
+            "Filter companies on the five scored categories. Every preset is a set of "
+            "stated thresholds — open one to see exactly what it filters for, and what "
+            "it cannot tell you."
+        )
+
+        sc_universe = st.sidebar.selectbox(
+            "Universe",
+            ["broad", "all_curated", "tech", "ai", "growth", "nasdaq100"],
+            format_func=lambda x: {
+                "broad": "Broad Market (~300)", "tech": "Tech & Mega Caps",
+                "ai": "AI & ML", "growth": "High Growth (~50)",
+                "all_curated": "All Curated (~130)", "nasdaq100": "NASDAQ 100",
+            }[x],
+            index=0,
+        )
+        preset_key = st.sidebar.selectbox(
+            "Preset",
+            ["custom"] + [p.key for p in PRESETS],
+            format_func=lambda k: "Custom thresholds" if k == "custom" else PRESETS_BY_KEY[k].label,
+            index=1,
+        )
+
+        custom_limits = {}
+        if preset_key == "custom":
+            st.sidebar.markdown("### Thresholds")
+            for key, label in FILTERABLE.items():
+                custom_limits[key] = st.sidebar.slider(label, 0, 100, (0, 100), key=f"_scr_{key}")
+            custom_limits = {k: v for k, v in custom_limits.items() if v != (0, 100)}
+
+        sc_refresh = st.sidebar.button("🔍 Run screen", type="primary")
+        sc_key = f"screen_{sc_universe}"
+        if sc_refresh or sc_key not in st.session_state:
+            st.session_state[sc_key] = None
+
+        if _scan_gate(sc_key, "🔍 Run screen", forced=sc_refresh,
+                      note="Scores every company in the universe, then applies your "
+                           "filters. Pulls live data for several hundred tickers."):
+            tickers = get_universe(sc_universe)
+            with st.spinner(f"Scoring {len(tickers)} companies…"):
+                prog = st.progress(0, text="Downloading price data (batch)...")
+                prices = _batch_prices(tuple(tickers), period="3mo", interval="1d")
+                valid = tuple(t for t in tickers if t in prices and not prices[t].empty) or tuple(tickers)
+                prog.progress(0.5, text=f"Fetching fundamentals for {len(valid)}...")
+                infos = _batch_info(valid)
+                prog.progress(0.9, text="Scoring...")
+                scored = []
+                for t in valid:
+                    info = infos.get(t) or {}
+                    if not info.get("shortName"):
+                        continue
+                    sc = score_company(t, _fundamentals_from_info(info, prices.get(t)),
+                                       info.get("sector"))
+                    scored.append((sc, info.get("shortName", t)[:32], info.get("sector")))
+                prog.empty()
+            st.session_state[sc_key] = scored
+
+        scored = st.session_state.get(sc_key)
+        if scored is None:
+            st.stop()
+        if not scored:
+            st.warning("No data came back. Press **🔍 Run screen** to try again.")
+            st.stop()
+
+        names = {sc.ticker: nm for sc, nm, _ in scored}
+        sectors = {sc.ticker: sec for sc, _, sec in scored}
+        all_scores = [sc for sc, _, _ in scored]
+
+        if preset_key == "custom":
+            result = screen(all_scores, custom_limits)
+            active_preset = None
+            st.markdown("##### Custom thresholds")
+            st.caption(", ".join(f"{FILTERABLE[k]} {v[0]}–{v[1]}"
+                                 for k, v in custom_limits.items()) or "No thresholds set.")
+        else:
+            result, active_preset = apply_preset(all_scores, preset_key)
+            st.markdown(f"##### {active_preset.label}")
+            st.markdown(active_preset.description)
+            st.caption(f"**Filters:** {active_preset.describe()}.")
+            st.warning(f"**What this does not tell you:** {active_preset.caveat}")
+
+        m1, m2, m3, m4 = st.columns(4)
+        metric_card("Companies scored", str(result.total - result.unscorable), m1)
+        metric_card("Passed filters",   str(len(result.passed)),                m2)
+        metric_card("Pass rate",        f"{result.pass_rate:.0%}",              m3)
+        metric_card("Not scoreable",    str(result.unscorable),                 m4)
+
+        if result.removed_by:
+            with st.expander("Where companies dropped out"):
+                st.dataframe(
+                    pd.DataFrame([{"Filter": k, "Removed": v}
+                                  for k, v in result.removed_by.items()]),
+                    hide_index=True, width="stretch",
+                )
+                st.caption(
+                    "A company whose category could not be scored does not pass a filter "
+                    "on that category — unknown is not a pass."
+                )
+
+        if not result.passed:
+            st.info(
+                "No company passed every filter. That is a real result, not an error — "
+                "try a broader universe or looser thresholds, and see the panel above for "
+                "which filter removed the most."
+            )
+            st.stop()
+
+        st.markdown("---")
+        st.markdown(f"### {len(result.passed)} companies passed")
+        rows = []
+        for sc in result.passed:
+            row = {"Ticker": sc.ticker, "Company": names.get(sc.ticker, sc.ticker),
+                   "Sector": sectors.get(sc.ticker) or "—",
+                   "Research": f"{sc.overall:.0f}", "Confidence": sc.confidence}
+            for key, label in FILTERABLE.items():
+                if key == "overall":
+                    continue
+                cat = sc.categories.get(key)
+                row[label] = "—" if not (cat and cat.available) else f"{cat.score:.0f}"
+            rows.append(row)
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch",
+                     height=min(640, 36 * len(rows) + 40))
+        st.caption(
+            f"Scoring methodology v{SCORING_VERSION}. A dash means that measure could not "
+            f"be scored for that company."
+        )
+        st.markdown("---")
+        st.caption(
+            "⚠️ This is research and education, not financial advice, and nothing here is "
+            "a recommendation to buy or sell any investment. Passing a screen means a "
+            "company's reported figures match a pattern — nothing more."
+        )
+        st.stop()
+
+    # ════════════════════════════════════════════════════════
+    # CLASSIC FILTERS (raw metric thresholds from YAML)
+    # ════════════════════════════════════════════════════════
+    st.caption("Raw-metric thresholds from the YAML configs.")
     mode = st.sidebar.radio(
         "Screening mode",
         ["Long-term investing", "Swing trading prep"],
