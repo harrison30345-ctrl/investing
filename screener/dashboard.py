@@ -613,7 +613,7 @@ st.sidebar.markdown("""
 
 nav = st.sidebar.radio(
     "Navigate",
-    ["Overview", "Discover", "Screener", "Watchlist", "Learn", "UK Investor"],
+    ["Overview", "Learn", "Discover", "Screener", "Watchlist", "UK Investor"],
     index=0,
     label_visibility="collapsed",
 )
@@ -1395,509 +1395,151 @@ elif page == "Discover":
 
 elif page == "Watchlist":
 
-    st.title("Holdings Review")
-    st.caption(
-        "Enter companies you hold to see what has changed in their reported figures: "
-        "deteriorating fundamentals, stretched valuations, weakening momentum and "
-        "balance-sheet strain. This is research on what the numbers show, not guidance "
-        "on what to do about it."
+    theme.page_header(
+        "Watchlist",
+        "Companies you are following, and what has changed since you saved them.",
     )
 
-    st.sidebar.markdown("### Your holdings")
-    sell_input = st.sidebar.text_area(
-        "Enter tickers you own",
-        value="AAPL, MSFT, NVDA, TSLA, META",
-        height=120,
-        help="Comma or newline separated",
-    )
-    for sep in ["\n", " "]:
-        sell_input = sell_input.replace(sep, ",")
-    sell_tickers = [t.strip().upper() for t in sell_input.split(",") if t.strip()]
+    try:
+        wl = _watchlist()
+        entries = wl.all()
+    except Exception:  # noqa: BLE001
+        entries = []
 
-    st.sidebar.markdown("### Factor weights")
-    sw_val   = st.sidebar.slider("Overvaluation",          0, 50, 25)
-    sw_fund  = st.sidebar.slider("Fundamental decline",    0, 50, 35)
-    sw_bal   = st.sidebar.slider("Balance sheet stress",   0, 50, 20)
-    sw_mkt   = st.sidebar.slider("Market / momentum",      0, 50, 20)
-
-    refresh_sell = st.sidebar.button("Review my holdings", type="primary")
-
-    sell_cache = f"sell_{'_'.join(sell_tickers)}"
-    if refresh_sell or sell_cache not in st.session_state:
-        st.session_state[sell_cache] = None
-
-    if _scan_gate(sell_cache, "Analyse my holdings", forced=refresh_sell,
-                  note="Checks your holdings for warning signs. Pulls live data for "
-                       "each ticker you listed in the sidebar."):
-        rows = []
-        tickers_tuple_sell = tuple(sell_tickers)
-        prog = st.progress(0, text="Downloading price data (batch)...")
-        sell_all_prices = _batch_prices(tickers_tuple_sell, period="3mo", interval="1d")
-        valid_sell_tup  = tuple(t for t in sell_tickers if t in sell_all_prices and not sell_all_prices[t].empty) or tuple(sell_tickers)
-        prog.progress(0.45, text=f"Fetching fundamentals for {len(valid_sell_tup)} stocks...")
-        sell_all_info   = _batch_info(valid_sell_tup)
-        prog.progress(0.85, text="Assessing each holding...")
-
-        for ticker in sell_tickers:
-            try:
-                info = sell_all_info.get(ticker, {})
-                if not info:
-                    continue
-
-                def _f(k, d=None):
-                    v = info.get(k)
-                    try: return float(v) if v is not None else d
-                    except: return d
-
-                # ── Valuation overstretch ──────────────────────────────
-                pe         = _f("trailingPE")
-                forward_pe = _f("forwardPE")
-                peg        = _f("pegRatio")
-                ps         = _f("priceToSalesTrailing12Months")
-                ev_ebitda  = _f("enterpriseToEbitda")
-                price_52h  = _f("fiftyTwoWeekHigh")
-                price_now  = _f("currentPrice") or _f("regularMarketPrice")
-
-                # Warning scores: HIGHER means more to look at. A missing input
-                # must therefore be None, not 0 -- a 0 here reads as "no concern".
-                pe_warn    = max(0, min(100, (pe  - 15) / 55 * 100)) if pe  is not None else None
-                peg_warn   = max(0, min(100, (peg - 1)  / 2  * 100)) if peg is not None else None
-                ps_warn    = max(0, min(100, (ps  - 3)  / 17 * 100)) if ps  is not None else None
-                if price_52h and price_now:
-                    near_52h_warn = max(0, min(100, ((price_now / price_52h * 100) - 70) / 30 * 100))
-                else:
-                    near_52h_warn = None
-
-                val_warn, val_cov = _weighted_known([
-                    (pe_warn, 0.35), (peg_warn, 0.30), (ps_warn, 0.20), (near_52h_warn, 0.15),
-                ])
-
-                # ── Fundamental deterioration ──────────────────────────
-                def _pct(field):
-                    raw = _f(field)
-                    return raw * 100 if raw is not None else None
-
-                rev_growth   = _pct("revenueGrowth")
-                earn_growth  = _pct("earningsGrowth")
-                net_margin   = _pct("profitMargins")
-                op_margin    = _pct("operatingMargins")
-                gross_margin = _pct("grossMargins")
-                roe          = _pct("returnOnEquity")
-
-                rev_warn    = (max(0, min(100, (-rev_growth + 5) / 30 * 100))
-                               if rev_growth is not None else None)
-                earn_warn   = (max(0, min(100, (-earn_growth + 10) / 40 * 100))
-                               if earn_growth is not None else None)
-                margin_warn = (max(0, min(100, (15 - net_margin) / 25 * 100)) if net_margin is not None
-                               and net_margin < 15 else (0 if net_margin is not None else None))
-                roe_warn    = (max(0, min(100, (15 - roe) / 20 * 100)) if roe is not None
-                               and roe < 15 else (0 if roe is not None else None))
-
-                fund_warn, fund_cov = _weighted_known([
-                    (rev_warn, 0.35), (earn_warn, 0.30), (margin_warn, 0.20), (roe_warn, 0.15),
-                ])
-
-                # ── Balance sheet stress ───────────────────────────────
-                de_raw      = _f("debtToEquity")
-                de          = de_raw / 100 if de_raw is not None else None
-                curr_ratio  = _f("currentRatio")
-                fcf         = _f("freeCashflow")
-                market_cap  = _f("marketCap")
-                fcf_yield   = (fcf / market_cap * 100) if fcf and market_cap else None
-
-                # No debt figure is not the same as no debt.
-                de_warn  = max(0, min(100, (de - 0.5) / 2 * 100)) if de is not None else None
-                cr_warn  = (max(0, min(100, (1.5 - curr_ratio) / 1.5 * 100))
-                            if curr_ratio is not None else None)
-                if fcf is None:
-                    fcf_warn = None
-                elif fcf < 0:
-                    fcf_warn = 80
-                elif fcf_yield is not None:
-                    fcf_warn = 40 if fcf_yield < 1 else 0
-                else:
-                    fcf_warn = 0
-
-                bal_warn, bal_cov = _weighted_known([
-                    (de_warn, 0.40), (fcf_warn, 0.35), (cr_warn, 0.25),
-                ])
-
-                # ── Market / momentum warnings ─────────────────────────
-                hist  = sell_all_prices.get(ticker)
-                rsi_val, vs_sma50, vs_sma200 = 50.0, 0.0, 0.0
-                if hist is not None and len(hist) >= 14:
-                    closes   = hist["Close"]
-                    delta    = closes.diff().dropna()
-                    gain     = delta.clip(lower=0).rolling(14).mean()
-                    loss     = (-delta.clip(upper=0)).rolling(14).mean()
-                    rs       = gain / loss.replace(0, float("nan"))
-                    rsi_val  = float((100 - 100 / (1 + rs)).iloc[-1]) if not rs.empty else 50
-                    rsi_val  = rsi_val if not pd.isna(rsi_val) else 50.0
-                    if len(closes) >= 50:
-                        sma50   = float(closes.rolling(50).mean().iloc[-1])
-                        vs_sma50 = (float(closes.iloc[-1]) - sma50) / sma50 * 100
-                    if len(closes) >= 60:
-                        sma200  = float(closes.rolling(min(200, len(closes))).mean().iloc[-1])
-                        vs_sma200 = (float(closes.iloc[-1]) - sma200) / sma200 * 100
-
-                # RSI > 75 = overbought, < 30 = may be broken
-                rsi_warn      = max(0, min(100, (rsi_val - 65) / 30 * 100))
-                # Far below key moving averages
-                sma50_warn    = max(0, min(100, (-vs_sma50  + 2) / 15 * 100)) if vs_sma50  < 0 else 0
-                sma200_warn   = max(0, min(100, (-vs_sma200 + 2) / 20 * 100)) if vs_sma200 < 0 else 0
-
-                # Insider selling — use heldPercentInsiders as fast proxy
-                # Low insider ownership + high short interest = disposal pressure
-                insider_sell_warn = 50.0
-                held_ins  = _f("heldPercentInsiders", None)
-                _short_hr = _f("shortPercentOfFloat")
-                short_pct = _short_hr * 100 if _short_hr is not None else None
-                if held_ins is not None:
-                    # Low insider ownership is a mild sell signal
-                    # With short interest unknown, the warning rests on insider
-                    # ownership alone -- the unknown component contributes
-                    # nothing rather than being invented.
-                    insider_sell_warn = max(0, min(100, (0.05 - held_ins) / 0.05 * 50
-                                                        + (short_pct or 0) * 2))
-
-                # Analyst rec worsening (3 = hold, 4-5 = underperform/sell)
-                rec_mean   = _f("recommendationMean")
-                rec_warn   = max(0, min(100, ((rec_mean or 3) - 2) / 3 * 100)) if rec_mean else 50
-
-                mkt_warn   = rsi_warn * 0.25 + sma50_warn * 0.20 + sma200_warn * 0.20 + insider_sell_warn * 0.20 + rec_warn * 0.15
-
-                # ── Composite attention score ─────────────────────────
-                # Categories that could not be assessed are excluded and the
-                # remaining weights renormalised, so a holding with missing data
-                # is reported as less certain rather than as less concerning.
-                sell_score, data_cov = _weighted_known([
-                    (val_warn, sw_val), (fund_warn, sw_fund),
-                    (bal_warn, sw_bal), (mkt_warn, sw_mkt),
-                ])
-                if sell_score is None:
-                    continue  # nothing measurable; do not invent a verdict
-
-                overall_cov = data_cov * (
-                    (val_cov * sw_val + fund_cov * sw_fund + bal_cov * sw_bal + 1.0 * sw_mkt)
-                    / ((sw_val + sw_fund + sw_bal + sw_mkt) or 1)
-                )
-                confidence = ("high" if overall_cov >= 0.85 else
-                              "moderate" if overall_cov >= 0.60 else "low")
-
-                if sell_score >= 62:   verdict, verdict_cls = "Several factors to review", "fail-badge"
-                elif sell_score >= 40: verdict, verdict_cls = "Some factors to review",    "warn-badge"
-                else:                  verdict, verdict_cls = "Few factors flagged",        "pass-badge"
-
-                research = score_company(
-                    ticker, _fundamentals_from_info(info, hist), info.get("sector"),
-                )
-                try:
-                    _score_history().record(research)
-                except Exception:  # noqa: BLE001 - history is secondary
-                    pass
-
-                rows.append({
-                    "ticker":          ticker,
-                    "research_score":  research.overall,
-                    "research_conf":   research.confidence,
-                    "name":            info.get("shortName", ticker)[:28],
-                    "sell_score":      round(sell_score,   1),
-                    "val_warn":        round(val_warn,  1) if val_warn  is not None else None,
-                    "fund_warn":       round(fund_warn, 1) if fund_warn is not None else None,
-                    "bal_warn":        round(bal_warn,  1) if bal_warn  is not None else None,
-                    "mkt_warn":        round(mkt_warn,  1) if mkt_warn  is not None else None,
-                    "data_coverage":   round(overall_cov * 100, 0),
-                    "confidence":      confidence,
-                    "verdict":         verdict,
-                    "verdict_cls":     verdict_cls,
-                    # Raw metrics
-                    "pe":              round(pe, 1)         if pe         else None,
-                    "peg":             round(peg, 2)        if peg        else None,
-                    "ps":              round(ps, 2)         if ps         else None,
-                    "rev_growth":      round(rev_growth, 1),
-                    "earn_growth":     round(earn_growth, 1),
-                    "net_margin":      round(net_margin, 1),
-                    "roe":             round(roe, 1),
-                    "de_ratio":        round(de, 2)         if de         else None,
-                    "fcf_yield":       round(fcf_yield, 1)  if fcf_yield  else None,
-                    "rsi":             round(rsi_val, 1),
-                    "vs_sma50":        round(vs_sma50, 1),
-                    "vs_sma200":       round(vs_sma200, 1),
-                    "insider_sell":    round(insider_sell_warn, 0),
-                    "rec_mean":        round(rec_mean, 1)   if rec_mean   else None,
-                    "near_52h_pct":    (round(price_now / price_52h * 100, 1)
-                                        if price_52h and price_now else None),
-                })
-
-            except Exception:
-                continue
-
-        prog.empty()
-        if not rows:
-            st.warning("No data returned. Check your tickers and try again.")
-            st.stop()
-        sell_df = pd.DataFrame(rows).sort_values("sell_score", ascending=False).reset_index(drop=True)
-        st.session_state[sell_cache] = sell_df
-
-    sell_df = st.session_state.get(sell_cache)
-
-    if sell_df is None:
-        st.stop()  # gate is showing its own prompt — nothing to render yet
-    if sell_df.empty:
-        st.warning(
-            "No data came back for those tickers. Check the symbols in the sidebar "
-            "(US tickers work best), then press Review my holdings to try again."
+    if not entries:
+        st.info(
+            "Your watchlist is empty. Search for a company above and use "
+            "**Add to watchlist** on its research page."
         )
+        theme.section("Recently viewed")
+        try:
+            recent = _watchlist().recent(limit=12)
+        except Exception:  # noqa: BLE001
+            recent = []
+        if recent:
+            st.markdown(" ".join(f'<span class="bs-tag">{e.ticker}</span>' for e in recent),
+                        unsafe_allow_html=True)
+        else:
+            st.caption("Companies you look at will appear here.")
         st.stop()
 
-    # ── What has changed since we last looked ────────────────────
-    # Uses only recorded snapshots. Nothing is reconstructed: a past score
-    # cannot be recomputed from today's figures.
-    st.markdown("### What has changed")
-    try:
-        _hist_store = _score_history()
-        changes = []
-        for _, row in sell_df.iterrows():
-            tk = row["ticker"]
-            latest = _hist_store.latest(tk)
-            if latest is None:
-                continue
-            earlier = (_hist_store.nearest(tk, 30, tolerance_days=20)
-                       or _hist_store.nearest(tk, 90, tolerance_days=60))
-            if earlier is None or earlier.taken_on == latest.taken_on:
-                continue
-            changes.append((tk, describe_change(latest, earlier)))
-    except Exception:  # noqa: BLE001
-        changes = []
+    reload_wl = st.sidebar.button("Refresh scores", key="_wl_refresh")
+    wl_key = "watchlist_scores_" + ",".join(sorted(e.ticker for e in entries))
+    if reload_wl or wl_key not in st.session_state:
+        st.session_state[wl_key] = None
 
-    if not changes:
-        st.info(
-            "**Nothing to compare yet.** Research scores for these companies were recorded "
-            "today. Once there are snapshots from an earlier date, this section will show "
-            "how each score has moved and which measures drove it. Earlier scores cannot be "
-            "calculated retrospectively — the data source only provides today's figures."
-        )
-    else:
-        for tk, change in changes:
-            if not change["comparable"]:
-                st.caption(f"**{tk}** — {change['summary']}")
-                continue
-            arrow = "▲" if change["delta"] > 0 else ("▼" if change["delta"] < 0 else "▬")
-            colour = ("#2f6b4f" if change["delta"] > 0
-                      else "#9b3b3b" if change["delta"] < 0 else "#9aa1ad")
+    if _scan_gate(wl_key, "Refresh scores", forced=reload_wl,
+                  note="Re-scores the companies on your watchlist using live data."):
+        tickers = [e.ticker for e in entries]
+        with st.spinner(""):
+            prices = _batch_prices(tuple(tickers), period="3mo", interval="1d")
+            infos = _batch_info(tuple(tickers))
+            rows = []
+            for entry in entries:
+                info = infos.get(entry.ticker) or {}
+                hist = prices.get(entry.ticker)
+                fundamentals = _fundamentals_from_info(info, hist)
+                sc = score_company(entry.ticker, fundamentals, info.get("sector"))
+                try:
+                    _score_history().record(sc)
+                except Exception:  # noqa: BLE001
+                    pass
+                chg_1m = None
+                if hist is not None and not hist.empty:
+                    closes = hist["Close"].dropna()
+                    if len(closes) > 21:
+                        chg_1m = (float(closes.iloc[-1]) / float(closes.iloc[-22]) - 1) * 100
+                rows.append({
+                    "ticker": entry.ticker,
+                    "name": info.get("shortName") or entry.name or entry.ticker,
+                    "sector": info.get("sector") or "—",
+                    "score": sc, "chg_1m": chg_1m,
+                })
+        st.session_state[wl_key] = rows
+
+    rows = st.session_state.get(wl_key)
+    if rows is None:
+        st.stop()
+
+    # ── Table ────────────────────────────────────────────────
+    table, moves = [], []
+    for r in rows:
+        sc = r["score"]
+        change = None
+        try:
+            store = _score_history()
+            latest, earlier = store.latest(r["ticker"]), store.nearest(r["ticker"], 30, tolerance_days=25)
+            if latest and earlier and earlier.taken_on != latest.taken_on:
+                change = describe_change(latest, earlier)
+        except Exception:  # noqa: BLE001
+            pass
+        delta = change["delta"] if change and change.get("comparable") else None
+        if change and change.get("comparable") and abs(change["delta"]) >= 2:
+            moves.append((r["ticker"], change))
+        table.append({
+            "Company": r["name"][:34], "Ticker": r["ticker"],
+            "Score": sc.overall,
+            "30d change": round(delta, 1) if delta is not None else None,
+            "1M price": round(r["chg_1m"], 1) if r["chg_1m"] is not None else None,
+            "Quality": sc.categories["quality"].score,
+            "Growth": sc.categories["growth"].score,
+            "Valuation": sc.categories["valuation"].score,
+            "Momentum": sc.categories["momentum"].score,
+            "Sector": r["sector"],
+        })
+
+    st.dataframe(
+        pd.DataFrame(table).sort_values("Score", ascending=False, na_position="last"),
+        hide_index=True, width="stretch", height=min(560, 36 * len(table) + 40),
+        column_config={
+            "Score": st.column_config.NumberColumn(format="%d", width="small"),
+            "30d change": st.column_config.NumberColumn("30d score", format="%+.0f", width="small"),
+            "1M price": st.column_config.NumberColumn("1M price", format="%+.1f%%", width="small"),
+            "Quality": st.column_config.NumberColumn(format="%d", width="small"),
+            "Growth": st.column_config.NumberColumn(format="%d", width="small"),
+            "Valuation": st.column_config.NumberColumn(format="%d", width="small"),
+            "Momentum": st.column_config.NumberColumn(format="%d", width="small"),
+            "Ticker": st.column_config.TextColumn(width="small"),
+        },
+    )
+    st.caption(
+        "Score change compares against the nearest snapshot around 30 days old. "
+        "A blank means there is no earlier snapshot yet, or the measure could not be scored."
+    )
+
+    # ── What changed ─────────────────────────────────────────
+    if moves:
+        theme.section("What changed")
+        for ticker, change in moves:
+            arrow = "▲" if change["delta"] > 0 else "▼"
+            colour = theme.POSITIVE if change["delta"] > 0 else theme.NEGATIVE
             st.markdown(
-                f"<div style='margin-bottom:0.45rem;font-size:0.9rem;color:#5f6672;'>"
-                f"<b>{tk}</b> <span style='color:{colour};font-weight:700;'>{arrow} "
-                f"{change['delta']:+.0f}</span> — {change['summary']}</div>",
+                f'<div style="font-size:0.86rem;color:{theme.MUTED};margin-bottom:0.4rem;">'
+                f'<b style="color:{theme.INK};">{ticker}</b> '
+                f'<span style="color:{colour};font-weight:650;">{arrow} {change["delta"]:+.0f}</span> '
+                f'— {change["summary"]}</div>',
                 unsafe_allow_html=True,
             )
 
-    st.markdown("---")
-
-    # ── Review cards ─────────────────────────────────────────────
-    st.markdown("### At a glance")
-    cols = st.columns(len(sell_df))
-    for i, (_, row) in enumerate(sell_df.iterrows()):
-        score = row["sell_score"]
-        if score >= 62:
-            bg, border = "#fff5f5", "#9b3b3b"
-        elif score >= 40:
-            bg, border = "#fffbeb", "#8d7434"
-        else:
-            bg, border = "#f0fdf4", "#2f6b4f"
-        cols[i].markdown(
-            f'<div style="background:{bg}; border:1px solid {border}; border-top:3px solid {border}; '
-            f'border-radius:3px; padding:0.85rem 1rem;">'
-            f'<div style="font-size:0.85rem; font-weight:700; color:#12161f;">{row["ticker"]}</div>'
-            f'<div style="font-size:1.6rem; font-weight:800; color:{border}; line-height:1.1; margin:0.2rem 0;">{score:.0f}</div>'
-            f'<div style="font-size:0.68rem; color:#5f6672; text-transform:uppercase; letter-spacing:0.07em;">Factors flagged</div>'
-            f'<div style="font-size:0.75rem; font-weight:600; color:{border}; margin-top:0.35rem;">{row["verdict"]}</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("---")
-
-    # ── Factors-flagged bar chart ────────────────────────────────
-    st.markdown("### Where the concerns come from")
-    fig_sell = go.Figure()
-    comp_cols  = ["val_warn", "fund_warn", "bal_warn", "mkt_warn"]
-    comp_names = ["Overvaluation", "Fundamental Decline", "Balance Sheet Stress", "Market/Momentum"]
-    comp_clrs  = ["#9b3b3b", "#8d7434", "#7c3aed", "#2563eb"]
-
-    for col, name, clr in zip(comp_cols, comp_names, comp_clrs):
-        fig_sell.add_trace(go.Bar(
-            name=name, x=sell_df["ticker"], y=sell_df[col],
-            marker_color=clr, opacity=0.85,
-        ))
-
-    # Threshold lines
-    fig_sell.add_hline(y=62, line_dash="dash", line_color="#9b3b3b", line_width=1.2,
-                       annotation_text="Several factors flagged", annotation_position="right",
-                       annotation_font=dict(color="#9b3b3b", size=10))
-    fig_sell.add_hline(y=40, line_dash="dot",  line_color="#8d7434", line_width=1,
-                       annotation_text="Watch zone", annotation_position="right",
-                       annotation_font=dict(color="#8d7434", size=10))
-
-    fig_sell.update_layout(**chart_layout(
-        barmode="group", height=380,
-        yaxis_range=[0, 105],
-        yaxis_title="Factors flagged (0 = none, 100 = many)",
-    ))
-    st.plotly_chart(fig_sell, width="stretch")
-
-    # ── Full data table ──────────────────────────────────────────
-    st.markdown("---")
-    st.markdown("### Full signal table")
-
-    table_cols = ["ticker", "name", "sell_score", "verdict",
-                  "pe", "peg", "rev_growth", "earn_growth",
-                  "net_margin", "roe", "de_ratio", "fcf_yield",
-                  "rsi", "vs_sma50", "vs_sma200",
-                  "insider_sell", "near_52h_pct"]
-    rename_sell = {
-        "ticker": "Ticker", "name": "Company",
-        "sell_score": "Factors flagged", "verdict": "Summary",
-        "pe": "P/E", "peg": "PEG",
-        "rev_growth": "Rev Gr%", "earn_growth": "EPS Gr%",
-        "net_margin": "Net Mgn%", "roe": "ROE%",
-        "de_ratio": "D/E", "fcf_yield": "FCF Yld%",
-        "rsi": "RSI", "vs_sma50": "vs SMA50%", "vs_sma200": "vs SMA200%",
-        "insider_sell": "Insider selling%", "near_52h_pct": "% of 52W high",
-    }
-    avail_sell = [c for c in table_cols if c in sell_df.columns]
-    st.dataframe(
-        sell_df[avail_sell].rename(columns=rename_sell),
-        hide_index=True, width="stretch",
+    # ── Managing the list ────────────────────────────────────
+    theme.section("Manage")
+    drop = st.multiselect(
+        "Remove from watchlist", [e.ticker for e in entries],
+        format_func=lambda t: f"{t} — {next((e.name for e in entries if e.ticker == t), t)}",
+        label_visibility="collapsed", placeholder="Remove companies from your watchlist",
     )
+    if drop and st.button("Remove selected"):
+        for t in drop:
+            wl.remove(t)
+        st.rerun()
 
-    # ── Deep dive ───────────────────────────────────────────────
-    st.markdown("---")
-    st.markdown("### What the numbers show for each holding")
-    sel_sell = st.selectbox("Select a holding", sell_df["ticker"].tolist(), key="sell_select")
-    s = sell_df[sell_df["ticker"] == sel_sell].iloc[0]
-
-    c1, c2, c3, c4 = st.columns(4)
-
-    def warn_badge(score):
-        # A category that could not be assessed must say so, not show a
-        # reassuring green badge built from data we never had.
-        if score is None or pd.isna(score):
-            return '<span class="warn-badge">Not assessed — data unavailable</span>'
-        if score >= 62: return f'<span style="color:#9b3b3b;">High ({score:.0f})</span>'
-        if score >= 40: return f'<span style="color:#8a6a2f;">Medium ({score:.0f})</span>'
-        return f'<span style="color:#2f6b4f;">Low ({score:.0f})</span>'
-
-    with c1:
-        st.markdown("**Overvaluation**")
-        st.markdown(warn_badge(s["val_warn"]), unsafe_allow_html=True)
-        st.write(f"P/E: **{s['pe']}**" if s["pe"] else "P/E: **—**")
-        st.write(f"PEG: **{s['peg']}**" if s["peg"] else "PEG: **—**")
-        st.write(f"P/S: **{s['ps']}**" if s["ps"] else "P/S: **—**")
-        pct_52 = s["near_52h_pct"]
-        if pct_52:
-            cls = "fail-badge" if pct_52 > 90 else "warn-badge" if pct_52 > 75 else "pass-badge"
-            st.markdown(f'% of 52W high: <span class="{cls}"><b>{pct_52:.0f}%</b></span>', unsafe_allow_html=True)
-
-    with c2:
-        st.markdown("**Fundamental decline**")
-        st.markdown(warn_badge(s["fund_warn"]), unsafe_allow_html=True)
-        rg = s["rev_growth"]
-        eg = s["earn_growth"]
-        rg_cls = "pass-badge" if rg > 5 else "warn-badge" if rg > 0 else "fail-badge"
-        eg_cls = "pass-badge" if eg > 5 else "warn-badge" if eg > 0 else "fail-badge"
-        st.markdown(f'Revenue growth: <span class="{rg_cls}"><b>{rg:+.1f}%</b></span>', unsafe_allow_html=True)
-        st.markdown(f'Earnings growth: <span class="{eg_cls}"><b>{eg:+.1f}%</b></span>', unsafe_allow_html=True)
-        nm = s["net_margin"]
-        nm_cls = "pass-badge" if nm > 10 else "warn-badge" if nm > 0 else "fail-badge"
-        st.markdown(f'Net margin: <span class="{nm_cls}"><b>{nm:.1f}%</b></span>', unsafe_allow_html=True)
-        st.write(f"ROE: **{s['roe']:.1f}%**")
-
-    with c3:
-        st.markdown("**Balance sheet stress**")
-        st.markdown(warn_badge(s["bal_warn"]), unsafe_allow_html=True)
-        de = s["de_ratio"]
-        de_cls = "pass-badge" if (de or 0) < 0.5 else "warn-badge" if (de or 0) < 1.5 else "fail-badge"
-        st.markdown(f'D/E ratio: <span class="{de_cls}"><b>{de}</b></span>', unsafe_allow_html=True) if de else st.write("D/E: **—**")
-        fy = s["fcf_yield"]
-        if fy is not None:
-            fy_cls = "pass-badge" if fy > 3 else "warn-badge" if fy > 0 else "fail-badge"
-            st.markdown(f'FCF yield: <span class="{fy_cls}"><b>{fy:.1f}%</b></span>', unsafe_allow_html=True)
-        else:
-            st.write("FCF yield: **—**")
-
-    with c4:
-        st.markdown("**Market signals**")
-        st.markdown(warn_badge(s["mkt_warn"]), unsafe_allow_html=True)
-        rsi = s["rsi"]
-        rsi_cls = "fail-badge" if rsi > 75 else "warn-badge" if rsi > 65 else "pass-badge" if rsi > 30 else "fail-badge"
-        st.markdown(f'RSI (14): <span class="{rsi_cls}"><b>{rsi:.0f}</b></span>', unsafe_allow_html=True)
-        sma50 = s["vs_sma50"]
-        sma50_cls = "pass-badge" if sma50 > 0 else "fail-badge"
-        st.markdown(f'vs SMA50: <span class="{sma50_cls}"><b>{sma50:+.1f}%</b></span>', unsafe_allow_html=True)
-        sma200 = s["vs_sma200"]
-        sma200_cls = "pass-badge" if sma200 > 0 else "fail-badge"
-        st.markdown(f'vs SMA200: <span class="{sma200_cls}"><b>{sma200:+.1f}%</b></span>', unsafe_allow_html=True)
-        ins = s["insider_sell"]
-        ins_cls = "fail-badge" if ins > 70 else "warn-badge" if ins > 50 else "pass-badge"
-        st.markdown(f'Insider selling: <span class="{ins_cls}"><b>{ins:.0f}%</b></span>', unsafe_allow_html=True)
-        rec = s["rec_mean"]
-        if rec:
-            rec_label = {1:"Strong Buy",2:"Buy",3:"Hold",4:"Underperform",5:"Sell"}.get(round(rec), f"{rec:.1f}")
-            rec_cls   = "pass-badge" if rec <= 2 else "warn-badge" if rec <= 3 else "fail-badge"
-            st.markdown(f'Analyst view: <span class="{rec_cls}"><b>{rec_label}</b></span>', unsafe_allow_html=True)
-
-    # ── Price chart for selected holding ────────────────────────
-    st.markdown("---")
-    st.markdown(f"### {sel_sell} — 6-month price chart")
-    try:
-        hist6 = yf.Ticker(sel_sell).history(period="6mo", interval="1d", auto_adjust=True)
-        if not hist6.empty:
-            closes = hist6["Close"]
-            sma50_line  = closes.rolling(50).mean()
-            sma200_line = closes.rolling(min(200, len(closes))).mean()
-
-            fig_price = go.Figure()
-            fig_price.add_trace(go.Scatter(
-                x=hist6.index, y=closes, name="Price",
-                line=dict(color="#12161f", width=1.8),
-                fill="tozeroy", fillcolor="rgba(184,150,12,0.07)",
-            ))
-            fig_price.add_trace(go.Scatter(
-                x=hist6.index, y=sma50_line, name="SMA 50",
-                line=dict(color=GOLD, width=1.4, dash="dot"),
-            ))
-            fig_price.add_trace(go.Scatter(
-                x=hist6.index, y=sma200_line, name="SMA 200",
-                line=dict(color="#9b3b3b", width=1.4, dash="dash"),
-            ))
-            fig_price.update_layout(**chart_layout(
-                height=340,
-                title=dict(text=f"{sel_sell} vs SMA 50 & SMA 200", font=dict(size=12, color=CHART_TEXT)),
-            ))
-            st.plotly_chart(fig_price, width="stretch")
-    except Exception:
-        pass
-
-    # ── Disclaimer ───────────────────────────────────────────────
-    st.markdown("---")
+    theme.hairline()
     st.caption(
-        "Holdings Review is a research tool, not financial advice. "
-        "A high sell score means the data warrants a closer look — not an automatic exit. "
-        "Always consider your own tax situation and time horizon, and seek independent advice if you need it."
-    )
-
-    st.download_button(
-        "⬇ Download sell analysis as CSV",
-        data=sell_df.to_csv(index=False),
-        file_name=f"sell_watch_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
-        mime="text/csv",
+        f"Methodology v{SCORING_VERSION}. Research and education only, not financial "
+        f"advice and not a recommendation to buy or sell."
     )
 
 
-# ════════════════════════════════════════════════════════════
-# PAGE 4 — SCREENER
-# ════════════════════════════════════════════════════════════
 elif page == "Screener":
     st.title("Screener")
 
@@ -2328,567 +1970,125 @@ elif page == "Screener":
 # ════════════════════════════════════════════════════════════
 elif page == "UK Investor":
 
-    st.title("UK Investor")
-
-    # ISA benefit banner
-    st.markdown("""
-    <div style="background:#ffffff; border:1px solid #e7e4dd; border-left:4px solid #8d7434;
-                border-radius:3px; padding:0.85rem 1.2rem; margin-bottom:1.2rem;">
-        <div style="font-size:0.8rem; font-weight:700; color:#8d7434; letter-spacing:0.1em;
-                    text-transform:uppercase; margin-bottom:0.3rem;">🇬🇧 Stocks & Shares ISA</div>
-        <div style="font-size:0.85rem; color:#5f6672; line-height:1.5;">
-            All gains and dividends earned inside a Stocks & Shares ISA are
-            <strong>completely tax-free</strong> — no Capital Gains Tax, no dividend income tax.
-            This page screens stocks that are available on Trading 212's ISA platform.
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Sidebar ──────────────────────────────────────────────
-    st.sidebar.markdown("### UK Investor settings")
-
-    t212_sector = st.sidebar.selectbox(
-        "Sector filter",
-        ["All T212 stocks", "US Tech & AI", "US Finance", "US Healthcare", "US Consumer",
-         "US Industrials", "UK Listed (.L)"],
-        index=0,
+    theme.page_header(
+        "UK Investor",
+        "What a UK investor needs to know that a US-focused tool will not tell you.",
     )
 
-    t212_mode = st.sidebar.radio(
-        "Analysis mode",
-        ["Top Movers", "Best Opportunities", "Screen"],
-        index=0,
+    tab_isa, tab_costs, tab_shares = st.tabs(
+        ["Stocks and Shares ISA", "Costs and currency", "UK-listed companies"]
     )
 
-    t212_top_n = st.sidebar.slider("Show top N", 5, 25, 12)
-    refresh_t212 = st.sidebar.button("Refresh Data", type="primary")
+    # ── ISA ──────────────────────────────────────────────────
+    with tab_isa:
+        isa = LESSONS_BY_KEY["isa"]
+        st.markdown(isa.body)
 
-    # ── Sector filtering ─────────────────────────────────────
-    ALL_T212 = get_trading212_isa()
+        theme.section("The allowance, in short")
+        theme.metric_table([
+            ("Annual ISA allowance", "£20,000", "The most you can pay into ISAs in a tax year, across all types."),
+            ("Tax year runs", "6 April – 5 April", "Allowances reset on 6 April and unused allowance does not carry over."),
+            ("Capital gains tax inside", "None", "Gains on investments held in an ISA are not taxed."),
+            ("Dividend tax inside", "None", "Dividends received inside an ISA are not taxed."),
+            ("Declared on a tax return", "No", "ISA holdings do not need to be reported to HMRC."),
+        ], columns=1)
+        st.caption(
+            "Allowances and rules are set by the government and change from time to time. "
+            "This is general information, not tax advice, and your own circumstances matter."
+        )
 
-    SECTOR_MAP = {
-        "All T212 stocks":    ALL_T212,
-        "US Tech & AI":       [t for t in ALL_T212 if t in [
-            "AAPL","MSFT","GOOG","AMZN","META","NVDA","TSLA",
-            "AMD","INTC","AVGO","QCOM","TXN","MU","MRVL","ARM","TSM","ASML","LRCX","KLAC","AMAT","ON","SMCI",
-            "CRM","ORCL","ADBE","NOW","SNOW","PLTR","DDOG","NET","ZS","CRWD","PANW","FTNT","MDB","WDAY","HUBS","TWLO","OKTA",
-            "AI","PATH","SOUN","BBAI","IONQ","RGTI",
-            "NFLX","SHOP","UBER","ABNB","SPOT","RBLX","TTD","PINS","SNAP","DUOL",
-            "ANET","DELL","CFLT","DT","IOT","MNDY","TOST",
-        ]],
-        "US Finance":         [t for t in ALL_T212 if t in [
-            "V","MA","PYPL","SQ","COIN","AFRM","SOFI","HOOD",
-            "JPM","BAC","WFC","GS","MS","C","AXP","COF","BLK","SCHW",
-        ]],
-        "US Healthcare":      [t for t in ALL_T212 if t in [
-            "JNJ","UNH","LLY","ABBV","PFE","MRK","AMGN","GILD","ISRG",
-            "DXCM","VEEV","REGN","HIMS","RXRX",
-        ]],
-        "US Consumer":        [t for t in ALL_T212 if t in [
-            "WMT","COST","PG","KO","PEP","MCD","SBUX","NKE","TGT","HD","LOW","CELH","DUOL",
-            "T","VZ","CMCSA","DIS",
-        ]],
-        "US Industrials":     [t for t in ALL_T212 if t in [
-            "GE","CAT","HON","BA","RTX","LMT","NOC","GD","DE","HWM","TDG",
-            "RKLB","AXON","KTOS","ASTS","XOM","CVX","COP","SLB","EOG",
-            "O","PLD","AMT","EQIX",
-        ]],
-        "UK Listed (.L)":     [t for t in ALL_T212 if t.endswith(".L")],
-    }
+    # ── Costs and currency ───────────────────────────────────
+    with tab_costs:
+        uk_us = LESSONS_BY_KEY["uk_vs_us"]
+        st.markdown(uk_us.body)
 
-    t212_tickers = SECTOR_MAP.get(t212_sector, ALL_T212)
+        theme.section("Costs worth checking with your provider")
+        theme.metric_table([
+            ("Stamp duty on UK shares", "0.5%",
+             "Charged on most UK share purchases. Not charged on US shares."),
+            ("FX fee on overseas shares", "Typically 0.15%–1.5%",
+             "Charged when converting currency. Often larger than the dealing commission."),
+            ("Dealing commission", "Varies",
+             "Some providers charge per trade, others include it in a platform fee."),
+            ("Platform or custody fee", "Varies",
+             "An annual charge for holding the account, sometimes a percentage of the value."),
+            ("Fractional shares", "Provider dependent",
+             "Lets you buy part of a share. Not every provider offers them, and not on every stock."),
+        ], columns=1)
+        st.caption(
+            "Figures are typical ranges, not quotes. Check the current charges published by "
+            "whichever provider you use — this platform is independent and not affiliated "
+            "with any broker."
+        )
 
-    st.caption(
-        f"Showing **{t212_sector}** — {len(t212_tickers)} stocks available. "
-        f"Data from yfinance (cached 24h)."
-    )
+    # ── UK-listed companies ──────────────────────────────────
+    with tab_shares:
+        st.caption(
+            "Companies listed in London, scored on the same methodology as everything else. "
+            "Availability depends on your provider, and inclusion here is not a recommendation."
+        )
+        uk_refresh = st.sidebar.button("Refresh UK list", key="_uk_refresh")
+        uk_key = "uk_listed"
+        if uk_refresh or uk_key not in st.session_state:
+            st.session_state[uk_key] = None
 
-    # ══════════════════════════════════════════════════════════
-    # MODE A — TOP MOVERS (momentum)
-    # ══════════════════════════════════════════════════════════
-    if t212_mode == "Top Movers":
-
-        t212_cache_key = f"t212_hot_{t212_sector}"
-        if refresh_t212 or t212_cache_key not in st.session_state:
-            st.session_state[t212_cache_key] = None
-
-        if st.session_state[t212_cache_key] is None:
-            with st.spinner(f"Analysing {len(t212_tickers)} T212 stocks for momentum..."):
-                t212_tup   = tuple(t212_tickers)
-                prog = st.progress(0, text="Batch downloading prices...")
-                t212_prices = _batch_prices(t212_tup, period="1mo", interval="1d")
-                prog.progress(0.5, text="Fetching analyst data (parallel)...")
-                t212_infos  = _batch_info(t212_tup)
-                prog.progress(0.85, text="Computing scores...")
-
-                rows = []
-                for ticker in t212_tickers:
-                    try:
-                        hist = t212_prices.get(ticker)
-                        if hist is None or len(hist) < 6:
+        if _scan_gate(uk_key, "Load UK-listed companies", forced=uk_refresh,
+                      note="Scores the London-listed companies in our universe."):
+            try:
+                pool = [t for t in get_universe("t212") if t.endswith(".L")]
+            except Exception:  # noqa: BLE001
+                pool = []
+            if not pool:
+                st.session_state[uk_key] = []
+            else:
+                with st.spinner(""):
+                    prices = _batch_prices(tuple(pool), period="3mo", interval="1d")
+                    infos = _batch_info(tuple(pool))
+                    built = []
+                    for t in pool:
+                        info = infos.get(t) or {}
+                        if not info.get("shortName"):
                             continue
-
-                        closes  = hist["Close"]
-                        volumes = hist["Volume"]
-                        price_now  = float(closes.iloc[-1])
-                        price_1w   = float(closes.iloc[-6]) if len(closes) >= 6 else None
-                        price_1m   = float(closes.iloc[0])
-                        vol_now    = float(volumes.iloc[-5:].mean())
-                        vol_avg    = float(volumes.mean())
-
-                        week_chg   = ((price_now - price_1w) / price_1w * 100) if price_1w else 0
-                        month_chg  = (price_now - price_1m) / price_1m * 100
-                        vol_surge  = vol_now / vol_avg if vol_avg > 0 else 1.0
-
-                        delta = closes.diff().dropna()
-                        gain  = delta.clip(lower=0).rolling(14).mean()
-                        loss  = (-delta.clip(upper=0)).rolling(14).mean()
-                        rs    = gain / loss.replace(0, float("nan"))
-                        rsi   = float((100 - 100 / (1 + rs)).iloc[-1]) if not rs.empty else 50.0
-                        rsi   = rsi if not pd.isna(rsi) else 50.0
-
-                        sma20  = float(closes.rolling(20).mean().iloc[-1]) if len(closes) >= 20 else price_now
-                        vs_sma = (price_now - sma20) / sma20 * 100
-
-                        info  = t212_infos.get(ticker, {})
-                        rec   = info.get("recommendationMean")
-                        analyst_score = max(0, min(100, (5 - float(rec)) / 4 * 100)) if rec else 50.0
-
-                        week_score = min(100, max(0, (week_chg + 10) / 30 * 100))
-                        vol_score  = min(100, max(0, (vol_surge - 0.5) / 2.5 * 100))
-                        rsi_score  = min(100, max(0, (rsi - 30) / 50 * 100))
-                        sma_score  = min(100, max(0, (vs_sma + 5) / 20 * 100))
-                        hot_score  = (
-                            week_score * 0.35 + vol_score * 0.20 +
-                            rsi_score  * 0.20 + sma_score * 0.15 +
-                            analyst_score * 0.10
-                        )
-
-                        currency = "£" if ticker.endswith(".L") else "$"
-                        rows.append({
-                            "ticker":    ticker, "currency":  currency,
-                            "price":     round(price_now, 2),
-                            "week_chg":  round(week_chg, 2),
-                            "month_chg": round(month_chg, 2),
-                            "vol_surge": round(vol_surge, 2),
-                            "rsi":       round(rsi, 1),
-                            "vs_sma20":  round(vs_sma, 2),
-                            "hot_score": round(hot_score, 1),
+                        sc = score_company(t, _fundamentals_from_info(info, prices.get(t)),
+                                           info.get("sector"))
+                        built.append({
+                            "Company": info.get("shortName", t)[:34], "Ticker": t,
+                            "Score": sc.overall,
+                            "Quality": sc.categories["quality"].score,
+                            "Growth": sc.categories["growth"].score,
+                            "Valuation": sc.categories["valuation"].score,
+                            "Sector": info.get("sector") or "—",
                         })
-                    except Exception:
-                        continue
+                st.session_state[uk_key] = built
 
-                prog.empty()
-                if not rows:
-                    st.warning("No data returned. Check your tickers and try again.")
-                    st.stop()
-                df_hot = pd.DataFrame(rows).sort_values("hot_score", ascending=False).reset_index(drop=True)
-                st.session_state[t212_cache_key] = df_hot
-
-        df_hot = st.session_state[t212_cache_key]
-
-        if df_hot is None or df_hot.empty:
-            st.error(
-                "No data came back for this list. This is usually a temporary "
-                "data-provider hiccup — refresh the page to try again."
-            )
+        built = st.session_state.get(uk_key)
+        if built is None:
             st.stop()
-
-        top_hot = df_hot.head(t212_top_n)
-
-        # Hero cards
-        st.markdown("### This week's top movers")
-        cols = st.columns(min(5, len(top_hot)))
-        for i, (_, row) in enumerate(top_hot.head(5).iterrows()):
-            arrow = "▲" if row["week_chg"] >= 0 else "▼"
-            cls   = "up" if row["week_chg"] >= 0 else "down"
-            cols[i % 5].markdown(
-                f'<div class="bs-panel">'
-                f'<h3>{row["ticker"]}</h3>'
-                f'<p><span class="{cls}">{arrow} {row["week_chg"]:+.1f}%</span></p>'
-                f'<small style="color:#a0a0b0">Score: {row["hot_score"]:.0f} &nbsp;|&nbsp; '
-                f'RSI: {row["rsi"]:.0f} &nbsp;|&nbsp; Vol: {row["vol_surge"]:.1f}x</small>'
-                f'</div>',
-                unsafe_allow_html=True,
+        if not built:
+            st.info(
+                "No London-listed companies were available from the data provider just now. "
+                "UK coverage from this source is thinner than US coverage."
             )
-
-        st.markdown("---")
-        st.markdown(f"### Full top {t212_top_n}")
-
-        display_df = top_hot.copy()
-        display_df.insert(0, "Rank", range(1, len(display_df) + 1))
-        display_df = display_df.rename(columns={
-            "ticker": "Ticker", "currency": "CCY", "price": "Price",
-            "week_chg": "Week %", "month_chg": "Month %",
-            "vol_surge": "Vol Surge", "rsi": "RSI (14)",
-            "vs_sma20": "vs SMA20%", "hot_score": "Score",
-        })
-        st.dataframe(display_df, hide_index=True, width="stretch")
-
-        # Chart
-        st.markdown("---")
-        st.markdown("### Price chart")
-        chart_t = st.selectbox("Select stock", top_hot["ticker"].tolist(), key="t212_hot_chart")
-        try:
-            hist = yf.Ticker(chart_t).history(period="3mo", interval="1d", auto_adjust=True)
-            if not hist.empty:
-                fig = go.Figure()
-                fig.add_trace(go.Candlestick(
-                    x=hist.index, open=hist["Open"], high=hist["High"],
-                    low=hist["Low"], close=hist["Close"], name=chart_t,
-                    increasing_line_color="#2f6b4f", decreasing_line_color="#9b3b3b",
-                ))
-                fig.add_trace(go.Scatter(
-                    x=hist.index, y=hist["Close"].rolling(20).mean(),
-                    name="SMA 20", line=dict(color=GOLD, width=1.5, dash="dot"),
-                ))
-                fig.update_layout(**chart_layout(
-                    height=400, xaxis_rangeslider_visible=False,
-                    title=dict(text=f"{chart_t} — 3 months", font=dict(size=12, color=CHART_TEXT)),
-                ))
-                st.plotly_chart(fig, width="stretch")
-        except Exception:
-            pass
-
-    # ══════════════════════════════════════════════════════════
-    # MODE B — BEST OPPORTUNITIES (fundamental value score)
-    # ══════════════════════════════════════════════════════════
-    elif t212_mode == "Best Opportunities":
-
-        st.markdown(
-            "Ranks T212 stocks by a combined **value + growth + quality** score — "
-            "helping you find the strongest ISA candidates right now."
-        )
-
-        t212_opp_key = f"t212_opp_{t212_sector}"
-        if refresh_t212 or t212_opp_key not in st.session_state:
-            st.session_state[t212_opp_key] = None
-
-        if st.session_state[t212_opp_key] is None:
-            with st.spinner(f"Scoring {len(t212_tickers)} T212 stocks..."):
-                t212_opp_tup = tuple(t212_tickers)
-                rows = []
-                prog = st.progress(0, text="Fetching fundamentals (parallel)...")
-                t212_opp_info = _batch_info(t212_opp_tup)
-                prog.progress(0.7, text="Computing opportunity scores...")
-
-                for ticker in t212_tickers:
-                    try:
-                        info = t212_opp_info.get(ticker, {})
-                        if not info or info.get("regularMarketPrice") is None:
-                            continue
-
-                        def _f(key, default=None):
-                            v = info.get(key)
-                            try:
-                                return float(v) if v is not None else default
-                            except (TypeError, ValueError):
-                                return default
-
-                        pe          = _f("trailingPE")
-                        forward_pe  = _f("forwardPE")
-                        peg         = _f("pegRatio")
-                        ps          = _f("priceToSalesTrailing12Months")
-                        pb          = _f("priceToBook")
-
-                        roe         = (_f("returnOnEquity") or 0) * 100
-                        net_margin  = (_f("profitMargins")  or 0) * 100
-                        op_margin   = (_f("operatingMargins") or 0) * 100
-
-                        rev_growth  = (_f("revenueGrowth")  or 0) * 100
-                        earn_growth = (_f("earningsGrowth") or 0) * 100
-
-                        _de_raw     = _f("debtToEquity")
-                        de_ratio    = _de_raw / 100 if _de_raw is not None else None
-                        curr_ratio  = _f("currentRatio")
-                        fcf         = _f("freeCashflow")
-                        market_cap  = _f("marketCap")
-                        fcf_yield   = (fcf / market_cap * 100) if fcf and market_cap and market_cap > 0 else None
-
-                        div_yield   = (_f("dividendYield") or 0) * 100
-
-                        # ── Score components ───────────────────
-                        # Value (cheap = high score)
-                        peg_s  = max(0, min(100, (3 - (peg or 3)) / 3 * 100))
-                        pe_s   = max(0, min(100, (40 - (pe or 40)) / 35 * 100))
-                        fcf_s  = max(0, min(100, (fcf_yield or 0) / 10 * 100))
-                        val_s  = peg_s * 0.45 + pe_s * 0.30 + fcf_s * 0.25
-
-                        # Growth
-                        rev_s  = max(0, min(100, (rev_growth + 5)     / 55 * 100))
-                        earn_s = max(0, min(100, (earn_growth + 10)   / 60 * 100))
-                        grow_s = rev_s * 0.55 + earn_s * 0.45
-
-                        # Quality / profitability
-                        roe_s  = max(0, min(100, roe / 40 * 100))
-                        mgn_s  = max(0, min(100, net_margin / 30 * 100))
-                        qual_s = roe_s * 0.50 + mgn_s * 0.50
-
-                        # Health
-                        # Missing debt data is unknown, not "no debt". Excluded from
-                        # the health score rather than scored as perfect.
-                        de_s   = (max(0, min(100, (2 - de_ratio) / 2 * 100))
-                                  if de_ratio is not None else None)
-                        fcf_h  = 80 if (fcf or 0) > 0 else 20
-                        hlth_s, _hlth_cov = _weighted_known([(de_s, 0.55), (fcf_h, 0.45)])
-                        if hlth_s is None:
-                            hlth_s = 50.0   # nothing measurable; neutral, never favourable
-
-                        # Overall ISA score (value 30, growth 30, quality 25, health 15)
-                        isa_score = val_s * 0.30 + grow_s * 0.30 + qual_s * 0.25 + hlth_s * 0.15
-
-                        currency = "£" if ticker.endswith(".L") else "$"
-
-                        rows.append({
-                            "ticker":      ticker,
-                            "name":        info.get("shortName", ticker)[:28],
-                            "currency":    currency,
-                            "isa_score":   round(isa_score, 1),
-                            "val_score":   round(val_s,     1),
-                            "grow_score":  round(grow_s,    1),
-                            "qual_score":  round(qual_s,    1),
-                            "hlth_score":  round(hlth_s,    1),
-                            "pe":          round(pe, 1)          if pe          else None,
-                            "peg":         round(peg, 2)         if peg         else None,
-                            "forward_pe":  round(forward_pe, 1)  if forward_pe  else None,
-                            "ps":          round(ps, 2)          if ps          else None,
-                            "pb":          round(pb, 2)          if pb          else None,
-                            "fcf_yield":   round(fcf_yield, 1)   if fcf_yield   else None,
-                            "rev_growth":  round(rev_growth, 1),
-                            "earn_growth": round(earn_growth, 1),
-                            "net_margin":  round(net_margin, 1),
-                            "roe":         round(roe, 1),
-                            "de_ratio":    round(de_ratio, 2)    if de_ratio is not None else None,
-                            "div_yield":   round(div_yield, 2)   if div_yield   else None,
-                        })
-                    except Exception:
-                        continue
-
-                prog.empty()
-                if not rows:
-                    st.warning("No data returned. Check your tickers and try again.")
-                    st.stop()
-                opp_df = pd.DataFrame(rows).sort_values("isa_score", ascending=False).reset_index(drop=True)
-                st.session_state[t212_opp_key] = opp_df
-
-        opp_df = st.session_state[t212_opp_key]
-
-        if opp_df is None or opp_df.empty:
-            st.error(
-                "No data came back for this list. This is usually a temporary "
-                "data-provider hiccup — refresh the page to try again."
-            )
-            st.stop()
-
-        top_opp = opp_df.head(t212_top_n)
-
-        # Hero cards
-        st.markdown("### Top ISA opportunities")
-        cols = st.columns(min(5, len(top_opp)))
-        for i, (_, row) in enumerate(top_opp.head(5).iterrows()):
-            peg_str = f"PEG {row['peg']:.2f}" if row["peg"] else f"P/E {row['pe']}" if row["pe"] else "—"
-            cols[i % 5].markdown(
-                f'<div class="bs-panel">'
-                f'<h3>{row["ticker"]}</h3>'
-                f'<p style="font-size:1.4rem">{row["isa_score"]:.0f}'
-                f'<small style="font-size:0.8rem;color:#a0a0b0"> / 100</small></p>'
-                f'<small style="color:#a0a0b0">{peg_str} &nbsp;·&nbsp; '
-                f'Rev {row["rev_growth"]:+.0f}%</small>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-
-        st.markdown("---")
-
-        # Full table
-        col_rename_opp = {
-            "ticker": "Ticker", "name": "Company", "currency": "CCY",
-            "isa_score": "🇬🇧 ISA Score",
-            "val_score": "Value", "grow_score": "Growth",
-            "qual_score": "Quality", "hlth_score": "Health",
-            "pe": "P/E", "peg": "PEG", "forward_pe": "Fwd P/E",
-            "ps": "P/S", "pb": "P/B", "fcf_yield": "FCF Yld%",
-            "rev_growth": "Rev Gr%", "earn_growth": "EPS Gr%",
-            "net_margin": "Net Mgn%", "roe": "ROE%",
-            "de_ratio": "D/E", "div_yield": "Div Yld%",
-        }
-        disp_opp = top_opp.rename(columns=col_rename_opp)
-        disp_opp.insert(0, "Rank", range(1, len(disp_opp) + 1))
-        st.dataframe(disp_opp, hide_index=True, width="stretch",
-                     height=min(700, 36 * len(disp_opp) + 40))
-
-        # Score breakdown chart
-        st.markdown("---")
-        st.markdown("### ISA score breakdown")
-        fig_opp = go.Figure()
-        for col, name, clr in [
-            ("val_score", "Value",      PALETTE[0]),
-            ("grow_score","Growth",     PALETTE[1]),
-            ("qual_score","Quality",    PALETTE[2]),
-            ("hlth_score","Health",     PALETTE[3]),
-        ]:
-            fig_opp.add_trace(go.Bar(
-                name=name, x=top_opp["ticker"], y=top_opp[col],
-                marker_color=clr,
-            ))
-        fig_opp.update_layout(**chart_layout(barmode="group", height=360, yaxis_range=[0, 100]))
-        st.plotly_chart(fig_opp, width="stretch")
-
-        st.download_button(
-            "⬇ Download T212 opportunities as CSV",
-            data=opp_df.to_csv(index=False),
-            file_name=f"t212_isa_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv",
-        )
-
-    # ══════════════════════════════════════════════════════════
-    # MODE C — FULL SCREENER (within T212 universe)
-    # ══════════════════════════════════════════════════════════
-    elif t212_mode == "Screen":
-
-        st.markdown(
-            "Run a full fundamental screen — using the same long-term or swing filters — "
-            "but restricted to stocks available on Trading 212's ISA platform."
-        )
-
-        st.sidebar.markdown("### Screening mode")
-        t212_screen_mode = st.sidebar.radio(
-            "Config", ["Long-term", "Swing"], index=0, key="t212_screen_mode",
-        )
-        config_file = "config_longterm.yaml" if t212_screen_mode == "Long-term" else "config_swing.yaml"
-        config_path = CONFIGS_DIR / config_file
-        config      = load_config(str(config_path))
-
-        if t212_screen_mode == "Long-term":
-            pe_max     = st.sidebar.slider("Max P/E",         10, 60,  25, key="t212_pe")
-            roe_min    = st.sidebar.slider("Min ROE %",         0, 40,  15, key="t212_roe")
-            de_max     = st.sidebar.slider("Max D/E",         0.0, 5.0, 1.0, step=0.1, key="t212_de")
-            margin_min = st.sidebar.slider("Min net margin %",  0, 30,   5, key="t212_mgn")
-            config["filters"].update({
-                "pe_trailing":    {"enabled": True, "max": pe_max,     "on_missing": "pass"},
-                "roe":            {"enabled": True, "min": roe_min,    "on_missing": "pass"},
-                "debt_to_equity": {"enabled": True, "max": de_max,     "on_missing": "pass"},
-                "net_margin":     {"enabled": True, "min": margin_min, "on_missing": "pass"},
-            })
         else:
-            margin_min = st.sidebar.slider("Min net margin %", -10, 20, 0, key="t212_swing_mgn")
-            de_max     = st.sidebar.slider("Max D/E",          0.5, 5.0, 2.0, step=0.1, key="t212_swing_de")
-            config["filters"].update({
-                "net_margin":     {"enabled": True, "min": margin_min, "on_missing": "fail"},
-                "debt_to_equity": {"enabled": True, "max": de_max,     "on_missing": "pass"},
-            })
+            st.dataframe(
+                pd.DataFrame(built).sort_values("Score", ascending=False, na_position="last"),
+                hide_index=True, width="stretch", height=min(520, 36 * len(built) + 40),
+                column_config={
+                    "Score": st.column_config.NumberColumn(format="%d", width="small"),
+                    "Quality": st.column_config.NumberColumn(format="%d", width="small"),
+                    "Growth": st.column_config.NumberColumn(format="%d", width="small"),
+                    "Valuation": st.column_config.NumberColumn(format="%d", width="small"),
+                    "Ticker": st.column_config.TextColumn(width="small"),
+                },
+            )
+            st.caption(
+                "London tickers end in .L and are usually quoted in pence, so a price of 250 "
+                "generally means £2.50."
+            )
 
-        st.info(
-            f"Ready to screen **{len(t212_tickers)} T212 stocks** in **{t212_screen_mode}** mode. "
-            f"Hit **Run Screen** to start."
-        )
-
-        if st.button("▶  Run T212 Screen", type="primary", width="stretch", key="t212_run"):
-            st.session_state["t212_screen_run"] = True
-            st.session_state["t212_screen_results"] = None
-
-        if not st.session_state.get("t212_screen_run"):
-            st.stop()
-
-        if st.session_state.get("t212_screen_results") is None:
-            fetcher = YFinanceFetcher(cache_expiry_hours=24)
-            prog = st.progress(0, text="Fetching T212 data...")
-            all_metrics, failed = [], []
-
-            for i, ticker in enumerate(t212_tickers):
-                prog.progress((i + 1) / len(t212_tickers), text=f"Fetching {ticker}... ({i+1}/{len(t212_tickers)})")
-                data = fetcher.fetch_ticker_data(ticker)
-                if not data.get("info"):
-                    failed.append(ticker)
-                    continue
-                try:
-                    all_metrics.append(calculate_all_metrics(ticker, data))
-                except Exception:
-                    failed.append(ticker)
-
-            prog.empty()
-            if failed:
-                st.warning(f"{len(failed)} tickers failed: {', '.join(failed[:15])}")
-
-            passed, failed_screen = screen_batch(all_metrics, config)
-            results = score_batch(passed, config)
-            st.session_state["t212_screen_results"] = results
-            st.session_state["t212_screen_all"]     = all_metrics
-
-        results   = st.session_state["t212_screen_results"]
-        all_mets  = st.session_state.get("t212_screen_all", [])
-
-        # Summary cards
-        c1, c2, c3, c4 = st.columns(4)
-        metric_card("T212 stocks screened", str(len(all_mets)), c1)
-        metric_card("Passed filters",       str(len(results)),  c2)
-        avg_s = f"{sum(r['composite_score'] for r in results)/len(results):.1f}" if results else "—"
-        metric_card("Avg score", avg_s, c3)
-        uk_count = sum(1 for r in results if r["ticker"].endswith(".L"))
-        metric_card("UK (.L) stocks passed", str(uk_count), c4)
-
-        st.markdown("---")
-
-        if not results:
-            st.error("No stocks passed. Try loosening the filters.")
-            st.stop()
-
-        df_res = pd.DataFrame(results)
-        display_cols = [
-            "ticker", "name", "composite_score",
-            "pe_trailing", "roe", "net_margin", "operating_margin",
-            "debt_to_equity", "current_ratio",
-            "revenue_growth_1y", "eps_growth_1y",
-            "fcf_yield", "dividend_yield",
-            "fcf_positive_3y", "data_completeness",
-        ]
-        avail = [c for c in display_cols if c in df_res.columns]
-        rename_t212 = {
-            "ticker": "Ticker", "name": "Name", "composite_score": "Score",
-            "pe_trailing": "P/E", "roe": "ROE%", "net_margin": "Net Mgn%",
-            "operating_margin": "Op Mgn%", "debt_to_equity": "D/E",
-            "current_ratio": "Curr Ratio", "revenue_growth_1y": "Rev Gr%",
-            "eps_growth_1y": "EPS Gr%", "fcf_yield": "FCF Yld%",
-            "dividend_yield": "Div Yld%", "fcf_positive_3y": "FCF+3Y",
-            "data_completeness": "Data%",
-        }
-        disp_res = df_res[avail].head(t212_top_n).rename(columns=rename_t212)
-        disp_res.insert(0, "Rank", range(1, len(disp_res) + 1))
-        st.dataframe(disp_res, hide_index=True, width="stretch",
-                     height=min(700, 35 * len(disp_res) + 40))
-
-        st.download_button(
-            "⬇ Download T212 screen as CSV",
-            data=df_res[avail].to_csv(index=False),
-            file_name=f"t212_screen_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv",
-        )
-
-        # Score chart
-        st.markdown("---")
-        st.markdown("### Score breakdown")
-        sc_cols  = ["score_profitability","score_financial_health","score_valuation","score_growth","score_cash_flow"]
-        sc_names = ["Profitability","Financial Health","Valuation","Growth","Cash Flow"]
-        avail_sc = [(c, n) for c, n in zip(sc_cols, sc_names) if c in df_res.columns]
-        if avail_sc:
-            fig_sc = go.Figure()
-            for i, (col, nm) in enumerate(avail_sc):
-                fig_sc.add_trace(go.Bar(
-                    name=nm, x=df_res["ticker"].head(t212_top_n), y=df_res[col].head(t212_top_n),
-                    marker_color=PALETTE[i % len(PALETTE)],
-                ))
-            fig_sc.update_layout(**chart_layout(barmode="group", height=380))
-            st.plotly_chart(fig_sc, width="stretch")
-
-    # ── ISA disclaimer ───────────────────────────────────────
-    st.markdown("---")
+    theme.hairline()
     st.caption(
-        "This tool provides data-driven analysis only — not financial advice. "
-        "ISA allowances, tax rules and T212 instrument availability are subject to change. "
-        "Always verify stock availability directly in the Trading 212 app before investing."
+        "Research and education only. Not financial advice, not tax advice, and not a "
+        "recommendation to buy or sell. This platform is independent and has no "
+        "affiliation with any broker or provider."
     )
-
-
-# ════════════════════════════════════════════════════════════
-# PAGE 6 — HEDGE FUND ENGINE
-# ════════════════════════════════════════════════════════════
