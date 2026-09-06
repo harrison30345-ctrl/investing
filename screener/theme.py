@@ -536,12 +536,35 @@ def hover_to_open_sidebar(open_delay_ms: int = 260, close_delay_ms: int = 420) -
           strip.addEventListener('mouseleave', cancel);
           doc.body.appendChild(strip);
 
+          // Choosing a page should put the sidebar away. The pointer is still
+          // over the panel after a click, so the leave-trigger never fires, and
+          // the freshly focused radio would block the close guard as well.
+          // Only the navigation group does this -- the per-page settings below
+          // it are controls the reader is working with, not a destination.
+          const closeAfterNav = () => {{
+            cancel();
+            setTimeout(() => {{
+              const sb = sidebar();
+              if (sb && doc.activeElement && sb.contains(doc.activeElement)) {{
+                doc.activeElement.blur();
+              }}
+              const b = collapseBtn();
+              if (b && isOpen()) b.click();
+            }}, 380);
+          }};
+
           const wire = () => {{
             const sb = sidebar();
             if (sb && !sb.dataset.bsHover) {{
               sb.dataset.bsHover = '1';
               sb.addEventListener('mouseenter', cancel);
               sb.addEventListener('mouseleave', scheduleClose);
+            }}
+
+            const nav = sb && sb.querySelector('[role="radiogroup"]');
+            if (nav && !nav.dataset.bsNav) {{
+              nav.dataset.bsNav = '1';
+              nav.addEventListener('click', closeAfterNav);
             }}
             const eb = doc.querySelector('[data-testid="stExpandSidebarButton"]');
             if (eb && !eb.dataset.bsHover) {{
