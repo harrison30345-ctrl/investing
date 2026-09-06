@@ -55,6 +55,7 @@ from services.market_data import PROVIDER_IS_LICENSED, PROVIDER_NAME, get_provid
 from services.hidden_gems import (
     GEM_GATES, MAX_ANALYSTS, METHODOLOGY_VERSION as GEM_METHODOLOGY_VERSION, assess_gem,
 )
+from services.comparison import MAX_COMPANIES, MIN_MEANINGFUL_GAP, compare
 from services.momentum import assess_momentum
 from services.score_history import ScoreHistory, describe_change
 from services.scoring import SCORING_VERSION, score_company
@@ -499,6 +500,27 @@ def _weighted_known(parts: list) -> tuple:
     return sum(v * w for v, w in known) / have, have / total
 
 
+@st.cache_data(persist="disk", show_spinner=False)
+def _research(ticker: str, bucket: int) -> dict:
+    """Snapshot + score + explanation for one company, cached per 6h bucket.
+
+    Module scope rather than page scope: both the Company page and Compare use
+    it, and a shared cache means comparing companies you have already looked at
+    costs no extra provider calls.
+    """
+    snap = get_provider().get_snapshot(ticker)
+    if not snap.ok:
+        return {"error": snap.error or "No data available."}
+    score = score_company(snap.ticker, snap.fundamentals, snap.sector)
+    return {
+        "name": snap.name, "sector": snap.sector, "industry": snap.industry,
+        "price": snap.price, "currency": snap.currency or "USD",
+        "fetched_at": snap.fetched_at, "fundamentals": snap.fundamentals,
+        "score": score, "explanation": explain(score, snap.name),
+        "history": snap.history,
+    }
+
+
 def _scan_gate(state_key: str, label: str, forced: bool = False, note: str = "") -> bool:
     """Decide whether an expensive scan should run on this page load.
 
@@ -738,7 +760,7 @@ st.sidebar.markdown("""
 
 page = st.sidebar.radio(
     "Navigate",
-    ["🔎 Company", "📊 Research", "🔥 Momentum", "💎 Hidden Gems",
+    ["🔎 Company", "⚖️ Compare", "📊 Research", "🔥 Momentum", "💎 Hidden Gems",
      "⚠️ Holdings Review", "🔍 Screener", "🇬🇧 UK Investor"],
     index=0,
 )
@@ -750,21 +772,6 @@ if page == "🔎 Company":
 
     st.title("Company research")
     st.caption("Search any company to see what its numbers show, explained in plain English.")
-
-    @st.cache_data(persist="disk", show_spinner=False)
-    def _research(ticker: str, bucket: int) -> dict:
-        """Snapshot + score + explanation for one company. Cached per 6h bucket."""
-        snap = get_provider().get_snapshot(ticker)
-        if not snap.ok:
-            return {"error": snap.error or "No data available."}
-        score = score_company(snap.ticker, snap.fundamentals, snap.sector)
-        return {
-            "name": snap.name, "sector": snap.sector, "industry": snap.industry,
-            "price": snap.price, "currency": snap.currency or "USD",
-            "fetched_at": snap.fetched_at, "fundamentals": snap.fundamentals,
-            "score": score, "explanation": explain(score, snap.name),
-            "history": snap.history,
-        }
 
     query = st.text_input(
         "Company ticker", value=st.session_state.get("_co_last", "AAPL"),
@@ -1059,6 +1066,128 @@ if page == "🔎 Company":
         "recommendation to buy or sell any investment. Scores describe reported figures and past "
         "price behaviour; they are not predictions. Investing carries risk and you may get back "
         "less than you put in."
+    )
+
+
+# ════════════════════════════════════════════════════════════
+# PAGE 0b — COMPARE
+# ════════════════════════════════════════════════════════════
+elif page == "⚖️ Compare":
+
+    st.title("Compare companies")
+    st.caption(
+        f"Put 2 to {MAX_COMPANIES} companies side by side. This shows how they differ on "
+        f"the measures we score — it does not say which one to pick, because that depends "
+        f"on what you are looking for."
+    )
+
+    raw = st.text_input(
+        "Tickers to compare",
+        value=st.session_state.get("_cmp_last", "AAPL, MSFT"),
+        help=f"Comma separated, {MAX_COMPANIES} maximum. US and UK tickers work best.",
+        placeholder="e.g. AAPL, MSFT, GOOGL",
+    )
+    picked = [t.strip().upper() for t in raw.replace("\n", ",").split(",") if t.strip()]
+    st.session_state["_cmp_last"] = raw
+
+    if len(picked) < 2:
+        st.info("Enter at least two tickers to compare.")
+        st.stop()
+    if len(picked) > MAX_COMPANIES:
+        st.warning(f"Comparing the first {MAX_COMPANIES}: {', '.join(picked[:MAX_COMPANIES])}.")
+        picked = picked[:MAX_COMPANIES]
+
+    with st.spinner(f"Looking up {', '.join(picked)}…"):
+        results, failed = [], []
+        for tk in picked:
+            res = _research(tk, _bucket())
+            if "error" in res:
+                failed.append((tk, res["error"]))
+            else:
+                results.append((tk, res))
+
+    for tk, err in failed:
+        st.error(f"{tk}: {err}")
+
+    if len(results) < 2:
+        st.warning("At least two companies with usable data are needed to compare.")
+        st.stop()
+
+    scores = [r["score"] for _, r in results]
+    names  = {tk: r["name"] for tk, r in results}
+    comp   = compare(scores, names)
+
+    # ── Overall row ──────────────────────────────────────────
+    st.markdown("---")
+    cols = st.columns(len(comp.tickers))
+    for col, tk in zip(cols, comp.tickers):
+        overall = comp.overall[tk]
+        conf = comp.confidence[tk]
+        conf_colour = {"high": "#16a34a", "moderate": "#b8960c", "low": "#dc2626"}[conf]
+        col.markdown(
+            f'<div style="background:#ffffff;border:1px solid #dde3ef;border-top:3px solid #b8960c;'
+            f'border-radius:6px;padding:0.9rem 1rem;">'
+            f'<div style="font-size:0.85rem;font-weight:700;color:#0d1117;">{names[tk]}</div>'
+            f'<div style="font-size:0.66rem;color:#94a3b8;margin-bottom:0.4rem;">{tk}</div>'
+            + (f'<div style="font-size:2rem;font-weight:800;color:#0d1117;line-height:1;">'
+               f'{overall:.0f}<span style="font-size:0.8rem;font-weight:400;color:#94a3b8;">'
+               f' / 100</span></div>' if overall is not None else
+               '<div style="font-size:0.95rem;color:#94a3b8;">Not scored</div>')
+            + f'<div style="font-size:0.7rem;color:{conf_colour};font-weight:600;">'
+              f'{conf.title()} confidence</div></div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── In plain English ─────────────────────────────────────
+    st.markdown("---")
+    st.markdown("##### In plain English")
+    st.markdown(comp.summary)
+
+    # ── Category table ───────────────────────────────────────
+    st.markdown("##### Score by category")
+    table = []
+    for row in comp.rows:
+        entry = {"Measure": row.label}
+        for tk in comp.tickers:
+            value = row.scores[tk]
+            entry[tk] = "—" if value is None else f"{value:.0f}"
+        entry["Notes"] = (row.note if row.note else
+                          (f"{row.leader} scores highest" if row.leader else ""))
+        table.append(entry)
+    st.dataframe(pd.DataFrame(table), hide_index=True, width="stretch")
+    st.caption(
+        f"A gap smaller than {MIN_MEANINGFUL_GAP:.0f} points is treated as too close to "
+        f"separate — the underlying figures carry more noise than that."
+    )
+
+    # ── Bars ─────────────────────────────────────────────────
+    chart_rows = [
+        {"Measure": row.label, "Company": names[tk], "Score": row.scores[tk]}
+        for row in comp.rows for tk in comp.tickers if row.scores[tk] is not None
+    ]
+    if chart_rows:
+        cdf = pd.DataFrame(chart_rows)
+        fig_cmp = go.Figure()
+        for i, tk in enumerate(comp.tickers):
+            sub = cdf[cdf["Company"] == names[tk]]
+            fig_cmp.add_trace(go.Bar(name=names[tk], x=sub["Measure"], y=sub["Score"],
+                                     marker_color=PALETTE[i % len(PALETTE)]))
+        fig_cmp.update_layout(**chart_layout(height=320, barmode="group",
+                                             yaxis_range=[0, 100]))
+        st.plotly_chart(fig_cmp, width="stretch")
+
+    # ── Caveats ──────────────────────────────────────────────
+    if comp.caveats:
+        st.markdown("##### Worth knowing")
+        for caveat in comp.caveats:
+            st.markdown(f"<div style='font-size:0.85rem;color:#334155;margin-bottom:0.3rem;'>"
+                        f"• {caveat}</div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.caption(
+        "⚠️ This is research and education, not financial advice, and nothing here is a "
+        "recommendation to buy or sell any investment. Scores describe reported figures "
+        "and past price behaviour; they are not predictions."
     )
 
 
