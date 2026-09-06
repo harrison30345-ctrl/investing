@@ -650,6 +650,15 @@ if _qp_company:
     st.session_state["_co_last"] = str(_qp_company).upper()
     page = "Company"
 
+# ?lesson=KEY opens the Learn section at that topic, so a metric on the company
+# page can link straight to the explanation of it.
+_qp_lesson = st.query_params.get("lesson")
+if _qp_lesson:
+    st.query_params.clear()
+    st.session_state.pop("_view", None)
+    st.session_state["_lesson"] = str(_qp_lesson)
+    page = "Learn"
+
 
 def _open_company(ticker: str) -> None:
     st.session_state["_view"] = "Company"
@@ -1017,23 +1026,10 @@ elif page == "Company":
         (c.label, c.score if c.available else None) for c in score.categories.values()
     ])
 
-    # ── Summary alongside the numbers it describes ───────────
-    sum_col, snap_col = st.columns([1.25, 1], gap="large")
-    with sum_col:
-        theme.section("Summary")
-        st.markdown(f'<div style="font-size:0.9rem;color:{theme.MUTED};line-height:1.62;">'
-                    f'{expl["summary"]}</div>', unsafe_allow_html=True)
-    with snap_col:
-        theme.section("Financial snapshot")
-        _snapshot = []
-        for _cat in score.categories.values():
-            for _m in _cat.metrics:
-                _h = GLOSSARY.get(_m.field)
-                if not _h:
-                    continue
-                _snapshot.append((_h["label"],
-                                  format_value(_m.field, _m.raw) if _m.available else None))
-        theme.stat_grid(_snapshot[:8])
+    # ── Summary ──────────────────────────────────────────────
+    theme.section("In simple terms")
+    st.markdown(f'<div style="font-size:0.9rem;color:{theme.MUTED};line-height:1.65;'
+                f'max-width:78ch;">{expl["summary"]}</div>', unsafe_allow_html=True)
 
     # ── Strengths / risks ────────────────────────────────────
     def _trim(items):
@@ -1045,34 +1041,70 @@ elif page == "Company":
             out.append(f"<b>{head}</b>{' — ' + first + '.' if first else ''}")
         return out
 
-    st.markdown("<div style='height:1.6rem;'></div>", unsafe_allow_html=True)
-    theme.two_column_list("Key strengths", _trim(expl["strengths"][:4]),
-                          "Risks to monitor", _trim(expl["concerns"][:4]))
+    st.markdown("<div style='height:1.2rem;'></div>", unsafe_allow_html=True)
+    theme.two_column_list("Why it scores well", _trim(expl["strengths"][:4]),
+                          "What to watch", _trim(expl["concerns"][:4]))
 
-    if len(_snapshot) > 8:
-        theme.section("Further measures")
-        theme.stat_grid(_snapshot[8:])
+    # ── The numbers, grouped by what they tell you ───────────
+    # One flat list of every metric was a data dump. Grouping them means a
+    # reader can go to the question they actually have -- what does it earn,
+    # what am I paying, how fast is it growing -- instead of scanning
+    # everything. Each row carries its explanation on the info marker rather
+    # than repeating a paragraph beneath the page.
+    _by_field = {}
+    for _cat in score.categories.values():
+        for _m in _cat.metrics:
+            _by_field[_m.field] = _m
 
-    # ── Deeper detail, behind a click ────────────────────────
-    st.markdown("<div style='height:1.4rem;'></div>", unsafe_allow_html=True)
-    with st.expander("What these measures mean"):
-        for cat in score.categories.values():
-            for metric in cat.metrics:
-                help_ = GLOSSARY.get(metric.field)
-                if not help_:
-                    continue
-                direction = ("Higher is generally better." if help_["better"] == "higher"
-                             else "Lower is generally better.")
-                value = format_value(metric.field, metric.raw) if metric.available else "Not reported"
-                st.markdown(
-                    f'<div style="padding:0.55rem 0;border-bottom:1px solid {theme.RULE};">'
-                    f'<span style="font-size:0.83rem;font-weight:550;color:{theme.INK};">'
-                    f'{help_["label"]}</span>'
-                    f'<span style="font-size:0.83rem;color:{theme.MUTED};float:right;">{value}</span>'
-                    f'<div style="font-size:0.79rem;color:{theme.MUTED};margin-top:0.2rem;'
-                    f'max-width:70ch;">{help_["means"]} {help_["matters"]} {direction}</div></div>',
-                    unsafe_allow_html=True,
-                )
+    def _rows(fields):
+        out = []
+        for field in fields:
+            help_ = GLOSSARY.get(field)
+            metric = _by_field.get(field)
+            if not help_ or metric is None:
+                continue
+            value = format_value(field, metric.raw) if metric.available else None
+            direction = ("Higher is generally better."
+                         if help_["better"] == "higher" else "Lower is generally better.")
+            hint = f'{help_["means"]} {help_["matters"]} {direction}'
+            out.append((help_["label"], value, hint))
+        return out
+
+    GROUPS = [
+        ("Business snapshot", ["freeCashflow", "debtToEquity", "currentRatio"]),
+        ("Valuation", ["trailingPE", "forwardPE", "priceToSalesTrailing12Months"]),
+        ("Growth and profitability",
+         ["revenueGrowth", "earningsGrowth", "profitMargins",
+          "operatingMargins", "returnOnEquity"]),
+        ("Price momentum", ["chg_1w", "chg_1m", "chg_3m", "vs_sma50"]),
+    ]
+
+    for heading, fields in GROUPS:
+        rows = _rows(fields)
+        if not rows:
+            continue
+        theme.section(heading)
+        theme.metric_table(rows, columns=2)
+        if heading == "Price momentum":
+            st.caption(
+                "Price movement describes what the shares have done. It carries no "
+                "information about the quality of the business."
+            )
+
+    # ── Learn more, once, rather than under every metric ─────
+    _linked = [f for _h, fields in GROUPS for f in fields if lesson_for_metric(f)]
+    if _linked:
+        _lessons = {lesson_for_metric(f).key: lesson_for_metric(f) for f in _linked}
+        st.markdown(
+            '<div style="margin-top:0.9rem;font-size:0.78rem;color:' + theme.FAINT + ';">'
+            'Hover the marker beside any measure for what it means. Related reading: '
+            + " · ".join(
+                f'<a href="?lesson={k}" target="_self" style="color:{theme.BRASS};'
+                f'text-decoration:none;">{l.title}</a>'
+                for k, l in list(_lessons.items())[:5]
+            ) + '</div>',
+            unsafe_allow_html=True,
+        )
 
     if expl["could_change"]:
         with st.expander("What could change the score"):
