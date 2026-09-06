@@ -61,6 +61,7 @@ from services.comparison import MAX_COMPANIES, MIN_MEANINGFUL_GAP, compare
 from services.momentum import assess_momentum
 from services.score_history import ScoreHistory, describe_change
 from services.screening import apply_preset, screen
+from content.lessons import CATEGORIES, LESSONS, LESSONS_BY_KEY, lesson_for_metric
 from services.watchlist import Watchlist
 
 try:
@@ -610,22 +611,61 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-page = st.sidebar.radio(
+nav = st.sidebar.radio(
     "Navigate",
-    ["Overview", "Company", "Discover", "Screener",
-     "Compare", "Watchlist", "UK Investor"],
+    ["Overview", "Discover", "Screener", "Watchlist", "Learn", "UK Investor"],
     index=0,
     label_visibility="collapsed",
 )
 
-# Discover groups the three discovery views. Choosing between them is a
-# secondary control, not a top-level destination.
+# Company and Compare are views reached from anywhere, not destinations in the
+# sidebar. Searching for a company should open it wherever you happen to be,
+# which is how people actually move through a research tool.
+if st.session_state.get("_nav_last") != nav:
+    st.session_state["_nav_last"] = nav
+    st.session_state.pop("_view", None)      # changing section leaves a company
+
+view = st.session_state.get("_view")
+page = view if view in ("Company", "Compare") else nav
+
+# Discover groups the three discovery views as a secondary control.
 _discover_tab = "All companies"
 if page == "Discover":
     st.sidebar.markdown("---")
     _discover_tab = st.sidebar.radio(
         "View", ["All companies", "Hidden Gems", "Momentum"], index=0,
     )
+
+
+def _open_company(ticker: str) -> None:
+    st.session_state["_view"] = "Company"
+    st.session_state["_co_last"] = ticker
+    st.rerun()
+
+
+# ── Global search, present on every page ─────────────────────
+def _global_search() -> None:
+    """Search from anywhere. Selecting a company opens its research page."""
+    directory = _company_directory(_bucket())
+    options = _searchable_tickers()
+    if not options:
+        return
+    BLANK = ""
+    choice = st.selectbox(
+        "Search stocks or tickers",
+        [BLANK] + options,
+        index=0,
+        format_func=lambda t: ("Search stocks or tickers    Apple · AAPL · Microsoft · MSFT"
+                               if t == BLANK else _label_for(t, directory)),
+        label_visibility="collapsed",
+        key="_global_search",
+    )
+    if choice and choice != st.session_state.get("_co_last"):
+        _open_company(choice)
+
+
+if page not in ("Company", "Compare"):
+    _global_search()
 
 # ════════════════════════════════════════════════════════════
 # PAGE — HOME
@@ -789,34 +829,15 @@ if page == "Overview":
 
     # ── One concept ──────────────────────────────────────────
     theme.section("Briefly")
-    LESSONS = [
-        ("What a P/E ratio tells you",
-         "The P/E ratio is the share price divided by profit per share over the last year. "
-         "A P/E of 20 means paying £20 for every £1 of annual profit. A high figure can "
-         "reflect growth expectations, or simply optimism already priced in. It is most "
-         "useful compared with companies in the same industry."),
-        ("Price movement and business quality are different things",
-         "A company can rise sharply while its revenue shrinks, and a strong business can "
-         "go nowhere for years. That is why the two are scored separately here and never "
-         "combined into one figure."),
-        ("What a Stocks and Shares ISA does",
-         "An ISA is a wrapper around investments, not an investment. Gains and dividends "
-         "inside one are free of UK capital gains and dividend tax. It does not protect "
-         "against losses."),
-        ("Why missing data matters",
-         "If a company has not reported a figure, no score can honestly be calculated from "
-         "it. Treating a missing number as zero can make a company with no reported debt "
-         "look debt-free. Here it is shown as unavailable and lowers confidence."),
-        ("What diversification does",
-         "Holding several unrelated investments limits the damage any one can do. It does "
-         "not protect against a fall in the whole market, and several companies in one "
-         "industry are less diversified than they look."),
-    ]
-    _title, _body = LESSONS[date.today().toordinal() % len(LESSONS)]
+    # One lesson a day, drawn from the shared Learn content rather than a
+    # second copy maintained here.
+    _today = LESSONS[date.today().toordinal() % len(LESSONS)]
     st.markdown(
-        f'<div style="font-size:0.875rem;font-weight:600;color:{theme.INK};">{_title}</div>'
-        f'<div style="font-size:0.85rem;color:{theme.MUTED};line-height:1.62;margin-top:0.3rem;'
-        f'max-width:72ch;">{_body}</div>',
+        f'<div style="font-size:0.875rem;font-weight:620;color:{theme.INK};">{_today.title}</div>'
+        f'<div style="font-size:0.85rem;color:{theme.MUTED};line-height:1.62;margin-top:0.25rem;'
+        f'max-width:72ch;">{_today.summary}</div>'
+        f'<div style="font-size:0.74rem;color:{theme.FAINT};margin-top:0.3rem;">'
+        f'{_today.minutes} min read · open Learn to continue</div>',
         unsafe_allow_html=True,
     )
 
@@ -834,15 +855,28 @@ if page == "Overview":
 
 elif page == "Company":
 
-    theme.page_header(
-        "Company research",
-        "Search a company to see what its reported figures show.",
-    )
+    back, search = st.columns([1, 4])
+    with back:
+        if st.button("Back", key="_co_back"):
+            st.session_state.pop("_view", None)
+            st.rerun()
+    with search:
+        _dir = _company_directory(_bucket())
+        _opts = _searchable_tickers()
+        _cur = st.session_state.get("_co_last", "AAPL")
+        _idx = _opts.index(_cur) if _cur in _opts else 0
+        _pick = st.selectbox(
+            "Search stocks or tickers", _opts, index=_idx,
+            format_func=lambda t: _label_for(t, _dir),
+            label_visibility="collapsed", key="_co_search",
+        )
+        if _pick != _cur:
+            st.session_state["_co_last"] = _pick
+            st.rerun()
 
-    query = _company_picker()
-
+    query = st.session_state.get("_co_last", "AAPL")
     if not query:
-        st.caption("Choose a company, or type a ticker to look one up.")
+        st.caption("Search for a company to begin.")
         st.stop()
 
     st.session_state["_co_last"] = query
@@ -891,17 +925,24 @@ elif page == "Company":
         if price_html:
             st.markdown(price_html, unsafe_allow_html=True)
 
-    # Watchlist control, deliberately quiet
+    # Small actions, not a toolbar.
+    act1, act2, _act3 = st.columns([1, 1, 4])
     try:
         _wl = _watchlist()
         _wl.record_view(query, res["name"])
         in_list = _wl.contains(query)
-        if st.button("Remove from watchlist" if in_list else "Add to watchlist",
-                     key=f"_wl_{query}"):
-            _wl.remove(query) if in_list else _wl.add(query, res["name"])
-            st.rerun()
+        with act1:
+            if st.button("Remove from watchlist" if in_list else "Add to watchlist",
+                         key=f"_wl_{query}"):
+                _wl.remove(query) if in_list else _wl.add(query, res["name"])
+                st.rerun()
     except Exception:  # noqa: BLE001
         pass
+    with act2:
+        if st.button("Compare", key=f"_cmp_{query}"):
+            st.session_state["_cmp_seed"] = query
+            st.session_state["_view"] = "Compare"
+            st.rerun()
 
     theme.hairline()
 
@@ -1058,6 +1099,12 @@ elif page == "Company":
 
 elif page == "Compare":
 
+    if st.button("Back", key="_cmp_back"):
+        st.session_state["_view"] = "Company" if st.session_state.get("_co_last") else None
+        if st.session_state.get("_view") is None:
+            st.session_state.pop("_view", None)
+        st.rerun()
+
     st.title("Compare companies")
     st.caption(
         f"Put 2 to {MAX_COMPANIES} companies side by side. This shows how they differ on "
@@ -1069,7 +1116,8 @@ elif page == "Compare":
     _options = _searchable_tickers() or ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA"]
     picked = st.multiselect(
         "Companies to compare", _options,
-        default=[t for t in ("AAPL", "MSFT") if t in _options][:2],
+        default=[t for t in (st.session_state.get("_cmp_seed", "AAPL"), "MSFT")
+                 if t in _options][:2],
         format_func=lambda t: _label_for(t, _directory),
         max_selections=MAX_COMPANIES,
         label_visibility="collapsed",
@@ -1176,6 +1224,54 @@ elif page == "Compare":
         "and past price behaviour; they are not predictions."
     )
 
+
+
+# ════════════════════════════════════════════════════════════
+# PAGE — LEARN
+# ════════════════════════════════════════════════════════════
+elif page == "Learn":
+
+    theme.page_header(
+        "Learn",
+        "Short, practical explanations of the ideas this platform uses.",
+    )
+
+    opened = st.session_state.get("_lesson")
+    if opened and opened in LESSONS_BY_KEY:
+        lesson = LESSONS_BY_KEY[opened]
+        if st.button("Back to all topics", key="_lesson_back"):
+            st.session_state.pop("_lesson", None)
+            st.rerun()
+        st.markdown(f"## {lesson.title}")
+        st.markdown(
+            f'<div style="font-size:0.76rem;color:{theme.FAINT};margin:-0.3rem 0 1rem;">'
+            f'{lesson.category} · {lesson.minutes} min read</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(lesson.body)
+        st.stop()
+
+    for category in CATEGORIES:
+        items = [l for l in LESSONS if l.category == category]
+        if not items:
+            continue
+        theme.section(category)
+        cols = st.columns(2, gap="large")
+        for i, lesson in enumerate(items):
+            with cols[i % 2]:
+                st.markdown(
+                    f'<div style="padding:0.5rem 0 0.1rem;">'
+                    f'<div style="font-size:0.87rem;font-weight:620;color:{theme.INK};">'
+                    f'{lesson.title}</div>'
+                    f'<div style="font-size:0.79rem;color:{theme.MUTED};margin-top:0.15rem;">'
+                    f'{lesson.summary}</div>'
+                    f'<div style="font-size:0.72rem;color:{theme.FAINT};margin-top:0.2rem;">'
+                    f'{lesson.minutes} min read</div></div>',
+                    unsafe_allow_html=True,
+                )
+                if st.button("Read", key=f"_lesson_{lesson.key}"):
+                    st.session_state["_lesson"] = lesson.key
+                    st.rerun()
 
 # ════════════════════════════════════════════════════════════
 # PAGE 1 — MOMENTUM

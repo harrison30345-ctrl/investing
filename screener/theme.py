@@ -27,7 +27,8 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 __all__ = [
-    "inject", "hover_to_open_sidebar", "page_header", "section", "score_row", "stat_grid",
+    "inject", "hover_to_open_sidebar", "metric_table", "list_rows",
+    "action_row", "info_dot", "page_header", "section", "score_row", "stat_grid",
     "two_column_list", "hairline", "chart_layout_quiet",
     "INK", "MUTED", "FAINT", "RULE", "BRASS", "POSITIVE", "NEGATIVE", "WARNING",
     "PAPER", "SURFACE", "NAVY",
@@ -319,6 +320,43 @@ _CSS = f"""
       padding: 0.1rem 0.4rem; margin-right: 0.3rem;
   }}
 
+  /* Metric grid */
+  .bs-mtable {{
+      display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr));
+      column-gap: 2.6rem; border-top: 1px solid {RULE};
+  }}
+  .bs-mrow {{
+      display: flex; justify-content: space-between; align-items: baseline;
+      gap: 1rem; padding: 0.52rem 0; border-bottom: 1px solid {RULE};
+  }}
+  .bs-mk {{ font-size: 0.83rem; color: {MUTED}; }}
+  .bs-mv {{
+      font-size: 0.87rem; font-weight: 600; color: {INK};
+      font-variant-numeric: tabular-nums; white-space: nowrap;
+  }}
+  .bs-mv.na {{ color: {FAINT}; font-weight: 400; font-size: 0.8rem; }}
+  .bs-dot {{
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 13px; height: 13px; margin-left: 0.35rem; border-radius: 50%;
+      border: 1px solid {RULE}; color: {FAINT}; font-size: 0.58rem;
+      font-style: normal; cursor: help; vertical-align: middle;
+  }}
+  .bs-dot:hover {{ border-color: {BRASS}; color: {BRASS}; }}
+
+  /* Compact list rows */
+  .bs-lrow {{
+      display: grid; grid-template-columns: 68px 1fr auto; gap: 0 1rem;
+      align-items: baseline; padding: 0.55rem 0; border-bottom: 1px solid {RULE};
+  }}
+  .bs-lt {{ font-size: 0.85rem; font-weight: 650; color: {INK}; }}
+  .bs-ln {{ font-size: 0.83rem; color: {MUTED}; display: block; }}
+  .bs-lr {{ display: block; font-size: 0.76rem; color: {FAINT}; margin-top: 0.1rem; }}
+  .bs-ls {{
+      font-size: 0.95rem; font-weight: 650; color: {INK};
+      font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap;
+  }}
+  .bs-rd {{ font-size: 0.72rem; font-weight: 600; margin-left: 0.4rem; }}
+
   /* ── Responsive ────────────────────────────────────────── */
   @media (max-width: 900px) {{
       .block-container {{ padding: 1.4rem 1.1rem 3rem 1.1rem; }}
@@ -326,6 +364,8 @@ _CSS = f"""
       .bs-scores {{ gap: 1.3rem 1.6rem; }}
       .bs-score {{ min-width: 72px; }}
       .bs-stats {{ grid-template-columns: 1fr; gap: 0; }}
+      .bs-mtable {{ grid-template-columns: 1fr !important; column-gap: 0; }}
+      .bs-lrow {{ grid-template-columns: 58px 1fr auto; }}
       h1 {{ font-size: 1.5rem !important; }}
       h2 {{ font-size: 1.08rem !important; }}
       h3, h4, h5 {{ font-size: 0.9rem !important; }}
@@ -584,3 +624,51 @@ def hover_to_open_sidebar(open_delay_ms: int = 260, close_delay_ms: int = 420) -
         """,
         height=0,
     )
+
+
+# ── Data presentation ────────────────────────────────────────────────────────
+
+def metric_table(rows: list, columns: int = 2) -> None:
+    """Financial snapshot as a compact grid of metric/value pairs.
+
+    Missing values read "Not available" rather than 0, a blank, or a bare dash:
+    a reader cannot tell an unreported figure from a genuine zero otherwise,
+    and the difference matters.
+    """
+    cells = []
+    for label, value, hint in rows:
+        shown = value if value not in (None, "") else "Not available"
+        na = ' na' if value in (None, "") else ""
+        tip = f' title="{hint}"' if hint else ""
+        dot = f'<span class="bs-dot"{tip}>i</span>' if hint else ""
+        cells.append(
+            f'<div class="bs-mrow"><span class="bs-mk">{label}{dot}</span>'
+            f'<span class="bs-mv{na}">{shown}</span></div>'
+        )
+    st.markdown(
+        f'<div class="bs-mtable" style="--cols:{columns};">{"".join(cells)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def list_rows(rows: list) -> None:
+    """Compact list rows for Discover, Watchlist and search results.
+
+    A table rather than one card per company: cards force the eye to re-orient
+    for every entry, which is the opposite of what scanning a list needs.
+    """
+    html = []
+    for r in rows:
+        delta = ""
+        if r.get("delta") not in (None, ""):
+            cls = "bs-pos" if r["delta"] >= 0 else "bs-neg"
+            delta = f'<span class="bs-rd {cls}">{r["delta"]:+.0f}</span>'
+        html.append(
+            f'<div class="bs-lrow">'
+            f'<span class="bs-lt">{r["ticker"]}</span>'
+            f'<span class="bs-ln">{r.get("name", "")}'
+            + (f'<span class="bs-lr">{r["reason"]}</span>' if r.get("reason") else "")
+            + f'</span>'
+            f'<span class="bs-ls">{r["score"]}{delta}</span></div>'
+        )
+    st.markdown("".join(html), unsafe_allow_html=True)
