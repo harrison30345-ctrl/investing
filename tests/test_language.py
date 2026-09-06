@@ -45,6 +45,11 @@ BANNED = {
     r"\bhigh-conviction\b": "frames a score as recommendation strength",
     r"💼": "the briefcase icon marked a position-size display",
     r"% of portfolio": "presents an allocation instruction",
+    r"\bsell signal": "frames research output as a trade signal",
+    r"\bsell pressure\b": "frames research output as a trade signal",
+    r"\bsell zone\b": "frames research output as a trade signal",
+    r"consider selling": "instructs a disposal",
+    r"\bexit a position\b": "instructs a disposal",
 }
 
 

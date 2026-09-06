@@ -1512,9 +1512,10 @@ elif page == "⚠️ Holdings Review":
 
     st.title("Holdings Review")
     st.caption(
-        "Enter stocks you hold and this tool will flag deteriorating fundamentals, "
-        "stretched valuations, and momentum reversals — giving you a data-driven reason "
-        "to review or exit a position."
+        "Enter companies you hold to see what has changed in their reported figures: "
+        "deteriorating fundamentals, stretched valuations, weakening momentum and "
+        "balance-sheet strain. This is research on what the numbers show, not guidance "
+        "on what to do about it."
     )
 
     st.sidebar.markdown("### Your holdings")
@@ -1550,7 +1551,7 @@ elif page == "⚠️ Holdings Review":
         valid_sell_tup  = tuple(t for t in sell_tickers if t in sell_all_prices and not sell_all_prices[t].empty) or tuple(sell_tickers)
         prog.progress(0.45, text=f"Fetching fundamentals for {len(valid_sell_tup)} stocks...")
         sell_all_info   = _batch_info(valid_sell_tup)
-        prog.progress(0.85, text="Computing sell signals...")
+        prog.progress(0.85, text="Assessing each holding...")
 
         for ticker in sell_tickers:
             try:
@@ -1661,7 +1662,7 @@ elif page == "⚠️ Holdings Review":
                 sma200_warn   = max(0, min(100, (-vs_sma200 + 2) / 20 * 100)) if vs_sma200 < 0 else 0
 
                 # Insider selling — use heldPercentInsiders as fast proxy
-                # Low insider ownership + high short interest = sell pressure
+                # Low insider ownership + high short interest = disposal pressure
                 insider_sell_warn = 50.0
                 held_ins  = _f("heldPercentInsiders", None)
                 _short_hr = _f("shortPercentOfFloat")
@@ -1702,8 +1703,18 @@ elif page == "⚠️ Holdings Review":
                 elif sell_score >= 40: verdict, verdict_cls = "⚠️  Some factors to review",    "warn-badge"
                 else:                  verdict, verdict_cls = "✅  Few factors flagged",        "pass-badge"
 
+                research = score_company(
+                    ticker, _fundamentals_from_info(info, hist), info.get("sector"),
+                )
+                try:
+                    _score_history().record(research)
+                except Exception:  # noqa: BLE001 - history is secondary
+                    pass
+
                 rows.append({
                     "ticker":          ticker,
+                    "research_score":  research.overall,
+                    "research_conf":   research.confidence,
                     "name":            info.get("shortName", ticker)[:28],
                     "sell_score":      round(sell_score,   1),
                     "val_warn":        round(val_warn,  1) if val_warn  is not None else None,
@@ -1754,8 +1765,52 @@ elif page == "⚠️ Holdings Review":
         )
         st.stop()
 
-    # ── Verdict cards ────────────────────────────────────────────
-    st.markdown("### Verdict at a glance")
+    # ── What has changed since we last looked ────────────────────
+    # Uses only recorded snapshots. Nothing is reconstructed: a past score
+    # cannot be recomputed from today's figures.
+    st.markdown("### What has changed")
+    try:
+        _hist_store = _score_history()
+        changes = []
+        for _, row in sell_df.iterrows():
+            tk = row["ticker"]
+            latest = _hist_store.latest(tk)
+            if latest is None:
+                continue
+            earlier = (_hist_store.nearest(tk, 30, tolerance_days=20)
+                       or _hist_store.nearest(tk, 90, tolerance_days=60))
+            if earlier is None or earlier.taken_on == latest.taken_on:
+                continue
+            changes.append((tk, describe_change(latest, earlier)))
+    except Exception:  # noqa: BLE001
+        changes = []
+
+    if not changes:
+        st.info(
+            "**Nothing to compare yet.** Research scores for these companies were recorded "
+            "today. Once there are snapshots from an earlier date, this section will show "
+            "how each score has moved and which measures drove it. Earlier scores cannot be "
+            "calculated retrospectively — the data source only provides today's figures."
+        )
+    else:
+        for tk, change in changes:
+            if not change["comparable"]:
+                st.caption(f"**{tk}** — {change['summary']}")
+                continue
+            arrow = "▲" if change["delta"] > 0 else ("▼" if change["delta"] < 0 else "▬")
+            colour = ("#16a34a" if change["delta"] > 0
+                      else "#dc2626" if change["delta"] < 0 else "#94a3b8")
+            st.markdown(
+                f"<div style='margin-bottom:0.45rem;font-size:0.9rem;color:#334155;'>"
+                f"<b>{tk}</b> <span style='color:{colour};font-weight:700;'>{arrow} "
+                f"{change['delta']:+.0f}</span> — {change['summary']}</div>",
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("---")
+
+    # ── Review cards ─────────────────────────────────────────────
+    st.markdown("### At a glance")
     cols = st.columns(len(sell_df))
     for i, (_, row) in enumerate(sell_df.iterrows()):
         score = row["sell_score"]
@@ -1770,7 +1825,7 @@ elif page == "⚠️ Holdings Review":
             f'border-radius:6px; padding:0.85rem 1rem; box-shadow:0 1px 4px rgba(0,0,0,0.05);">'
             f'<div style="font-size:0.85rem; font-weight:700; color:#0d1117;">{row["ticker"]}</div>'
             f'<div style="font-size:1.6rem; font-weight:800; color:{border}; line-height:1.1; margin:0.2rem 0;">{score:.0f}</div>'
-            f'<div style="font-size:0.68rem; color:#64748b; text-transform:uppercase; letter-spacing:0.07em;">Sell pressure</div>'
+            f'<div style="font-size:0.68rem; color:#64748b; text-transform:uppercase; letter-spacing:0.07em;">Factors flagged</div>'
             f'<div style="font-size:0.75rem; font-weight:600; color:{border}; margin-top:0.35rem;">{row["verdict"]}</div>'
             f'</div>',
             unsafe_allow_html=True,
@@ -1778,8 +1833,8 @@ elif page == "⚠️ Holdings Review":
 
     st.markdown("---")
 
-    # ── Sell pressure bar chart ──────────────────────────────────
-    st.markdown("### Sell pressure — component breakdown")
+    # ── Factors-flagged bar chart ────────────────────────────────
+    st.markdown("### Where the concerns come from")
     fig_sell = go.Figure()
     comp_cols  = ["val_warn", "fund_warn", "bal_warn", "mkt_warn"]
     comp_names = ["Overvaluation", "Fundamental Decline", "Balance Sheet Stress", "Market/Momentum"]
@@ -1793,7 +1848,7 @@ elif page == "⚠️ Holdings Review":
 
     # Threshold lines
     fig_sell.add_hline(y=62, line_dash="dash", line_color="#dc2626", line_width=1.2,
-                       annotation_text="Sell zone", annotation_position="right",
+                       annotation_text="Several factors flagged", annotation_position="right",
                        annotation_font=dict(color="#dc2626", size=10))
     fig_sell.add_hline(y=40, line_dash="dot",  line_color="#b8960c", line_width=1,
                        annotation_text="Watch zone", annotation_position="right",
@@ -1802,7 +1857,7 @@ elif page == "⚠️ Holdings Review":
     fig_sell.update_layout(**chart_layout(
         barmode="group", height=380,
         yaxis_range=[0, 105],
-        yaxis_title="Sell pressure (0 = no concern, 100 = strong sell signal)",
+        yaxis_title="Factors flagged (0 = none, 100 = many)",
     ))
     st.plotly_chart(fig_sell, width="stretch")
 
@@ -1817,13 +1872,13 @@ elif page == "⚠️ Holdings Review":
                   "insider_sell", "near_52h_pct"]
     rename_sell = {
         "ticker": "Ticker", "name": "Company",
-        "sell_score": "⚠️ Sell Score", "verdict": "Verdict",
+        "sell_score": "⚠️ Factors flagged", "verdict": "Summary",
         "pe": "P/E", "peg": "PEG",
         "rev_growth": "Rev Gr%", "earn_growth": "EPS Gr%",
         "net_margin": "Net Mgn%", "roe": "ROE%",
         "de_ratio": "D/E", "fcf_yield": "FCF Yld%",
         "rsi": "RSI", "vs_sma50": "vs SMA50%", "vs_sma200": "vs SMA200%",
-        "insider_sell": "Insider Sell%", "near_52h_pct": "% of 52W High",
+        "insider_sell": "Insider selling%", "near_52h_pct": "% of 52W high",
     }
     avail_sell = [c for c in table_cols if c in sell_df.columns]
     st.dataframe(
@@ -1833,7 +1888,7 @@ elif page == "⚠️ Holdings Review":
 
     # ── Deep dive ───────────────────────────────────────────────
     st.markdown("---")
-    st.markdown("### Why should I consider selling? — Signal breakdown")
+    st.markdown("### What the numbers show for each holding")
     sel_sell = st.selectbox("Select a holding", sell_df["ticker"].tolist(), key="sell_select")
     s = sell_df[sell_df["ticker"] == sel_sell].iloc[0]
 
