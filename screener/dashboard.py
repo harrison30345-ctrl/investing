@@ -271,16 +271,18 @@ def _weighted_known(parts: list) -> tuple:
 
 
 @st.cache_data(persist="disk", show_spinner=False)
-def _research(ticker: str, bucket: int) -> dict:
+def _research_cached(ticker: str, bucket: int) -> dict:
     """Snapshot + score + explanation for one company, cached per 6h bucket.
 
-    Module scope rather than page scope: both the Company page and Compare use
-    it, and a shared cache means comparing companies you have already looked at
-    costs no extra provider calls.
+    Raises on failure rather than returning an error dict. Streamlit does not
+    cache an exception, so a transient provider failure is retried on the next
+    view instead of being remembered. Returning the error would cache it, and a
+    single rate-limit response would then blank that company for six hours --
+    with a Retry button that could not retry.
     """
     snap = get_provider().get_snapshot(ticker)
     if not snap.ok:
-        return {"error": snap.error or "No data available."}
+        raise RuntimeError(snap.error or "No data available.")
     score = score_company(snap.ticker, snap.fundamentals, snap.sector)
     return {
         "name": snap.name, "sector": snap.sector, "industry": snap.industry,
@@ -290,6 +292,14 @@ def _research(ticker: str, bucket: int) -> dict:
         "score": score, "explanation": explain(score, snap.name),
         "history": snap.history,
     }
+
+
+def _research(ticker: str, bucket: int) -> dict:
+    """Cached research, with failures surfaced rather than stored."""
+    try:
+        return _research_cached(ticker, bucket)
+    except Exception as exc:  # noqa: BLE001 - reported to the reader as text
+        return {"error": str(exc)}
 
 
 @st.cache_data(persist="disk", show_spinner=False)
@@ -899,7 +909,14 @@ elif page == "Company":
         res = _research(query, _bucket())
 
     if "error" in res:
-        st.error(res["error"])
+        message = res["error"]
+        if "RateLimit" in message or "Too Many" in message:
+            st.warning(
+                "The data provider is rate limiting us at the moment. This clears on "
+                "its own after a minute or two — reload the page to try again."
+            )
+        else:
+            st.error(message)
         st.stop()
 
     try:
