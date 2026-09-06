@@ -8,7 +8,7 @@ This is a UK consumer-facing research and education product. It describes what
 company data shows; it does not instruct anyone to trade.
 
 User-facing copy must NOT contain: buy, sell, entry, exit, stop loss, target
-price, position size, allocation, risk/reward ratio, or "score_band" as a
+price, position size, allocation, risk/reward ratio, or "conviction" as a
 recommendation strength. `tests/test_language.py` enforces this and will fail
 the build if such wording reappears.
 
@@ -25,6 +25,7 @@ from __future__ import annotations
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -60,7 +61,15 @@ from services.comparison import MAX_COMPANIES, MIN_MEANINGFUL_GAP, compare
 from services.momentum import assess_momentum
 from services.score_history import ScoreHistory, describe_change
 from services.screening import apply_preset, screen
+from services.watchlist import Watchlist
 from services.scoring import SCORING_VERSION, score_company
+
+
+@st.cache_resource(show_spinner=False)
+def _watchlist() -> Watchlist:
+    """Shared watchlist store. Local single-user today; the `owner` column is
+    already in place so accounts can be added without migrating data."""
+    return Watchlist()
 
 
 @st.cache_resource(show_spinner=False)
@@ -762,15 +771,211 @@ st.sidebar.markdown("""
 
 page = st.sidebar.radio(
     "Navigate",
-    ["🔎 Company", "⚖️ Compare", "📊 Research", "🔥 Momentum", "💎 Hidden Gems",
-     "⚠️ Holdings Review", "🔍 Screener", "🇬🇧 UK Investor"],
+    ["🏠 Home", "🔎 Company", "⚖️ Compare", "🔍 Screener",
+     "💎 Hidden Gems", "🔥 Momentum", "📊 Research",
+     "⚠️ Holdings Review", "🇬🇧 UK Investor"],
     index=0,
 )
 
 # ════════════════════════════════════════════════════════════
+# PAGE — HOME
+# ════════════════════════════════════════════════════════════
+if page == "🏠 Home":
+
+    st.markdown(
+        '<div style="padding:1.5rem 1.9rem 1.3rem; background:#ffffff; border:1px solid #dde3ef;'
+        'border-left:5px solid #b8960c; border-radius:8px; margin-bottom:1.3rem;'
+        'box-shadow:0 2px 10px rgba(0,0,0,0.06);">'
+        '<div style="font-size:1.75rem; font-weight:800; color:#0d1117; letter-spacing:-0.02em;'
+        'line-height:1.15;">Understand stocks without the jargon</div>'
+        '<div style="font-size:0.9rem; color:#475569; margin-top:0.55rem; line-height:1.6;'
+        'max-width:760px;">Every company gets a research score out of 100, built from its '
+        'profitability, growth, valuation, financial health and recent price movement — '
+        'each one explained in plain English, with the risks shown alongside the strengths.'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── How to use it, in one line ───────────────────────────
+    steps = st.columns(5)
+    for col, (icon, title, note) in zip(steps, [
+        ("🔎", "Look up", "Search any company"),
+        ("🔍", "Screen", "Filter by what matters"),
+        ("📖", "Understand", "See why it scores that way"),
+        ("⚖️", "Compare", "Put companies side by side"),
+        ("⭐", "Watch", "Keep an eye on it"),
+    ]):
+        col.markdown(
+            f'<div style="text-align:center;padding:0.7rem 0.4rem;background:#ffffff;'
+            f'border:1px solid #dde3ef;border-radius:6px;height:100%;">'
+            f'<div style="font-size:1.2rem;">{icon}</div>'
+            f'<div style="font-size:0.78rem;font-weight:700;color:#0d1117;margin-top:0.2rem;">{title}</div>'
+            f'<div style="font-size:0.66rem;color:#94a3b8;margin-top:0.15rem;">{note}</div></div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Market overview ──────────────────────────────────────
+    st.markdown("---")
+    st.markdown("##### Markets today")
+
+    @st.cache_data(persist="disk", show_spinner=False)
+    def _market_overview(bucket: int) -> list:
+        indices = [("^FTSE", "FTSE 100"), ("^GSPC", "S&P 500"),
+                   ("^IXIC", "NASDAQ"), ("^GDAXI", "DAX")]
+        prices = _batch_prices(tuple(t for t, _ in indices), period="1mo", interval="1d")
+        out = []
+        for sym, label in indices:
+            hist = prices.get(sym)
+            if hist is None or hist.empty or len(hist) < 2:
+                out.append({"label": label, "last": None, "day": None, "month": None})
+                continue
+            closes = hist["Close"].dropna()
+            last = float(closes.iloc[-1])
+            day = (last / float(closes.iloc[-2]) - 1) * 100 if len(closes) > 1 else None
+            month = (last / float(closes.iloc[0]) - 1) * 100 if len(closes) > 5 else None
+            out.append({"label": label, "last": last, "day": day, "month": month})
+        return out
+
+    try:
+        overview = _market_overview(_bucket())
+    except Exception:  # noqa: BLE001
+        overview = []
+
+    if not overview or all(m["last"] is None for m in overview):
+        st.caption("Market data is unavailable right now.")
+    else:
+        mcols = st.columns(len(overview))
+        for col, m in zip(mcols, overview):
+            if m["last"] is None:
+                col.markdown(
+                    f'<div style="background:#f8fafc;border:1px dashed #cbd5e1;border-radius:6px;'
+                    f'padding:0.75rem 0.9rem;"><div style="font-size:0.64rem;letter-spacing:0.1em;'
+                    f'text-transform:uppercase;color:#94a3b8;">{m["label"]}</div>'
+                    f'<div style="font-size:0.85rem;color:#94a3b8;margin-top:0.3rem;">'
+                    f'Unavailable</div></div>', unsafe_allow_html=True)
+                continue
+            colour = "#16a34a" if (m["day"] or 0) >= 0 else "#dc2626"
+            arrow = "▲" if (m["day"] or 0) >= 0 else "▼"
+            month_txt = (f'{m["month"]:+.1f}% over the month' if m["month"] is not None else "")
+            col.markdown(
+                f'<div style="background:#ffffff;border:1px solid #dde3ef;border-radius:6px;'
+                f'padding:0.75rem 0.9rem;">'
+                f'<div style="font-size:0.64rem;letter-spacing:0.1em;text-transform:uppercase;'
+                f'color:#94a3b8;">{m["label"]}</div>'
+                f'<div style="font-size:1.25rem;font-weight:800;color:#0d1117;line-height:1.2;">'
+                f'{m["last"]:,.0f}</div>'
+                f'<div style="font-size:0.75rem;color:{colour};font-weight:600;">'
+                f'{arrow} {m["day"]:+.2f}% today</div>'
+                f'<div style="font-size:0.64rem;color:#94a3b8;">{month_txt}</div></div>',
+                unsafe_allow_html=True,
+            )
+        st.caption("Index levels may be delayed. Shown for context only.")
+
+    # ── Watchlist ────────────────────────────────────────────
+    st.markdown("---")
+    wl = _watchlist()
+    entries = wl.all()
+    st.markdown(f"##### Your watchlist ({len(entries)})")
+    if not entries:
+        st.info(
+            "Nothing saved yet. Look up a company on the **🔎 Company** page and press "
+            "**Add to watchlist** to keep an eye on it here."
+        )
+    else:
+        wcols = st.columns(min(4, len(entries)))
+        for i, entry in enumerate(entries[:8]):
+            col = wcols[i % len(wcols)]
+            snap = None
+            try:
+                snap = _score_history().latest(entry.ticker)
+            except Exception:  # noqa: BLE001
+                pass
+            score_txt = ("—" if snap is None or snap.overall is None
+                         else f"{snap.overall:.0f}")
+            col.markdown(
+                f'<div class="metric-card"><h3>{entry.ticker}</h3>'
+                f'<p>{score_txt}</p>'
+                f'<div style="font-size:0.64rem;color:#94a3b8;">'
+                f'{(entry.name or "")[:22]}</div></div>',
+                unsafe_allow_html=True,
+            )
+        if len(entries) > 8:
+            st.caption(f"…and {len(entries) - 8} more.")
+
+    # ── Recently viewed ──────────────────────────────────────
+    recent = wl.recent(limit=8)
+    if recent:
+        st.markdown("##### Recently viewed")
+        st.markdown(
+            " ".join(
+                f'<span style="display:inline-block;background:#ffffff;border:1px solid #dde3ef;'
+                f'border-radius:14px;padding:0.2rem 0.7rem;margin:0 0.3rem 0.35rem 0;'
+                f'font-size:0.78rem;color:#334155;">{e.ticker}</span>'
+                for e in recent
+            ),
+            unsafe_allow_html=True,
+        )
+
+    # ── One idea at a time ───────────────────────────────────
+    st.markdown("---")
+    st.markdown("##### Learn one thing")
+    LESSONS = [
+        ("What a P/E ratio actually tells you",
+         "The P/E ratio is the share price divided by the profit per share over the last "
+         "year. A P/E of 20 means you are paying £20 for every £1 of annual profit. A high "
+         "P/E can reflect strong expectations for growth — or simply that a lot of optimism "
+         "is already in the price, leaving less room for disappointment. It is most useful "
+         "compared against companies in the same industry, not across the whole market."),
+        ("Why a rising share price tells you little about a company",
+         "Price movement and business quality are separate things. A company can rise "
+         "sharply while its revenue shrinks, and a strong business can go nowhere for years. "
+         "That is why this platform scores them separately and never blends them into one "
+         "number — a stock that has gone up is not the same as a company doing well."),
+        ("What a Stocks & Shares ISA actually does",
+         "An ISA is a wrapper around your investments, not an investment itself. Gains and "
+         "dividends inside one are free of UK capital gains and dividend tax. It does not "
+         "protect you from losses: the investments inside can still fall, and the tax "
+         "advantage only matters if there are gains to shelter."),
+        ("Why missing data matters",
+         "If a company has not reported a figure, no score can honestly be calculated from "
+         "it. Some tools quietly treat a missing number as zero — which can make a company "
+         "with no reported debt look debt-free. Here, missing data is shown as unavailable "
+         "and lowers the confidence rating instead."),
+        ("What diversification does and does not do",
+         "Holding several unrelated investments reduces the damage any single one can do. "
+         "It does not protect against a fall in the whole market, and holding many companies "
+         "in the same industry is far less diversified than it looks."),
+    ]
+    lesson_title, lesson_body = LESSONS[date.today().toordinal() % len(LESSONS)]
+    st.markdown(
+        f'<div style="background:#ffffff;border:1px solid #dde3ef;border-left:4px solid #b8960c;'
+        f'border-radius:6px;padding:1rem 1.2rem;">'
+        f'<div style="font-size:0.95rem;font-weight:700;color:#0d1117;">{lesson_title}</div>'
+        f'<div style="font-size:0.86rem;color:#475569;line-height:1.6;margin-top:0.4rem;">'
+        f'{lesson_body}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("---")
+    st.caption(
+        f"Scoring methodology v{SCORING_VERSION}. Data from {PROVIDER_NAME}; prices may be "
+        f"delayed."
+        + ("" if PROVIDER_IS_LICENSED else
+           " This data source is for personal and development use and is not licensed for "
+           "commercial redistribution.")
+    )
+    st.caption(
+        "⚠️ This is research and education, not financial advice, and nothing here is a "
+        "recommendation to buy or sell any investment. Scores describe reported figures and "
+        "past price behaviour; they are not predictions. Investing carries risk and you may "
+        "get back less than you put in."
+    )
+
+
+# ════════════════════════════════════════════════════════════
 # PAGE 0 — COMPANY  (the individual stock research page)
 # ════════════════════════════════════════════════════════════
-if page == "🔎 Company":
+elif page == "🔎 Company":
 
     st.title("Company research")
     st.caption("Search any company to see what its numbers show, explained in plain English.")
@@ -825,6 +1030,24 @@ if page == "🔎 Company":
                 f'Data as at {res["fetched_at"]:%d %B %Y}. Prices may be delayed.</div>',
                 unsafe_allow_html=True,
             )
+
+    # ── Watchlist + recently viewed ──────────────────────────
+    try:
+        _wl = _watchlist()
+        _wl.record_view(query, res["name"])
+        already = _wl.contains(query)
+        wl_col, _sp = st.columns([1, 3])
+        with wl_col:
+            if already:
+                if st.button("★ Remove from watchlist", key=f"_wl_rm_{query}"):
+                    _wl.remove(query)
+                    st.rerun()
+            else:
+                if st.button("☆ Add to watchlist", key=f"_wl_add_{query}"):
+                    _wl.add(query, res["name"])
+                    st.rerun()
+    except Exception:  # noqa: BLE001 - the watchlist must never block the research
+        pass
 
     st.markdown("---")
 
