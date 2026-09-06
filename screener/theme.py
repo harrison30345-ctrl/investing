@@ -432,62 +432,125 @@ def chart_layout_quiet(**kwargs) -> dict:
     layout.update(kwargs)
     return layout
 
-def hover_to_open_sidebar() -> None:
-    """Open the collapsed sidebar on hover, without needing a click.
+def hover_to_open_sidebar(open_delay_ms: int = 260, close_delay_ms: int = 420) -> None:
+    """Open the sidebar on hover and close it when the pointer leaves.
 
-    Implemented by clicking Streamlit's own expand control when the pointer
-    enters it or the left edge of the window. Doing it this way changes the
-    real sidebar state, so the page reflows correctly -- a CSS-only reveal
-    would slide a clipped, non-interactive copy over the content.
+    Implemented by driving Streamlit's own collapse/expand controls, so the
+    sidebar state genuinely changes and the page reflows. A CSS-only reveal
+    would slide a clipped, non-interactive copy over the content -- the
+    collapsed sidebar sits outside an overflow:hidden parent.
+
+    Both directions are deliberately delayed. Opening the instant a cursor
+    crosses the edge feels twitchy and fires when someone is just moving
+    towards the page; closing instantly punishes a cursor that strays a few
+    pixels outside while reading. The timers are cancelled if the pointer
+    returns, so only a sustained hover counts.
 
     Runs inside a components iframe and reaches into the parent document, which
-    is same-origin. If that access is ever blocked the guard below simply does
-    nothing and clicking still works.
+    is same-origin. If that access is blocked the guard below does nothing and
+    the buttons still work as normal.
     """
     components.html(
-        """
+        f"""
         <script>
-        (function () {
+        (function () {{
           let doc;
-          try { doc = window.parent.document; } catch (e) { return; }
+          try {{ doc = window.parent.document; }} catch (e) {{ return; }}
           if (!doc || doc.getElementById('bs-hover-open')) return;
+
+          const OPEN_DELAY = {open_delay_ms};
+          const CLOSE_DELAY = {close_delay_ms};
 
           const marker = doc.createElement('div');
           marker.id = 'bs-hover-open';
           marker.style.display = 'none';
           doc.body.appendChild(marker);
 
-          const expand = () => {
-            const btn = doc.querySelector('[data-testid="stExpandSidebarButton"] button')
-                     || doc.querySelector('[data-testid="stExpandSidebarButton"]');
-            if (btn) btn.click();
-          };
+          // Ease the slide in both directions. Streamlit animates the width;
+          // this simply makes that motion unhurried.
+          const style = doc.createElement('style');
+          style.textContent = `
+            section[data-testid="stSidebar"] {{
+              transition: width 320ms cubic-bezier(.4,0,.2,1),
+                          transform 320ms cubic-bezier(.4,0,.2,1),
+                          min-width 320ms cubic-bezier(.4,0,.2,1) !important;
+            }}
+            @media (prefers-reduced-motion: reduce) {{
+              section[data-testid="stSidebar"] {{ transition: none !important; }}
+            }}
+          `;
+          doc.head.appendChild(style);
 
-          // A narrow strip down the left edge. Only live while the sidebar is
-          // closed, so it never sits over the page or the open sidebar.
+          const sidebar = () => doc.querySelector('[data-testid="stSidebar"]');
+          const isOpen = () => {{
+            const sb = sidebar();
+            return !!sb && sb.getAttribute('aria-expanded') !== 'false';
+          }};
+          const expandBtn = () =>
+            doc.querySelector('[data-testid="stExpandSidebarButton"] button') ||
+            doc.querySelector('[data-testid="stExpandSidebarButton"]');
+          const collapseBtn = () =>
+            doc.querySelector('[data-testid="stSidebarCollapseButton"] button') ||
+            doc.querySelector('[data-testid="stSidebarCollapseButton"]');
+
+          let openTimer = null, closeTimer = null;
+          const cancel = () => {{
+            if (openTimer) {{ clearTimeout(openTimer); openTimer = null; }}
+            if (closeTimer) {{ clearTimeout(closeTimer); closeTimer = null; }}
+          }};
+          const scheduleOpen = () => {{
+            cancel();
+            if (isOpen()) return;
+            openTimer = setTimeout(() => {{
+              const b = expandBtn(); if (b && !isOpen()) b.click();
+            }}, OPEN_DELAY);
+          }};
+          const scheduleClose = () => {{
+            cancel();
+            if (!isOpen()) return;
+            closeTimer = setTimeout(() => {{
+              // Do not close while a control inside the sidebar has focus or a
+              // dropdown is open -- that would yank the panel away mid-use.
+              const sb = sidebar();
+              if (!sb) return;
+              if (sb.contains(doc.activeElement)) return;
+              if (doc.querySelector('[data-baseweb="popover"], [data-baseweb="menu"]')) return;
+              const b = collapseBtn(); if (b && isOpen()) b.click();
+            }}, CLOSE_DELAY);
+          }};
+
+          // Left-edge strip: only live while the sidebar is closed.
           const strip = doc.createElement('div');
-          Object.assign(strip.style, {
-            position: 'fixed', left: '0', top: '0', width: '14px', height: '100vh',
-            zIndex: '998', background: 'transparent', pointerEvents: 'auto',
-          });
-          strip.addEventListener('mouseenter', expand);
+          strip.id = 'bs-hover-strip';
+          Object.assign(strip.style, {{
+            position: 'fixed', left: '0', top: '0', width: '16px', height: '100vh',
+            zIndex: '998', background: 'transparent',
+          }});
+          strip.addEventListener('mouseenter', scheduleOpen);
+          strip.addEventListener('mouseleave', cancel);
           doc.body.appendChild(strip);
 
-          const sync = () => {
-            const sb = doc.querySelector('[data-testid="stSidebar"]');
-            const closed = sb && sb.getAttribute('aria-expanded') === 'false';
-            strip.style.pointerEvents = closed ? 'auto' : 'none';
-            const btn = doc.querySelector('[data-testid="stExpandSidebarButton"]');
-            if (btn && !btn.dataset.bsHover) {
-              btn.dataset.bsHover = '1';
-              btn.addEventListener('mouseenter', expand);
-            }
-          };
-          sync();
-          new MutationObserver(sync).observe(doc.body, {
-            attributes: true, subtree: true, attributeFilter: ['aria-expanded'],
-          });
-        })();
+          const wire = () => {{
+            const sb = sidebar();
+            if (sb && !sb.dataset.bsHover) {{
+              sb.dataset.bsHover = '1';
+              sb.addEventListener('mouseenter', cancel);
+              sb.addEventListener('mouseleave', scheduleClose);
+            }}
+            const eb = doc.querySelector('[data-testid="stExpandSidebarButton"]');
+            if (eb && !eb.dataset.bsHover) {{
+              eb.dataset.bsHover = '1';
+              eb.addEventListener('mouseenter', scheduleOpen);
+              eb.addEventListener('mouseleave', cancel);
+            }}
+            strip.style.pointerEvents = isOpen() ? 'none' : 'auto';
+          }};
+          wire();
+          new MutationObserver(wire).observe(doc.body, {{
+            childList: true, subtree: true,
+            attributes: true, attributeFilter: ['aria-expanded'],
+          }});
+        }})();
         </script>
         """,
         height=0,
