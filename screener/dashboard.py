@@ -794,11 +794,11 @@ if page == "Overview":
                     st.caption("Nothing met the threshold.")
                     continue
                 st.markdown("".join(
-                    f'<div class="bs-row">'
+                    f'<a class="bs-row bs-link" href="?company={r["ticker"]}" target="_self">'
                     f'<div class="bs-row-t">{r["ticker"]}</div>'
                     f'<div><div class="bs-row-n">{r["name"]}</div>'
                     f'<div class="bs-row-r">{r["detail"]}</div></div>'
-                    f'<div class="bs-row-s">{r["score"]:.0f}</div></div>'
+                    f'<div class="bs-row-s">{r["score"]:.0f}</div></a>'
                     for r in rows
                 ), unsafe_allow_html=True)
                 st.caption(rows[0]["reason"])
@@ -856,8 +856,7 @@ if page == "Overview":
         except Exception:  # noqa: BLE001
             recent = []
         if recent:
-            st.markdown(" ".join(f'<span class="bs-tag">{e.ticker}</span>' for e in recent),
-                        unsafe_allow_html=True)
+            theme.company_tags([e.ticker for e in recent])
         else:
             st.caption("Companies you look at will appear here.")
 
@@ -1489,8 +1488,7 @@ elif page == "Watchlist":
         except Exception:  # noqa: BLE001
             recent = []
         if recent:
-            st.markdown(" ".join(f'<span class="bs-tag">{e.ticker}</span>' for e in recent),
-                        unsafe_allow_html=True)
+            theme.company_tags([e.ticker for e in recent])
         else:
             st.caption("Companies you look at will appear here.")
         st.stop()

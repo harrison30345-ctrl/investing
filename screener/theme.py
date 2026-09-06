@@ -30,7 +30,8 @@ __all__ = [
     "inject", "hover_to_open_sidebar",
     "page_header", "section", "hairline",
     "score_row", "stat_grid", "two_column_list", "metric_table", "list_rows",
-    "discover_rows", "score_indicator", "confidence_badge", "company_header",
+    "discover_rows", "company_tags", "score_indicator", "confidence_badge",
+    "company_header",
     "chart_layout_quiet",
     "INK", "MUTED", "FAINT", "RULE", "BRASS", "POSITIVE", "NEGATIVE", "WARNING",
     "PAPER", "SURFACE", "NAVY",
@@ -358,6 +359,21 @@ _CSS = f"""
       font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap;
   }}
   .bs-rd {{ font-size: 0.72rem; font-weight: 600; margin-left: 0.4rem; }}
+  a.bs-link {{
+      text-decoration: none !important; color: inherit !important;
+      transition: background 0.12s ease;
+  }}
+  a.bs-lrow, a.bs-row {{
+      padding-left: 0.4rem; padding-right: 0.4rem; margin: 0 -0.4rem;
+      display: grid;
+  }}
+  a.bs-row {{ grid-template-columns: 62px 1fr auto; gap: 0 1rem; align-items: baseline; }}
+  a.bs-row:hover {{ background: #f2efe9; }}
+  a.bs-lrow:hover {{ background: #f2efe9; }}
+  a.bs-lrow:focus-visible, a.bs-tag:focus-visible {{
+      outline: 2px solid {BRASS}; outline-offset: -2px;
+  }}
+  a.bs-tag:hover {{ border-color: {BRASS}; color: {INK} !important; }}
 
   /* Discover results table: rules, not gridlines */
   .bs-dtable {{ margin-top: 0.3rem; }}
@@ -733,11 +749,13 @@ def metric_table(rows: list, columns: int = 2) -> None:
     )
 
 
-def list_rows(rows: list) -> None:
-    """Compact list rows for Discover, Watchlist and search results.
+def list_rows(rows: list, linked: bool = True) -> None:
+    """Compact list rows for lists of companies.
 
-    A table rather than one card per company: cards force the eye to re-orient
-    for every entry, which is the opposite of what scanning a list needs.
+    A list rather than one card per company: cards force the eye to re-orient
+    for every entry, which is the opposite of what scanning needs. Rows are
+    anchors to ?company=TICKER by default, so anywhere a company is named it
+    can be opened -- a name shown but not clickable is a dead end.
     """
     html = []
     for r in rows:
@@ -745,15 +763,30 @@ def list_rows(rows: list) -> None:
         if r.get("delta") not in (None, ""):
             cls = "bs-pos" if r["delta"] >= 0 else "bs-neg"
             delta = f'<span class="bs-rd {cls}">{r["delta"]:+.0f}</span>'
-        html.append(
-            f'<div class="bs-lrow">'
+        inner = (
             f'<span class="bs-lt">{r["ticker"]}</span>'
             f'<span class="bs-ln">{r.get("name", "")}'
             + (f'<span class="bs-lr">{r["reason"]}</span>' if r.get("reason") else "")
             + f'</span>'
-            f'<span class="bs-ls">{r["score"]}{delta}</span></div>'
+            f'<span class="bs-ls">{r["score"]}{delta}</span>'
         )
+        if linked:
+            html.append(f'<a class="bs-lrow bs-link" href="?company={r["ticker"]}" '
+                        f'target="_self">{inner}</a>')
+        else:
+            html.append(f'<div class="bs-lrow">{inner}</div>')
     st.markdown("".join(html), unsafe_allow_html=True)
+
+
+def company_tags(entries: list) -> None:
+    """Tickers as small clickable chips, for recently viewed."""
+    st.markdown(
+        " ".join(
+            f'<a class="bs-tag bs-link" href="?company={t}" target="_self">{t}</a>'
+            for t in entries
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 # ── Discover results ─────────────────────────────────────────────────────────
