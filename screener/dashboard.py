@@ -52,6 +52,9 @@ except ImportError:
 # provider directly -- see the licensing note in services/market_data.py.
 from services.explanations import GLOSSARY, explain, format_value
 from services.market_data import PROVIDER_IS_LICENSED, PROVIDER_NAME, get_provider
+from services.hidden_gems import (
+    GEM_GATES, MAX_ANALYSTS, METHODOLOGY_VERSION as GEM_METHODOLOGY_VERSION, assess_gem,
+)
 from services.scoring import SCORING_VERSION, score_company
 
 PACKAGE_DIR = Path(__file__).parent
@@ -415,6 +418,48 @@ def _batch_info_cached(tickers_tuple: tuple, max_workers: int, bucket: int) -> d
 
 def _batch_info(tickers_tuple: tuple, max_workers: int = 25) -> dict:
     return _batch_info_cached(tickers_tuple, max_workers, _bucket())
+
+
+def _fundamentals_from_info(info: dict, hist=None) -> dict:
+    """Map a provider info dict (+ price history) to the scoring engine's inputs.
+
+    Absent, non-numeric and NaN values are omitted rather than coerced. An
+    omitted key is treated by the scoring engine as unavailable, which lowers
+    confidence -- it is never filled in with a neutral or favourable stand-in.
+    """
+    out: dict = {}
+    for field in (
+        "returnOnEquity", "profitMargins", "operatingMargins",
+        "revenueGrowth", "earningsGrowth",
+        "trailingPE", "forwardPE", "priceToSalesTrailing12Months",
+        "debtToEquity", "currentRatio", "freeCashflow",
+        "marketCap", "beta", "numberOfAnalystOpinions",
+    ):
+        value = info.get(field)
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if number != number:  # NaN
+            continue
+        out[field] = number
+
+    if hist is not None and not hist.empty and "Close" in hist:
+        closes = hist["Close"].dropna()
+        if len(closes) > 1:
+            price = float(closes.iloc[-1])
+            for key, days in (("chg_1w", 5), ("chg_1m", 21), ("chg_3m", 63)):
+                if len(closes) > days:
+                    prev = float(closes.iloc[-days - 1])
+                    if prev > 0:
+                        out[key] = (price / prev - 1) * 100
+            if len(closes) >= 50:
+                sma50 = float(closes.rolling(50).mean().iloc[-1])
+                if sma50 > 0:
+                    out["vs_sma50"] = (price - sma50) / sma50 * 100
+    return out
 
 
 def _scan_gate(state_key: str, label: str, forced: bool = False, note: str = "") -> bool:
@@ -1120,19 +1165,36 @@ elif page == "💎 Hidden Gems":
 
     st.title("Hidden Gems")
     st.caption(
-        "Finds stocks that are cheap relative to their growth, improving fundamentals, "
-        "strong cash flow, and showing early signals before the crowd notices."
+        "Sound businesses, reasonably priced, that relatively few analysts follow. "
+        "Every company here has passed all five tests below — being overlooked on its own "
+        "never qualifies a company."
     )
 
-    # ── Sidebar controls ─────────────────────────────────────
+    with st.expander("How a company qualifies — the full methodology"):
+        st.markdown(
+            f"A company must pass **every** one of these tests. They are checked "
+            f"independently; a strong result in one never compensates for failing another.\n"
+        )
+        for i, gate in enumerate(GEM_GATES, 1):
+            st.markdown(f"**{i}. {gate.label}** — {gate.why}")
+        st.markdown(
+            f"\nQualifying companies are then ranked by **research score**, not by how "
+            f"obscure they are. Being less well known is a qualifying condition, never a merit.\n\n"
+            f"**What this cannot tell you:** passing these tests does not mean a company is "
+            f"undervalued. It means its reported figures look sound and its valuation multiples "
+            f"are not stretched. A low valuation can equally reflect a risk the figures do not "
+            f"yet show.\n\n"
+            f"*Methodology v{GEM_METHODOLOGY_VERSION}, scoring v{SCORING_VERSION}.*"
+        )
+
     st.sidebar.markdown("### Hidden Gems settings")
     gem_universe = st.sidebar.selectbox(
         "Scan universe",
-        ["tech", "ai", "space", "growth", "all_curated", "nasdaq100"],
+        ["broad", "all_curated", "tech", "ai", "growth", "nasdaq100"],
         format_func=lambda x: {
-            "tech": "Tech & Mega Caps (~60)",
-            "ai": "AI & Machine Learning (~55)",
-            "space": "Space & Defence (~50)",
+            "broad": "Broad Market (~300)",
+            "tech": "Tech & Mega Caps",
+            "ai": "AI & ML",
             "growth": "High Growth (~50)",
             "all_curated": "All Curated (~130)",
             "nasdaq100": "NASDAQ 100",
@@ -1142,337 +1204,148 @@ elif page == "💎 Hidden Gems":
     gem_top_n   = st.sidebar.slider("Show top N gems", 5, 25, 10)
     refresh_gem = st.sidebar.button("🔄 Find Hidden Gems", type="primary")
 
-    st.sidebar.markdown("### Score weights")
-    w_val    = st.sidebar.slider("Valuation weight",     0, 50, 25) / 100
-    w_growth = st.sidebar.slider("Growth weight",        0, 50, 30) / 100
-    w_profit = st.sidebar.slider("Profitability weight", 0, 50, 20) / 100
-    w_health = st.sidebar.slider("Financial health weight", 0, 50, 15) / 100
-    w_hidden = st.sidebar.slider("Hidden signal weight", 0, 50, 10) / 100
+    st.sidebar.markdown("### Coverage threshold")
+    st.sidebar.caption(
+        "How thin analyst coverage must be for a company to count as overlooked."
+    )
+    gem_max_analysts = st.sidebar.slider("Max analysts covering", 3, 30, MAX_ANALYSTS)
 
-    gem_cache_key = f"gems_{gem_universe}"
+    gem_cache_key = f"gems_{gem_universe}_{gem_max_analysts}"
     if refresh_gem or gem_cache_key not in st.session_state:
         st.session_state[gem_cache_key] = None
 
     if _scan_gate(gem_cache_key, "💎 Find Hidden Gems", forced=refresh_gem,
-                  note="Screens for undervalued stocks the market may have overlooked. "
+                  note="Screens for sound businesses that few analysts follow. "
                        "Pulls live data for several hundred tickers."):
         scan_tickers  = get_universe(gem_universe)
         tickers_tuple = tuple(scan_tickers)
 
-        with st.spinner(f"Analysing {len(scan_tickers)} tickers for potential..."):
-            rows = []
+        with st.spinner(f"Assessing {len(scan_tickers)} companies…"):
             prog = st.progress(0, text="Downloading price data (batch)...")
             gem_prices = _batch_prices(tickers_tuple, period="1mo", interval="1d")
             valid_tup  = tuple(t for t in scan_tickers if t in gem_prices and not gem_prices[t].empty) or tuple(scan_tickers)
-            prog.progress(0.45, text=f"Fetching fundamentals for {len(valid_tup)} active stocks...")
+            prog.progress(0.5, text=f"Fetching fundamentals for {len(valid_tup)} companies...")
             all_info = _batch_info(valid_tup)
-            prog.progress(0.8, text="Computing gem scores...")
+            prog.progress(0.9, text="Applying methodology...")
 
-            for ticker in scan_tickers:
-                try:
-                    info = all_info.get(ticker, {})
-                    if not info or info.get("regularMarketPrice") is None:
-                        continue
-
-                    def _f(key, default=None):
-                        v = info.get(key)
-                        try:
-                            return float(v) if v is not None else default
-                        except (TypeError, ValueError):
-                            return default
-
-                    # ── Raw data ──────────────────────────────
-                    pe          = _f("trailingPE")
-                    forward_pe  = _f("forwardPE")
-                    peg         = _f("pegRatio")
-                    ps          = _f("priceToSalesTrailing12Months")
-                    pb          = _f("priceToBook")
-                    ev_ebitda   = _f("enterpriseToEbitda")
-
-                    roe             = (_f("returnOnEquity") or 0) * 100
-                    gross_margin    = (_f("grossMargins")   or 0) * 100
-                    net_margin      = (_f("profitMargins")  or 0) * 100
-                    op_margin       = (_f("operatingMargins") or 0) * 100
-
-                    rev_growth      = (_f("revenueGrowth")  or 0) * 100
-                    earnings_growth = (_f("earningsGrowth") or 0) * 100
-                    forward_eps     = _f("forwardEps")
-                    trailing_eps    = _f("trailingEps")
-                    eps_next_y      = (_f("epsForward") or forward_eps)
-                    eps_this_y      = (_f("epsCurrentYear") or trailing_eps)
-
-                    de_ratio        = (_f("debtToEquity") or 0) / 100
-                    current_ratio   = _f("currentRatio")
-                    fcf             = _f("freeCashflow")
-                    market_cap      = _f("marketCap")
-                    fcf_yield       = (fcf / market_cap * 100) if fcf and market_cap and market_cap > 0 else None
-
-                    # Number of analysts covering it (lower = less discovered)
-                    n_analysts      = _f("numberOfAnalystOpinions", default=99)
-                    rec_mean        = _f("recommendationMean")   # 1=strong buy → 5=sell
-
-                    # Earnings turnaround: was EPS negative/low before, now growing?
-                    eps_turning = False
-                    if eps_this_y is not None and eps_next_y is not None:
-                        if eps_this_y > 0 and eps_next_y > eps_this_y * 1.15:
-                            eps_turning = True
-                        elif eps_this_y <= 0 and eps_next_y is not None and eps_next_y > 0:
-                            eps_turning = True  # loss → profit
-
-                    # Insider buying: use heldPercentInsiders as a fast proxy
-                    insider_score = 50.0
-                    held_pct = _f("heldPercentInsiders", None)
-                    if held_pct is not None:
-                        # High insider ownership → bullish signal
-                        insider_score = min(100, held_pct * 100 * 5)  # 20% ownership → 100 score
-
-                    # ── Component scores (all 0–100) ──────────
-
-                    # VALUATION — cheap relative to growth is the goal
-                    peg_score  = max(0, min(100, (3 - (peg or 3)) / 3 * 100)) if peg else 50
-                    ps_score   = max(0, min(100, (15 - (ps or 15)) / 15 * 100)) if ps else 50
-                    pe_score   = max(0, min(100, (40 - (pe or 40)) / 35 * 100)) if pe else 50
-                    fcf_score  = max(0, min(100, ((fcf_yield or 0)) / 10 * 100))
-                    val_score  = peg_score * 0.40 + pe_score * 0.25 + ps_score * 0.20 + fcf_score * 0.15
-
-                    # GROWTH — acceleration is the edge
-                    rev_score  = max(0, min(100, (rev_growth + 5)     / 55  * 100))
-                    earn_score = max(0, min(100, (earnings_growth + 10) / 60 * 100))
-                    # Forward vs trailing PE compression = market expecting growth
-                    pe_compress = 0
-                    if pe and forward_pe and forward_pe < pe:
-                        pe_compress = min(100, ((pe - forward_pe) / pe) * 200)
-                    growth_score = rev_score * 0.40 + earn_score * 0.35 + pe_compress * 0.25
-
-                    # PROFITABILITY — improving margins
-                    roe_score      = max(0, min(100, roe / 40 * 100))
-                    margin_score   = max(0, min(100, net_margin / 30 * 100))
-                    op_score       = max(0, min(100, op_margin  / 35 * 100))
-                    profit_score   = roe_score * 0.35 + margin_score * 0.35 + op_score * 0.30
-
-                    # FINANCIAL HEALTH
-                    de_health  = max(0, min(100, (2 - de_ratio) / 2 * 100)) if de_ratio is not None else 50
-                    cr_health  = max(0, min(100, ((current_ratio or 0) / 2.5) * 100))
-                    fcf_health = 80 if (fcf or 0) > 0 else 20
-                    health_score = de_health * 0.40 + fcf_health * 0.35 + cr_health * 0.25
-
-                    # HIDDEN SIGNALS
-                    # Low analyst coverage → undiscovered
-                    analyst_hidden = max(0, min(100, (30 - (n_analysts or 30)) / 30 * 100))
-                    # Insider buying ratio
-                    insider_hidden = insider_score
-                    # Earnings turning around
-                    turnaround_score = 100 if eps_turning else 0
-                    # Analyst rec skewing bullish despite low coverage
-                    rec_score = max(0, min(100, (5 - (rec_mean or 3)) / 4 * 100)) if rec_mean else 50
-                    hidden_score = (analyst_hidden * 0.30 + insider_hidden * 0.25 +
-                                    turnaround_score * 0.30 + rec_score * 0.15)
-
-                    # ── Total potential score ─────────────────
-                    # Normalise weights
-                    total_w = w_val + w_growth + w_profit + w_health + w_hidden or 1.0
-                    potential = (
-                        val_score    * (w_val    / total_w) +
-                        growth_score * (w_growth / total_w) +
-                        profit_score * (w_profit / total_w) +
-                        health_score * (w_health / total_w) +
-                        hidden_score * (w_hidden / total_w)
-                    )
-
-                    rows.append({
-                        "ticker":           ticker,
-                        "name":             info.get("shortName", ticker)[:28],
-                        "potential_score":  round(potential, 1),
-                        "val_score":        round(val_score,    1),
-                        "growth_score":     round(growth_score, 1),
-                        "profit_score":     round(profit_score, 1),
-                        "health_score":     round(health_score, 1),
-                        "hidden_score":     round(hidden_score, 1),
-                        # Key raw metrics for display
-                        "peg":              round(peg, 2) if peg else None,
-                        "pe":               round(pe,  1) if pe  else None,
-                        "forward_pe":       round(forward_pe, 1) if forward_pe else None,
-                        "ps":               round(ps,  2) if ps  else None,
-                        "fcf_yield":        round(fcf_yield, 1) if fcf_yield else None,
-                        "rev_growth":       round(rev_growth, 1),
-                        "earnings_growth":  round(earnings_growth, 1),
-                        "net_margin":       round(net_margin, 1),
-                        "roe":              round(roe, 1),
-                        "de_ratio":         round(de_ratio, 2) if de_ratio is not None else None,
-                        "n_analysts":       int(n_analysts) if n_analysts and n_analysts < 99 else None,
-                        "eps_turning":      eps_turning,
-                        "insider_buy_pct":  round(insider_score, 0),
-                        "rec_mean":         round(rec_mean, 1) if rec_mean else None,
-                    })
-                except Exception:
+            assessed = []
+            for ticker in valid_tup:
+                info = all_info.get(ticker) or {}
+                if not info.get("shortName"):
                     continue
-
+                hist = gem_prices.get(ticker)
+                fundamentals = _fundamentals_from_info(info, hist)
+                result = assess_gem(
+                    ticker, info.get("shortName", ticker)[:32],
+                    fundamentals, info.get("sector"),
+                    max_analysts=gem_max_analysts,
+                )
+                assessed.append(result)
             prog.empty()
-            if not rows:
-                st.warning("No data returned. Check your tickers and try again.")
-                st.stop()
-            gem_df = pd.DataFrame(rows).sort_values("potential_score", ascending=False).reset_index(drop=True)
-            st.session_state[gem_cache_key] = gem_df
 
-    gem_df = st.session_state.get(gem_cache_key)
+        st.session_state[gem_cache_key] = assessed
 
-    if gem_df is None:
-        st.stop()  # gate is showing its own prompt — nothing to render yet
-    if gem_df.empty:
-        st.error(
-            "The scan finished but nothing passed the filters. Try a different universe "
-            "in the sidebar, or press **🔄 Find Hidden Gems** to run it again — an empty result "
-            "is often just a temporary data-provider hiccup."
+    assessed = st.session_state.get(gem_cache_key)
+    if assessed is None:
+        st.stop()
+    if not assessed:
+        st.warning(
+            "No data came back for this universe. This is usually a temporary "
+            "data-provider issue — press **🔄 Find Hidden Gems** to try again."
         )
         st.stop()
 
-    top_gems = gem_df.head(gem_top_n)
+    gems = sorted([r for r in assessed if r.qualifies],
+                  key=lambda r: r.rank_score, reverse=True)
 
-    # ── Hero cards ───────────────────────────────────────────
-    st.markdown("### Top picks")
-    cols = st.columns(5)
-    for i, (_, row) in enumerate(top_gems.head(5).iterrows()):
-        peg_str = f"PEG {row['peg']:.2f}" if row["peg"] else "PEG —"
-        rev_str = f"Rev +{row['rev_growth']:.0f}%" if row["rev_growth"] > 0 else f"Rev {row['rev_growth']:.0f}%"
-        turn_badge = " 🔄" if row["eps_turning"] else ""
-        cols[i % 5].markdown(
-            f'<div class="hot-card">'
-            f'<h3>{row["ticker"]}{turn_badge}</h3>'
-            f'<p style="font-size:1.4rem">{row["potential_score"]:.0f}<small style="font-size:0.8rem;color:#a0a0b0"> / 100</small></p>'
-            f'<small style="color:#a0a0b0">{peg_str} &nbsp;·&nbsp; {rev_str}</small>'
-            f'</div>',
-            unsafe_allow_html=True,
+    # ── Funnel: show how many companies each gate removed ────
+    st.markdown("---")
+    f1, f2, f3, f4 = st.columns(4)
+    metric_card("Companies assessed", str(len(assessed)),                       f1)
+    metric_card("Passed every test",  str(len(gems)),                           f2)
+    scored = [r for r in assessed if r.score.overall is not None]
+    metric_card("Could be scored",    str(len(scored)),                         f3)
+    metric_card("Best research score",
+                f"{gems[0].rank_score:.0f}" if gems else "—",                   f4)
+
+    with st.expander("Where companies dropped out"):
+        counts = {g.label: 0 for g in GEM_GATES}
+        unknown_counts = {g.label: 0 for g in GEM_GATES}
+        for r in assessed:
+            for label, _ in r.failed:
+                counts[label] = counts.get(label, 0) + 1
+            for label, _ in r.unknown:
+                unknown_counts[label] = unknown_counts.get(label, 0) + 1
+        st.dataframe(
+            pd.DataFrame([
+                {"Test": g.label,
+                 "Failed it": counts.get(g.label, 0),
+                 "Could not be checked": unknown_counts.get(g.label, 0)}
+                for g in GEM_GATES
+            ]),
+            hide_index=True, width="stretch",
+        )
+        st.caption(
+            "A company that could not be checked on a test does not pass it. Missing data "
+            "counts as unknown, never as a pass."
         )
 
+    if not gems:
+        st.info(
+            "No company in this universe passed every test. That is a legitimate result — "
+            "the methodology is deliberately strict, and being overlooked alone does not qualify "
+            "a company. Try a broader universe, or open the panel above to see which test "
+            "removed the most companies."
+        )
+        st.stop()
+
+    # ── The gems ─────────────────────────────────────────────
     st.markdown("---")
+    st.markdown(f"### {min(gem_top_n, len(gems))} companies that passed every test")
+    st.caption("Ranked by research score. Order does not reflect how overlooked a company is.")
 
-    # ── Full ranked table ────────────────────────────────────
-    st.markdown(f"### Full top {gem_top_n} — all signals")
+    for r in gems[:gem_top_n]:
+        sc = r.score
+        with st.container():
+            head, score_col = st.columns([3, 1])
+            with head:
+                st.markdown(
+                    f'<div style="font-size:1.05rem;font-weight:700;color:#0d1117;">'
+                    f'{r.ticker} <span style="font-weight:400;color:#64748b;font-size:0.85rem;">'
+                    f'{r.name}</span></div>',
+                    unsafe_allow_html=True,
+                )
+            with score_col:
+                st.markdown(
+                    f'<div style="text-align:right;font-size:1.3rem;font-weight:800;color:#b8960c;">'
+                    f'{sc.overall:.0f}<span style="font-size:0.75rem;font-weight:400;color:#94a3b8;">'
+                    f' / 100</span></div>'
+                    f'<div style="text-align:right;font-size:0.66rem;color:#94a3b8;">'
+                    f'{sc.confidence} confidence</div>',
+                    unsafe_allow_html=True,
+                )
 
-    col_rename = {
-        "ticker": "Ticker", "name": "Company",
-        "potential_score": "💎 Potential",
-        "val_score":    "Valuation", "growth_score": "Growth",
-        "profit_score": "Profit",    "health_score": "Health",
-        "hidden_score": "Hidden",
-        "peg": "PEG", "pe": "P/E", "forward_pe": "Fwd P/E",
-        "ps": "P/S", "fcf_yield": "FCF Yld%",
-        "rev_growth": "Rev Gr%", "earnings_growth": "EPS Gr%",
-        "net_margin": "Net Mgn%", "roe": "ROE%",
-        "de_ratio": "D/E", "n_analysts": "# Analysts",
-        "eps_turning": "Turnaround?",
-        "insider_buy_pct": "Insider Buy%",
-        "rec_mean": "Analyst Rec",
-    }
-    disp_gems = top_gems.rename(columns=col_rename)
-    disp_gems.insert(0, "Rank", range(1, len(disp_gems) + 1))
-    st.dataframe(disp_gems, hide_index=True, width="stretch",
-                 height=min(700, 36 * len(disp_gems) + 40))
+            st.markdown("**Why this company appears**")
+            for label, evidence in r.passed:
+                st.markdown(
+                    f'<div style="font-size:0.83rem;color:#334155;margin-bottom:0.2rem;">'
+                    f'<span style="color:#16a34a;">✓</span> <b>{label}</b> — {evidence}</div>',
+                    unsafe_allow_html=True,
+                )
+            if r.unknown:
+                st.caption(
+                    "Not checked: " + "; ".join(f"{label} ({ev})" for label, ev in r.unknown)
+                )
+            st.markdown("---")
 
-    # ── Score breakdown radar-style bar chart ────────────────
-    st.markdown("---")
-    st.markdown("### Score breakdown — what's driving each gem")
-
-    component_cols  = ["val_score", "growth_score", "profit_score", "health_score", "hidden_score"]
-    component_names = ["Valuation", "Growth", "Profitability", "Financial Health", "Hidden Signals"]
-    fig_gems = go.Figure()
-    colors_gem = PALETTE
-    for col, name, color in zip(component_cols, component_names, colors_gem):
-        if col in top_gems.columns:
-            fig_gems.add_trace(go.Bar(
-                name=name, x=top_gems["ticker"], y=top_gems[col],
-                marker_color=color,
-            ))
-    fig_gems.update_layout(**chart_layout(barmode="group", height=380, yaxis_range=[0, 100]))
-    st.plotly_chart(fig_gems, width="stretch")
-
-    # ── Deep dive on a selected gem ──────────────────────────
-    st.markdown("---")
-    st.markdown("### Why is it a gem? — Signal breakdown")
-
-    sel_gem = st.selectbox("Inspect a stock", top_gems["ticker"].tolist(), key="gem_select")
-    g = top_gems[top_gems["ticker"] == sel_gem].iloc[0]
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-
-    def score_badge(score):
-        if score >= 70: return f'<span class="pass-badge">▲ {score:.0f}</span>'
-        if score >= 40: return f'<span class="warn-badge">► {score:.0f}</span>'
-        return f'<span class="fail-badge">▼ {score:.0f}</span>'
-
-    with c1:
-        st.markdown("**🔍 Valuation**")
-        st.markdown(f"Score: {score_badge(g['val_score'])}", unsafe_allow_html=True)
-        st.write(f"PEG: **{g['peg']}**" if g['peg'] else "PEG: **—**")
-        st.write(f"P/E: **{g['pe']}**"  if g['pe']  else "P/E: **—**")
-        st.write(f"Fwd P/E: **{g['forward_pe']}**" if g['forward_pe'] else "Fwd P/E: **—**")
-        st.write(f"P/S: **{g['ps']}**"  if g['ps']  else "P/S: **—**")
-        st.write(f"FCF yield: **{g['fcf_yield']}%**" if g['fcf_yield'] else "FCF yield: **—**")
-
-    with c2:
-        st.markdown("**📈 Growth**")
-        st.markdown(f"Score: {score_badge(g['growth_score'])}", unsafe_allow_html=True)
-        rv = g['rev_growth']
-        ev = g['earnings_growth']
-        arrow_r = "▲" if rv > 0 else "▼"
-        arrow_e = "▲" if ev > 0 else "▼"
-        st.markdown(f"Revenue growth: **{arrow_r} {rv:.1f}%**")
-        st.markdown(f"Earnings growth: **{arrow_e} {ev:.1f}%**")
-        if g['forward_pe'] and g['pe'] and g['forward_pe'] < g['pe']:
-            compression = (g['pe'] - g['forward_pe']) / g['pe'] * 100
-            st.markdown(f'PE compression: <span class="pass-badge">▼ {compression:.0f}%</span>', unsafe_allow_html=True)
-        else:
-            st.write("PE compression: **—**")
-
-    with c3:
-        st.markdown("**💰 Profitability**")
-        st.markdown(f"Score: {score_badge(g['profit_score'])}", unsafe_allow_html=True)
-        st.write(f"Net margin: **{g['net_margin']:.1f}%**")
-        st.write(f"ROE: **{g['roe']:.1f}%**")
-
-    with c4:
-        st.markdown("**🏦 Financial health**")
-        st.markdown(f"Score: {score_badge(g['health_score'])}", unsafe_allow_html=True)
-        st.write(f"D/E: **{g['de_ratio']:.2f}**" if g['de_ratio'] is not None else "D/E: **—**")
-        st.write(f"FCF yield: **{g['fcf_yield']:.1f}%**" if g['fcf_yield'] else "FCF yield: **—**")
-
-    with c5:
-        st.markdown("**🧠 Hidden signals**")
-        st.markdown(f"Score: {score_badge(g['hidden_score'])}", unsafe_allow_html=True)
-        analysts = g['n_analysts']
-        if analysts:
-            badge_cls = "pass-badge" if analysts < 10 else ("warn-badge" if analysts < 20 else "fail-badge")
-            st.markdown(f'Analyst coverage: <span class="{badge_cls}">{analysts} analysts</span>', unsafe_allow_html=True)
-        else:
-            st.write("Analyst coverage: **—**")
-        if g['eps_turning']:
-            st.markdown('Earnings turnaround: <span class="pass-badge">YES ✓</span>', unsafe_allow_html=True)
-        else:
-            st.write("Earnings turnaround: **No**")
-        ins = g['insider_buy_pct']
-        ins_cls = "pass-badge" if ins >= 60 else ("warn-badge" if ins >= 40 else "fail-badge")
-        st.markdown(f'Insider buy ratio: <span class="{ins_cls}">{ins:.0f}%</span>', unsafe_allow_html=True)
-        rec = g['rec_mean']
-        if rec:
-            rec_labels = {1: "Strong Buy", 2: "Buy", 3: "Hold", 4: "Underperform", 5: "Sell"}
-            rec_label  = rec_labels.get(round(rec), f"{rec:.1f}")
-            rec_cls    = "pass-badge" if rec <= 2 else ("warn-badge" if rec <= 3 else "fail-badge")
-            st.markdown(f'Analyst view: <span class="{rec_cls}">{rec_label}</span>', unsafe_allow_html=True)
-
-    # ── Download ─────────────────────────────────────────────
-    st.markdown("---")
-    st.download_button(
-        "⬇ Download gems as CSV",
-        data=gem_df.to_csv(index=False),
-        file_name=f"hidden_gems_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
-        mime="text/csv",
+    st.caption(
+        "⚠️ This is research and education, not financial advice, and nothing here is a "
+        "recommendation to buy or sell any investment. Passing these tests does not mean a "
+        "company is undervalued or that its share price will rise. Investing carries risk and "
+        "you may get back less than you put in."
     )
 
 
-# ════════════════════════════════════════════════════════════
-# ════════════════════════════════════════════════════════════
-# PAGE 3 — SELL WATCH
-# ════════════════════════════════════════════════════════════
 elif page == "⚠️ Holdings Review":
 
     st.title("Holdings Review")
