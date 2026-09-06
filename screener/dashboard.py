@@ -288,6 +288,66 @@ def _research(ticker: str, bucket: int) -> dict:
     }
 
 
+@st.cache_data(persist="disk", show_spinner=False)
+def _company_directory(bucket: int) -> dict:
+    """Ticker -> company name for the searchable picker.
+
+    Built from the curated universe's cached batch info, which the Overview
+    already fetches, so in practice this is served from cache rather than
+    costing another round of provider calls.
+    """
+    try:
+        tickers = get_universe("all_curated")
+        infos = _batch_info(tuple(tickers))
+    except Exception:  # noqa: BLE001 - the picker degrades to tickers only
+        return {}
+    return {t: (info or {}).get("shortName") or t
+            for t, info in infos.items() if (info or {}).get("shortName")}
+
+
+def _company_picker(default: str = "AAPL") -> str:
+    """Search by company name or ticker, with a free-text escape hatch.
+
+    Streamlit's selectbox filters as you type, so this behaves as a search box
+    while still showing what is available -- a bare text field gives no
+    indication of what can be looked up, or whether a symbol is even valid.
+    """
+    directory = _company_directory(_bucket())
+    known = sorted(directory)
+    labels = {t: f"{t} — {directory[t]}" for t in known}
+
+    # Anything the user has already looked at stays reachable even if it is
+    # outside the curated list.
+    try:
+        for entry in _watchlist().recent(limit=20) + _watchlist().all():
+            if entry.ticker not in labels:
+                labels[entry.ticker] = f"{entry.ticker} — {entry.name}" if entry.name else entry.ticker
+                known.append(entry.ticker)
+    except Exception:  # noqa: BLE001
+        pass
+
+    known = sorted(set(known))
+    OTHER = "Search another ticker…"
+    options = known + [OTHER]
+    previous = st.session_state.get("_co_last", default)
+    index = options.index(previous) if previous in options else (
+        options.index(default) if default in options else 0)
+
+    pick = st.selectbox(
+        "Company", options, index=index,
+        format_func=lambda t: OTHER if t == OTHER else labels.get(t, t),
+        label_visibility="collapsed",
+        help="Type to filter by company name or ticker.",
+    )
+    if pick == OTHER:
+        typed = st.text_input(
+            "Ticker", value="", placeholder="Any ticker, for example BP.L",
+            label_visibility="collapsed",
+        ).strip().upper()
+        return typed
+    return pick
+
+
 def _scan_gate(state_key: str, label: str, forced: bool = False, note: str = "") -> bool:
     """Decide whether an expensive scan should run on this page load.
 
@@ -767,15 +827,10 @@ elif page == "Company":
         "Search a company to see what its reported figures show.",
     )
 
-    query = st.text_input(
-        "Ticker", value=st.session_state.get("_co_last", "AAPL"),
-        help="US and UK tickers. UK shares usually end in .L, for example BP.L.",
-        placeholder="AAPL",
-        label_visibility="collapsed",
-    ).strip().upper()
+    query = _company_picker()
 
     if not query:
-        st.caption("Enter a ticker to begin.")
+        st.caption("Choose a company, or type a ticker to look one up.")
         st.stop()
 
     st.session_state["_co_last"] = query
@@ -817,7 +872,7 @@ elif page == "Company":
         st.markdown(
             f'<div style="font-size:1.4rem;font-weight:620;color:{theme.INK};'
             f'letter-spacing:-0.018em;line-height:1.2;">{res["name"]}</div>'
-            f'<div style="font-size:0.78rem;color:{theme.FAINT};margin-top:0.15rem;">{meta}</div>',
+            f'<div style="font-size:0.78rem;color:{theme.FAINT};margin:0.15rem 0 0.9rem 0;">{meta}</div>',
             unsafe_allow_html=True,
         )
     with right:
@@ -998,14 +1053,16 @@ elif page == "Compare":
         f"on what you are looking for."
     )
 
-    raw = st.text_input(
-        "Tickers to compare",
-        value=st.session_state.get("_cmp_last", "AAPL, MSFT"),
-        help=f"Comma separated, {MAX_COMPANIES} maximum. US and UK tickers work best.",
-        placeholder="e.g. AAPL, MSFT, GOOGL",
+    _directory = _company_directory(_bucket())
+    _options = sorted(_directory) or ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA"]
+    picked = st.multiselect(
+        "Companies to compare", _options,
+        default=[t for t in ("AAPL", "MSFT") if t in _options][:2],
+        format_func=lambda t: f"{t} — {_directory[t]}" if t in _directory else t,
+        max_selections=MAX_COMPANIES,
+        label_visibility="collapsed",
+        help="Type to filter by company name or ticker.",
     )
-    picked = [t.strip().upper() for t in raw.replace("\n", ",").split(",") if t.strip()]
-    st.session_state["_cmp_last"] = raw
 
     if len(picked) < 2:
         st.info("Enter at least two tickers to compare.")

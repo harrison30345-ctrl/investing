@@ -229,17 +229,18 @@ _CSS = f"""
   div[data-testid="stExpander"] summary:hover {{ color: {INK}; }}
 
   /* Streamlit leaves generous gaps between every element; a research page
-     should read densely, so these are pulled in. */
-  [data-testid="stVerticalBlock"] {{ gap: 0.55rem; }}
+     should read densely, so these are pulled in -- but only the flex gap.
+     Zeroing .element-container margins collapsed the space Streamlit relies
+     on and elements began overlapping each other. */
+  [data-testid="stVerticalBlock"] {{ gap: 0.65rem; }}
   [data-testid="stHorizontalBlock"] {{ gap: 1.6rem; }}
-  .element-container {{ margin-bottom: 0 !important; }}
 
   /* ── Shared components ─────────────────────────────────── */
   .bs-eyebrow {{
       font-size: 0.68rem; font-weight: 600; letter-spacing: 0.1em;
       text-transform: uppercase; color: {FAINT}; margin-bottom: 0.5rem;
   }}
-  .bs-sub {{ font-size: 0.83rem; color: {MUTED}; margin-top: 0.2rem; }}
+  .bs-sub {{ font-size: 0.83rem; color: {MUTED}; margin: 0.2rem 0 1.1rem 0; }}
 
   /* Score row: small type, quiet bar, ink not traffic lights */
   .bs-scores {{ display: flex; gap: 2.4rem; flex-wrap: wrap; margin: 0.2rem 0 0.2rem; }}
