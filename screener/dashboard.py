@@ -55,7 +55,19 @@ from services.market_data import PROVIDER_IS_LICENSED, PROVIDER_NAME, get_provid
 from services.hidden_gems import (
     GEM_GATES, MAX_ANALYSTS, METHODOLOGY_VERSION as GEM_METHODOLOGY_VERSION, assess_gem,
 )
+from services.score_history import ScoreHistory, describe_change
 from services.scoring import SCORING_VERSION, score_company
+
+
+@st.cache_resource(show_spinner=False)
+def _score_history() -> ScoreHistory:
+    """Shared append-only store of scores.
+
+    Snapshots start accruing from the first day this runs. Past scores are
+    never reconstructed -- see the module docstring in services/score_history.py
+    for why that would be fabrication rather than history.
+    """
+    return ScoreHistory()
 
 PACKAGE_DIR = Path(__file__).parent
 # Check multiple locations for config files (local dev vs Streamlit Cloud)
@@ -772,6 +784,14 @@ if page == "🔎 Company":
         st.caption("If the symbol is right, the data provider may be temporarily unavailable — try again shortly.")
         st.stop()
 
+    # Record today's score. One row per company per day; re-running overwrites
+    # today's row rather than adding another. Failing to record must never
+    # break the page a user came here to read.
+    try:
+        _score_history().record(res["score"])
+    except Exception:  # noqa: BLE001 - history is secondary to showing the research
+        pass
+
     score, expl = res["score"], res["explanation"]
     cur = {"USD": "$", "GBP": "£", "GBp": "p", "EUR": "€"}.get(res["currency"], "")
 
@@ -929,6 +949,84 @@ if page == "🔎 Company":
                 f"*Generally:* {arrow}."
             )
             st.markdown("")
+
+    # ── Score history ────────────────────────────────────────
+    # Only shown from real recorded snapshots. Nothing here is reconstructed:
+    # a past score cannot be recomputed from today's fundamentals.
+    st.markdown("---")
+    st.markdown("##### Score history")
+    try:
+        store = _score_history()
+        snapshots = store.history(query)
+        summary = store.coverage_summary()
+    except Exception:  # noqa: BLE001
+        snapshots, summary = [], {"days_of_history": 0}
+
+    if len(snapshots) < 2:
+        first_day = snapshots[0].taken_on.strftime("%d %B %Y") if snapshots else "today"
+        st.info(
+            f"**Score history starts building from {first_day}.** "
+            f"Past scores cannot be shown for earlier dates because the data source only "
+            f"provides today's financial figures — recalculating an old score from them "
+            f"would produce a number that looks like history but isn't. "
+            f"Come back after a few days of tracking and the change will appear here."
+        )
+    else:
+        cols = st.columns(4)
+        latest = snapshots[-1]
+        cols[0].markdown(
+            f'<div style="font-size:0.64rem;letter-spacing:0.1em;text-transform:uppercase;'
+            f'color:#94a3b8;">Today</div><div style="font-size:1.5rem;font-weight:800;'
+            f'color:#0d1117;">{latest.overall:.0f}</div>' if latest.overall is not None else
+            '<div style="color:#94a3b8;">Today — unavailable</div>',
+            unsafe_allow_html=True,
+        )
+        for col, days, label in ((cols[1], 30, "30 days ago"),
+                                 (cols[2], 90, "90 days ago"),
+                                 (cols[3], 365, "1 year ago")):
+            snap = store.nearest(query, days, tolerance_days=max(7, days // 5))
+            if snap is None or snap.overall is None:
+                col.markdown(
+                    f'<div style="font-size:0.64rem;letter-spacing:0.1em;'
+                    f'text-transform:uppercase;color:#94a3b8;">{label}</div>'
+                    f'<div style="font-size:0.9rem;color:#cbd5e1;margin-top:0.35rem;">'
+                    f'Not tracked yet</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                col.markdown(
+                    f'<div style="font-size:0.64rem;letter-spacing:0.1em;'
+                    f'text-transform:uppercase;color:#94a3b8;">{label}</div>'
+                    f'<div style="font-size:1.5rem;font-weight:800;color:#0d1117;">'
+                    f'{snap.overall:.0f}</div>'
+                    f'<div style="font-size:0.62rem;color:#94a3b8;">'
+                    f'actually {snap.age_days} days ago</div>',
+                    unsafe_allow_html=True,
+                )
+
+        earliest = store.nearest(query, 30, tolerance_days=400) or snapshots[0]
+        change = describe_change(latest, earliest)
+        st.markdown(f"<div style='margin-top:0.7rem;font-size:0.88rem;color:#334155;'>"
+                    f"{change['summary']}</div>", unsafe_allow_html=True)
+
+        chart_df = pd.DataFrame(
+            [{"Date": s.taken_on, "Score": s.overall}
+             for s in snapshots if s.overall is not None]
+        )
+        if len(chart_df) >= 2:
+            fig_hist = go.Figure(go.Scatter(
+                x=chart_df["Date"], y=chart_df["Score"], mode="lines+markers",
+                line=dict(color=GOLD, width=2),
+            ))
+            fig_hist.update_layout(**chart_layout(height=240, showlegend=False,
+                                                  yaxis_range=[0, 100]))
+            st.plotly_chart(fig_hist, width="stretch")
+
+    st.caption(
+        f"Tracking {summary.get('days_of_history', 0)} day(s) of score history. "
+        f"Scores are recorded when a company is researched — they are never "
+        f"back-calculated for dates before tracking began."
+    )
 
     # ── Price history ────────────────────────────────────────
     hist = res.get("history")
