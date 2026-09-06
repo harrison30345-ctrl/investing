@@ -373,6 +373,11 @@ _CSS = f"""
   @media (max-width: 560px) {{
       .bs-row {{ grid-template-columns: 54px 1fr auto; }}
       .bs-score-value {{ font-size: 1.1rem; }}
+      /* Tables scroll rather than squash or overflow the page. */
+      div[data-testid="stDataFrame"] {{ overflow-x: auto; }}
+      /* Streamlit stacks columns below 640px; remove the gap that leaves. */
+      [data-testid="stHorizontalBlock"] {{ gap: 0.4rem; }}
+      .block-container {{ padding: 1rem 0.9rem 2.5rem 0.9rem; }}
   }}
   @media (prefers-reduced-motion: reduce) {{
       * {{ transition: none !important; animation: none !important; }}
