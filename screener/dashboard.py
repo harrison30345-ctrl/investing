@@ -100,13 +100,14 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Page config ──────────────────────────────────────────────
 st.set_page_config(
-    page_title="Barry's Investor Square",
+    page_title="The Investor Square",
     page_icon="♜",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 theme.inject()
+theme.hover_to_open_sidebar()
 
 
 
@@ -290,61 +291,72 @@ def _research(ticker: str, bucket: int) -> dict:
 
 @st.cache_data(persist="disk", show_spinner=False)
 def _company_directory(bucket: int) -> dict:
-    """Ticker -> company name for the searchable picker.
+    """Ticker -> company name, for labelling the picker.
 
-    Built from the curated universe's cached batch info, which the Overview
-    already fetches, so in practice this is served from cache rather than
-    costing another round of provider calls.
+    Names are a nicety. The picker's option list is built from the universe
+    itself, never from this map: an earlier version listed only tickers whose
+    name had come back from the provider, so any ticker with missing info
+    silently disappeared from search -- AMAT among them.
     """
     try:
-        tickers = get_universe("all_curated")
-        infos = _batch_info(tuple(tickers))
+        infos = _batch_info(tuple(get_universe("all_curated")))
     except Exception:  # noqa: BLE001 - the picker degrades to tickers only
         return {}
-    return {t: (info or {}).get("shortName") or t
+    return {t: (info or {}).get("shortName") or ""
             for t, info in infos.items() if (info or {}).get("shortName")}
 
 
-def _company_picker(default: str = "AAPL") -> str:
-    """Search by company name or ticker, with a free-text escape hatch.
-
-    Streamlit's selectbox filters as you type, so this behaves as a search box
-    while still showing what is available -- a bare text field gives no
-    indication of what can be looked up, or whether a symbol is even valid.
-    """
-    directory = _company_directory(_bucket())
-    known = sorted(directory)
-    labels = {t: f"{t} — {directory[t]}" for t in known}
-
-    # Anything the user has already looked at stays reachable even if it is
-    # outside the curated list.
+def _searchable_tickers() -> list:
+    """Every ticker that can be looked up, plus anything the user has viewed."""
+    tickers = set()
+    for universe in ("broad", "all_curated", "t212"):
+        try:
+            tickers.update(get_universe(universe))
+        except Exception:  # noqa: BLE001
+            continue
     try:
-        for entry in _watchlist().recent(limit=20) + _watchlist().all():
-            if entry.ticker not in labels:
-                labels[entry.ticker] = f"{entry.ticker} — {entry.name}" if entry.name else entry.ticker
-                known.append(entry.ticker)
+        wl = _watchlist()
+        tickers.update(e.ticker for e in wl.all())
+        tickers.update(e.ticker for e in wl.recent(limit=30))
     except Exception:  # noqa: BLE001
         pass
+    return sorted(tickers)
 
-    known = sorted(set(known))
+
+def _label_for(ticker: str, directory: dict) -> str:
+    name = directory.get(ticker)
+    return f"{ticker} — {name}" if name else ticker
+
+
+def _company_picker(default: str = "AAPL") -> str:
+    """Search by ticker or company name.
+
+    Options come from the full universe so nothing is missing, and the ticker
+    leads each label so typing a symbol matches at the start of the string
+    rather than somewhere in the middle of a company name.
+    """
+    directory = _company_directory(_bucket())
+    options = _searchable_tickers()
+    if not options:
+        options = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
+
     OTHER = "Search another ticker…"
-    options = known + [OTHER]
+    options = options + [OTHER]
     previous = st.session_state.get("_co_last", default)
     index = options.index(previous) if previous in options else (
         options.index(default) if default in options else 0)
 
     pick = st.selectbox(
         "Company", options, index=index,
-        format_func=lambda t: OTHER if t == OTHER else labels.get(t, t),
+        format_func=lambda t: OTHER if t == OTHER else _label_for(t, directory),
         label_visibility="collapsed",
-        help="Type to filter by company name or ticker.",
+        help="Type a ticker or company name to filter.",
     )
     if pick == OTHER:
-        typed = st.text_input(
+        return st.text_input(
             "Ticker", value="", placeholder="Any ticker, for example BP.L",
             label_visibility="collapsed",
         ).strip().upper()
-        return typed
     return pick
 
 
@@ -592,7 +604,7 @@ def metric_card(label, value, col, hot=False):
 st.sidebar.markdown("""
 <div style="padding:0.2rem 0.55rem 1.1rem 0.55rem;">
     <div style="font-size:0.95rem; font-weight:620; color:#e8eaef; letter-spacing:-0.01em;">
-        Investor Square</div>
+        The Investor Square</div>
     <div style="font-size:0.62rem; font-weight:500; letter-spacing:0.16em;
                 text-transform:uppercase; color:#7b8394; margin-top:0.2rem;">Equity research</div>
 </div>
@@ -1054,11 +1066,11 @@ elif page == "Compare":
     )
 
     _directory = _company_directory(_bucket())
-    _options = sorted(_directory) or ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA"]
+    _options = _searchable_tickers() or ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA"]
     picked = st.multiselect(
         "Companies to compare", _options,
         default=[t for t in ("AAPL", "MSFT") if t in _options][:2],
-        format_func=lambda t: f"{t} — {_directory[t]}" if t in _directory else t,
+        format_func=lambda t: _label_for(t, _directory),
         max_selections=MAX_COMPANIES,
         label_visibility="collapsed",
         help="Type to filter by company name or ticker.",

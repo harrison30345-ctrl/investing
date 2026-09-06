@@ -24,9 +24,10 @@ Rules this module enforces:
 from __future__ import annotations
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 __all__ = [
-    "inject", "page_header", "section", "score_row", "stat_grid",
+    "inject", "hover_to_open_sidebar", "page_header", "section", "score_row", "stat_grid",
     "two_column_list", "hairline", "chart_layout_quiet",
     "INK", "MUTED", "FAINT", "RULE", "BRASS", "POSITIVE", "NEGATIVE", "WARNING",
     "PAPER", "SURFACE", "NAVY",
@@ -430,3 +431,64 @@ def chart_layout_quiet(**kwargs) -> dict:
     )
     layout.update(kwargs)
     return layout
+
+def hover_to_open_sidebar() -> None:
+    """Open the collapsed sidebar on hover, without needing a click.
+
+    Implemented by clicking Streamlit's own expand control when the pointer
+    enters it or the left edge of the window. Doing it this way changes the
+    real sidebar state, so the page reflows correctly -- a CSS-only reveal
+    would slide a clipped, non-interactive copy over the content.
+
+    Runs inside a components iframe and reaches into the parent document, which
+    is same-origin. If that access is ever blocked the guard below simply does
+    nothing and clicking still works.
+    """
+    components.html(
+        """
+        <script>
+        (function () {
+          let doc;
+          try { doc = window.parent.document; } catch (e) { return; }
+          if (!doc || doc.getElementById('bs-hover-open')) return;
+
+          const marker = doc.createElement('div');
+          marker.id = 'bs-hover-open';
+          marker.style.display = 'none';
+          doc.body.appendChild(marker);
+
+          const expand = () => {
+            const btn = doc.querySelector('[data-testid="stExpandSidebarButton"] button')
+                     || doc.querySelector('[data-testid="stExpandSidebarButton"]');
+            if (btn) btn.click();
+          };
+
+          // A narrow strip down the left edge. Only live while the sidebar is
+          // closed, so it never sits over the page or the open sidebar.
+          const strip = doc.createElement('div');
+          Object.assign(strip.style, {
+            position: 'fixed', left: '0', top: '0', width: '14px', height: '100vh',
+            zIndex: '998', background: 'transparent', pointerEvents: 'auto',
+          });
+          strip.addEventListener('mouseenter', expand);
+          doc.body.appendChild(strip);
+
+          const sync = () => {
+            const sb = doc.querySelector('[data-testid="stSidebar"]');
+            const closed = sb && sb.getAttribute('aria-expanded') === 'false';
+            strip.style.pointerEvents = closed ? 'auto' : 'none';
+            const btn = doc.querySelector('[data-testid="stExpandSidebarButton"]');
+            if (btn && !btn.dataset.bsHover) {
+              btn.dataset.bsHover = '1';
+              btn.addEventListener('mouseenter', expand);
+            }
+          };
+          sync();
+          new MutationObserver(sync).observe(doc.body, {
+            attributes: true, subtree: true, attributeFilter: ['aria-expanded'],
+          });
+        })();
+        </script>
+        """,
+        height=0,
+    )
