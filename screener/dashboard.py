@@ -640,78 +640,80 @@ if page == "Overview":
             "Modestly valued": top("valuation", "Trading on lower multiples"),
         }
 
-    if st.session_state.get("_ov_loaded") or st.button("Load today's lists"):
-        st.session_state["_ov_loaded"] = True
-        with st.spinner(""):
-            try:
-                picks = _overview_picks(_bucket())
-            except Exception:  # noqa: BLE001
-                picks = {}
-        if not picks:
-            st.caption("Unable to load lists right now.")
-        else:
-            cols = st.columns(3)
-            for col, (heading, rows) in zip(cols, picks.items()):
-                with col:
-                    st.markdown(f'<div class="bs-eyebrow">{heading}</div>', unsafe_allow_html=True)
-                    if not rows:
-                        st.caption("Nothing met the threshold.")
-                        continue
-                    st.markdown("".join(
-                        f'<div class="bs-row">'
-                        f'<div class="bs-row-t">{r["ticker"]}</div>'
-                        f'<div><div class="bs-row-n">{r["name"]}</div>'
-                        f'<div class="bs-row-r">{r["detail"]}</div></div>'
-                        f'<div class="bs-row-s">{r["score"]:.0f}</div></div>'
-                        for r in rows
-                    ), unsafe_allow_html=True)
-                    st.caption(rows[0]["reason"])
-            st.caption(
-                "Highest scoring on our methodology within a curated universe. "
-                "Not recommendations."
-            )
+    # Loads on arrival rather than behind a button: an overview that shows
+    # nothing until clicked fails at being an overview. The result is cached to
+    # disk per six-hour bucket, so only the first visit in a window pays for it.
+    with st.spinner(""):
+        try:
+            picks = _overview_picks(_bucket())
+        except Exception:  # noqa: BLE001
+            picks = {}
+    if not picks:
+        st.caption("Unable to load lists right now.")
     else:
+        cols = st.columns(3, gap="large")
+        for col, (heading, rows) in zip(cols, picks.items()):
+            with col:
+                st.markdown(f'<div class="bs-eyebrow">{heading}</div>', unsafe_allow_html=True)
+                if not rows:
+                    st.caption("Nothing met the threshold.")
+                    continue
+                st.markdown("".join(
+                    f'<div class="bs-row">'
+                    f'<div class="bs-row-t">{r["ticker"]}</div>'
+                    f'<div><div class="bs-row-n">{r["name"]}</div>'
+                    f'<div class="bs-row-r">{r["detail"]}</div></div>'
+                    f'<div class="bs-row-s">{r["score"]:.0f}</div></div>'
+                    for r in rows
+                ), unsafe_allow_html=True)
+                st.caption(rows[0]["reason"])
         st.caption(
-            "Lists are scored on demand from live data. Loading takes a moment."
+            "Highest scoring on our methodology within a curated universe. "
+            "Not recommendations."
         )
 
-    # ── Watchlist ────────────────────────────────────────────
-    theme.section("Watchlist")
+    # ── Watchlist beside recently viewed ─────────────────────
+    wl_col, recent_col = st.columns([1.6, 1], gap="large")
+    with wl_col:
+        theme.section("Watchlist")
     try:
         wl = _watchlist()
         entries = wl.all()
     except Exception:  # noqa: BLE001
         entries = []
 
-    if not entries:
-        st.caption("Nothing saved. Add companies from the Company page.")
-    else:
-        rows_html = []
-        for entry in entries[:10]:
-            snap = None
-            try:
-                snap = _score_history().latest(entry.ticker)
-            except Exception:  # noqa: BLE001
-                pass
-            score_txt = "—" if snap is None or snap.overall is None else f"{snap.overall:.0f}"
-            rows_html.append(
-                f'<div class="bs-row"><div class="bs-row-t">{entry.ticker}</div>'
-                f'<div class="bs-row-n">{(entry.name or "")[:40]}</div>'
-                f'<div class="bs-row-s">{score_txt}</div></div>'
-            )
-        st.markdown("".join(rows_html), unsafe_allow_html=True)
-        if len(entries) > 10:
-            st.caption(f"And {len(entries) - 10} more.")
+    with wl_col:
+        if not entries:
+            st.caption("Nothing saved. Add companies from the Company page.")
+        else:
+            rows_html = []
+            for entry in entries[:10]:
+                snap = None
+                try:
+                    snap = _score_history().latest(entry.ticker)
+                except Exception:  # noqa: BLE001
+                    pass
+                score_txt = "—" if snap is None or snap.overall is None else f"{snap.overall:.0f}"
+                rows_html.append(
+                    f'<div class="bs-row"><div class="bs-row-t">{entry.ticker}</div>'
+                    f'<div class="bs-row-n">{(entry.name or "")[:40]}</div>'
+                    f'<div class="bs-row-s">{score_txt}</div></div>'
+                )
+            st.markdown("".join(rows_html), unsafe_allow_html=True)
+            if len(entries) > 10:
+                st.caption(f"And {len(entries) - 10} more.")
 
-    # ── Recently viewed ──────────────────────────────────────
-    try:
-        recent = _watchlist().recent(limit=8)
-    except Exception:  # noqa: BLE001
-        recent = []
-    if recent:
+    with recent_col:
         theme.section("Recently viewed")
-        st.markdown(" ".join(f'<span class="bs-tag">{e.ticker}</span>' for e in recent),
-                    unsafe_allow_html=True)
+        try:
+            recent = _watchlist().recent(limit=10)
+        except Exception:  # noqa: BLE001
+            recent = []
+        if recent:
+            st.markdown(" ".join(f'<span class="bs-tag">{e.ticker}</span>' for e in recent),
+                        unsafe_allow_html=True)
+        else:
+            st.caption("Companies you look at will appear here.")
 
     # ── One concept ──────────────────────────────────────────
     theme.section("Briefly")
@@ -860,10 +862,23 @@ elif page == "Company":
         (c.label, c.score if c.available else None) for c in score.categories.values()
     ])
 
-    # ── Summary ──────────────────────────────────────────────
-    theme.section("Summary")
-    st.markdown(f'<div style="font-size:0.9rem;color:{theme.MUTED};line-height:1.65;'
-                f'max-width:70ch;">{expl["summary"]}</div>', unsafe_allow_html=True)
+    # ── Summary alongside the numbers it describes ───────────
+    sum_col, snap_col = st.columns([1.25, 1], gap="large")
+    with sum_col:
+        theme.section("Summary")
+        st.markdown(f'<div style="font-size:0.9rem;color:{theme.MUTED};line-height:1.62;">'
+                    f'{expl["summary"]}</div>', unsafe_allow_html=True)
+    with snap_col:
+        theme.section("Financial snapshot")
+        _snapshot = []
+        for _cat in score.categories.values():
+            for _m in _cat.metrics:
+                _h = GLOSSARY.get(_m.field)
+                if not _h:
+                    continue
+                _snapshot.append((_h["label"],
+                                  format_value(_m.field, _m.raw) if _m.available else None))
+        theme.stat_grid(_snapshot[:8])
 
     # ── Strengths / risks ────────────────────────────────────
     def _trim(items):
@@ -879,17 +894,9 @@ elif page == "Company":
     theme.two_column_list("Key strengths", _trim(expl["strengths"][:4]),
                           "Risks to monitor", _trim(expl["concerns"][:4]))
 
-    # ── Financial snapshot ───────────────────────────────────
-    theme.section("Financial snapshot")
-    snapshot = []
-    for cat in score.categories.values():
-        for metric in cat.metrics:
-            help_ = GLOSSARY.get(metric.field)
-            if not help_:
-                continue
-            snapshot.append((help_["label"],
-                             format_value(metric.field, metric.raw) if metric.available else None))
-    theme.stat_grid(snapshot)
+    if len(_snapshot) > 8:
+        theme.section("Further measures")
+        theme.stat_grid(_snapshot[8:])
 
     # ── Deeper detail, behind a click ────────────────────────
     st.markdown("<div style='height:1.4rem;'></div>", unsafe_allow_html=True)

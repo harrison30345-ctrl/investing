@@ -58,8 +58,8 @@ _CSS = f"""
   .stApp {{ background: {PAPER}; }}
   .block-container {{
       background: {PAPER};
-      max-width: 1180px;
-      padding: 2.2rem 2.6rem 5rem 2.6rem;
+      max-width: 1320px;
+      padding: 1.5rem 2.2rem 3rem 2.2rem;
   }}
 
   /* ── Streamlit chrome ──────────────────────────────────── */
@@ -93,6 +93,19 @@ _CSS = f"""
   /* Keep the collapse arrow inside the sidebar reachable too. */
   [data-testid="stSidebarCollapseButton"] {{ visibility: visible !important; }}
 
+  /* Guarantee the expand control is on-screen whenever the sidebar is closed.
+     A collapsed sidebar that cannot be reopened strands the user with no
+     navigation, so this is pinned rather than left to the default layout. */
+  [data-testid="stExpandSidebarButton"] {{
+      position: fixed !important; top: 0.55rem !important; left: 0.6rem !important;
+      z-index: 999 !important; visibility: visible !important; opacity: 1 !important;
+      pointer-events: auto !important;
+  }}
+  [data-testid="stExpandSidebarButton"] button {{
+      background: {SURFACE} !important; border: 1px solid {RULE} !important;
+      border-radius: 3px !important; color: {MUTED} !important;
+  }}
+
   /* ── Headings ──────────────────────────────────────────── */
   h1 {{
       font-size: 1.5rem !important; font-weight: 620 !important;
@@ -102,12 +115,12 @@ _CSS = f"""
   h2 {{
       font-size: 1.05rem !important; font-weight: 600 !important;
       color: {INK} !important; letter-spacing: -0.01em !important;
-      margin: 2.4rem 0 0.7rem 0 !important;
+      margin: 1.6rem 0 0.55rem 0 !important;
   }}
   h3, h4, h5 {{
       font-size: 0.72rem !important; font-weight: 600 !important;
       letter-spacing: 0.09em !important; text-transform: uppercase !important;
-      color: {FAINT} !important; margin: 2.2rem 0 0.75rem 0 !important;
+      color: {FAINT} !important; margin: 1.5rem 0 0.6rem 0 !important;
   }}
   .stMarkdown p {{ color: {MUTED}; font-size: 0.875rem; line-height: 1.62; }}
   .stCaption, small, [data-testid="stCaptionContainer"] p {{
@@ -115,7 +128,7 @@ _CSS = f"""
   }}
 
   /* ── Rules replace most cards ──────────────────────────── */
-  hr {{ border: none; border-top: 1px solid {RULE}; margin: 2.2rem 0 1.6rem 0; }}
+  hr {{ border: none; border-top: 1px solid {RULE}; margin: 1.5rem 0 1.1rem 0; }}
 
   /* ── Sidebar ───────────────────────────────────────────── */
   section[data-testid="stSidebar"] {{
@@ -214,6 +227,12 @@ _CSS = f"""
   }}
   div[data-testid="stExpander"] summary {{ font-size: 0.82rem !important; color: {MUTED}; }}
   div[data-testid="stExpander"] summary:hover {{ color: {INK}; }}
+
+  /* Streamlit leaves generous gaps between every element; a research page
+     should read densely, so these are pulled in. */
+  [data-testid="stVerticalBlock"] {{ gap: 0.55rem; }}
+  [data-testid="stHorizontalBlock"] {{ gap: 1.6rem; }}
+  .element-container {{ margin-bottom: 0 !important; }}
 
   /* ── Shared components ─────────────────────────────────── */
   .bs-eyebrow {{
@@ -338,7 +357,7 @@ def section(label: str) -> None:
 
 
 def hairline() -> None:
-    st.markdown(f'<div style="border-top:1px solid {RULE};margin:2rem 0 1.4rem;"></div>',
+    st.markdown(f'<div style="border-top:1px solid {RULE};margin:1.4rem 0 1rem;"></div>',
                 unsafe_allow_html=True)
 
 
