@@ -55,6 +55,7 @@ from services.market_data import PROVIDER_IS_LICENSED, PROVIDER_NAME, get_provid
 from services.hidden_gems import (
     GEM_GATES, MAX_ANALYSTS, METHODOLOGY_VERSION as GEM_METHODOLOGY_VERSION, assess_gem,
 )
+from services.momentum import assess_momentum
 from services.score_history import ScoreHistory, describe_change
 from services.scoring import SCORING_VERSION, score_company
 
@@ -1134,30 +1135,35 @@ elif page == "🔥 Momentum":
                     sma20  = float(closes.rolling(20).mean().iloc[-1]) if len(closes) >= 20 else price_now
                     vs_sma = (price_now - sma20) / sma20 * 100
 
-                    info   = all_info.get(ticker, {})
-                    rec    = info.get("recommendationMean")
-                    analyst_score = max(0, min(100, (5 - float(rec)) / 4 * 100)) if rec else 50.0
+                    info = all_info.get(ticker, {})
 
-                    week_score  = min(100, max(0, (week_chg + 10) / 30 * 100))
-                    vol_score   = min(100, max(0, (vol_surge - 0.5) / 2.5 * 100))
-                    rsi_score   = min(100, max(0, (rsi - 30) / 50 * 100))
-                    sma_score   = min(100, max(0, (vs_sma + 5) / 20 * 100))
-                    hot_score   = (
-                        week_score    * 0.35 + vol_score * 0.20 +
-                        rsi_score     * 0.20 + sma_score * 0.15 +
-                        analyst_score * 0.10
+                    # Price momentum and business quality are computed
+                    # separately and never averaged. See services/momentum.py.
+                    research = score_company(
+                        ticker, _fundamentals_from_info(info, hist), info.get("sector"),
+                    )
+                    mom = assess_momentum(
+                        ticker, info.get("shortName", ticker)[:32],
+                        {"chg_1w": week_chg, "chg_1m": month_chg,
+                         "vs_sma20": vs_sma, "vol_surge": vol_surge},
+                        research,
                     )
 
                     rows.append({
                         "ticker":        ticker,
+                        "name":          info.get("shortName", ticker)[:32],
                         "price":         round(price_now, 2),
                         "week_chg":      round(week_chg, 2),
                         "month_chg":     round(month_chg, 2),
                         "vol_surge":     round(vol_surge, 2),
                         "rsi":           round(rsi, 1),
                         "vs_sma20":      round(vs_sma, 2),
-                        "analyst_score": round(analyst_score, 0),
-                        "hot_score":     round(hot_score, 1),
+                        "momentum":      mom.momentum,
+                        "fundamentals":  mom.fundamentals,
+                        "fund_conf":     mom.fundamentals_confidence,
+                        "profile":       mom.profile_label,
+                        "profile_key":   mom.profile_key,
+                        "profile_note":  mom.profile_note,
                     })
                 except Exception:
                     continue
@@ -1166,7 +1172,8 @@ elif page == "🔥 Momentum":
             if not rows:
                 st.warning("No data returned. Check your tickers and try again.")
                 st.stop()
-            hot_df = pd.DataFrame(rows).sort_values("hot_score", ascending=False).reset_index(drop=True)
+            hot_df = (pd.DataFrame(rows).dropna(subset=["momentum"])
+                        .sort_values("momentum", ascending=False).reset_index(drop=True))
             st.session_state[cache_key] = hot_df
 
     hot_df = st.session_state.get(cache_key)
@@ -1184,18 +1191,50 @@ elif page == "🔥 Momentum":
     top_hot = hot_df.head(hot_top_n)
 
     # ── Summary cards ────────────────────────────────────────
-    st.markdown("### This week's top movers")
+    st.markdown("### Largest recent price moves")
+    st.caption(
+        "Two separate scores. **Momentum** describes what the share price has done. "
+        "**Business** is the research score for the company itself. A stock can move "
+        "sharply while the business behind it scores poorly — so they are never combined."
+    )
     cols = st.columns(5)
     for i, row in top_hot.head(5).iterrows():
         arrow = "▲" if row["week_chg"] >= 0 else "▼"
         col_cls = "up" if row["week_chg"] >= 0 else "down"
+        fund = row["fundamentals"]
+        fund_txt = "—" if pd.isna(fund) else f"{fund:.0f}"
+        fund_col = ("#94a3b8" if pd.isna(fund)
+                    else "#16a34a" if fund >= 60 else "#dc2626" if fund < 45 else "#b8960c")
         cols[i % 5].markdown(
             f'<div class="hot-card">'
             f'<h3>{row["ticker"]}</h3>'
             f'<p><span class="{col_cls}">{arrow} {row["week_chg"]:+.1f}%</span></p>'
-            f'<small style="color:#a0a0b0">Score: {row["hot_score"]:.0f} &nbsp;|&nbsp; RSI: {row["rsi"]:.0f} &nbsp;|&nbsp; Vol: {row["vol_surge"]:.1f}x</small>'
+            f'<div style="display:flex;gap:0.9rem;margin:0.3rem 0 0.35rem;">'
+            f'  <div><div style="font-size:0.58rem;letter-spacing:0.08em;color:#94a3b8;">MOMENTUM</div>'
+            f'  <b style="font-size:1rem;color:#b8960c;">{row["momentum"]:.0f}</b></div>'
+            f'  <div><div style="font-size:0.58rem;letter-spacing:0.08em;color:#94a3b8;">BUSINESS</div>'
+            f'  <b style="font-size:1rem;color:{fund_col};">{fund_txt}</b></div>'
+            f'</div>'
+            f'<small style="color:#64748b;font-size:0.66rem;">{row["profile"]}</small>'
             f'</div>',
             unsafe_allow_html=True,
+        )
+
+    # Flag the case the old single score hid entirely.
+    momentum_only = top_hot[top_hot["profile_key"] == "momentum_only"]
+    if not momentum_only.empty:
+        st.warning(
+            f"**{len(momentum_only)} of these have risen on price alone.** "
+            f"{', '.join(momentum_only['ticker'].tolist())} score poorly on the business "
+            f"measures despite the price move. Price movement on its own says nothing "
+            f"about the quality of a company."
+        )
+    unknown = top_hot[top_hot["profile_key"] == "momentum_unknown"]
+    if not unknown.empty:
+        st.info(
+            f"**{len(unknown)} could not be assessed as businesses** "
+            f"({', '.join(unknown['ticker'].tolist())}) — too little financial data was "
+            f"available. Their momentum figure describes the price only."
         )
 
     st.markdown("---")
@@ -1209,7 +1248,7 @@ elif page == "🔥 Momentum":
         "ticker": "Ticker", "price": "Price ($)", "week_chg": "Week %",
         "month_chg": "Month %", "vol_surge": "Vol Surge",
         "rsi": "RSI (14)", "vs_sma20": "vs SMA20 %",
-        "analyst_score": "Analyst Score", "hot_score": "🔥 Hot Score",
+        "momentum": "Momentum", "fundamentals": "Business", "profile": "Profile",
     })
 
     st.dataframe(display_hot, hide_index=True, width="stretch")
@@ -1264,9 +1303,10 @@ elif page == "🔥 Momentum":
 
     # ── Score breakdown ───────────────────────────────────────
     st.markdown("---")
-    st.markdown("### Hot Score breakdown — what's driving the rankings")
-    score_components = ["week_chg", "vol_surge", "rsi", "vs_sma20", "analyst_score"]
-    comp_labels      = ["Week change %", "Volume surge", "RSI (14)", "vs SMA20 %", "Analyst score"]
+    st.markdown("### What is driving the momentum score")
+    st.caption("Price and volume only. Analyst opinion and company fundamentals are deliberately excluded from this score.")
+    score_components = ["week_chg", "month_chg", "vol_surge", "vs_sma20"]
+    comp_labels      = ["Week change %", "Month change %", "Volume surge", "vs SMA20 %"]
 
     fig3 = go.Figure()
     colors3 = PALETTE
