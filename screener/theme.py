@@ -65,8 +65,33 @@ _CSS = f"""
   /* ── Streamlit chrome ──────────────────────────────────── */
   #MainMenu, footer, header [data-testid="stToolbar"] {{ visibility: hidden; }}
   [data-testid="stDecoration"] {{ display: none; }}
-  [data-testid="stHeader"] {{ background: transparent; height: 0; }}
   .stDeployButton {{ display: none; }}
+
+  /* The header is made transparent but NOT zero-height: the control that
+     reopens a collapsed sidebar lives inside it. Collapsing the header hid
+     that control, so once the sidebar closed there was no way to bring it
+     back. Keep it present and out of the way instead. */
+  [data-testid="stHeader"] {{
+      background: transparent; height: auto; min-height: 0;
+      pointer-events: none;
+  }}
+  [data-testid="stHeader"] > * {{ pointer-events: auto; }}
+
+  /* Make the reopen control clearly visible against the page. */
+  [data-testid="stSidebarCollapsedControl"] {{
+      pointer-events: auto !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+  }}
+  [data-testid="stSidebarCollapsedControl"] button {{
+      background: {SURFACE} !important; border: 1px solid {RULE} !important;
+      border-radius: 3px !important; color: {MUTED} !important;
+  }}
+  [data-testid="stSidebarCollapsedControl"] button:hover {{
+      border-color: #cfcabf !important; color: {INK} !important;
+  }}
+  /* Keep the collapse arrow inside the sidebar reachable too. */
+  [data-testid="stSidebarCollapseButton"] {{ visibility: visible !important; }}
 
   /* ── Headings ──────────────────────────────────────────── */
   h1 {{
@@ -96,8 +121,12 @@ _CSS = f"""
   section[data-testid="stSidebar"] {{
       background: {NAVY};
       border-right: none;
-      width: 232px !important;
   }}
+  /* Width is set on the inner content, never on the sidebar element itself.
+     Streamlit sets an inline width on that element to collapse it; overriding
+     it with !important left the sidebar half-collapsed and pushed its own
+     reopen control off-screen, so once it closed there was no way back. */
+  section[data-testid="stSidebar"] > div:first-child {{ min-width: 210px; }}
   section[data-testid="stSidebar"] > div {{ padding-top: 1.4rem; }}
   section[data-testid="stSidebar"] * {{ color: #aeb5c2; }}
   section[data-testid="stSidebar"] .stRadio label {{
