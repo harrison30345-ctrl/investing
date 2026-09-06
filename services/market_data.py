@@ -44,6 +44,8 @@ class CompanySnapshot:
     name: str
     sector: str | None
     industry: str | None
+    exchange: str | None
+    description: str | None
     currency: str | None
     price: float | None
     fundamentals: dict[str, Any]
@@ -104,14 +106,16 @@ class YFinanceProvider(MarketDataProvider):
             tk = yf.Ticker(ticker)
             info = tk.info or {}
         except Exception as exc:
-            return CompanySnapshot(ticker, ticker, None, None, None, None, {}, None,
-                                   now, f"Could not reach the data provider ({type(exc).__name__}).")
+            return CompanySnapshot(ticker, ticker, None, None, None, None, None, None,
+                                   {}, None, now,
+                                   f"Could not reach the data provider ({type(exc).__name__}).")
 
         hist = self.get_history(ticker, "1y")
         if hist is None or not info.get("shortName"):
             return CompanySnapshot(ticker, info.get("shortName") or ticker,
                                    info.get("sector"), info.get("industry"),
-                                   info.get("currency"), None, {}, None, now,
+                                   info.get("exchange"), None, info.get("currency"),
+                                   None, {}, None, now,
                                    f"No data found for {ticker}. Check the symbol is correct.")
 
         closes = hist["Close"].dropna()
@@ -147,6 +151,11 @@ class YFinanceProvider(MarketDataProvider):
             name=info.get("shortName") or ticker,
             sector=info.get("sector"),
             industry=info.get("industry"),
+            exchange=info.get("exchange"),
+            # The provider's own profile text, passed through unaltered. Never
+            # rewritten or summarised: a description of what a company does is
+            # a factual claim, and paraphrasing it invites inventing things.
+            description=(info.get("longBusinessSummary") or "").strip() or None,
             currency=info.get("currency"),
             price=price,
             fundamentals=fundamentals,

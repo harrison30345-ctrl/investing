@@ -27,9 +27,11 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 __all__ = [
-    "inject", "hover_to_open_sidebar", "metric_table", "list_rows",
-    "action_row", "info_dot", "page_header", "section", "score_row", "stat_grid",
-    "two_column_list", "hairline", "chart_layout_quiet",
+    "inject", "hover_to_open_sidebar",
+    "page_header", "section", "hairline",
+    "score_row", "stat_grid", "two_column_list", "metric_table", "list_rows",
+    "discover_rows", "score_indicator", "confidence_badge", "company_header",
+    "chart_layout_quiet",
     "INK", "MUTED", "FAINT", "RULE", "BRASS", "POSITIVE", "NEGATIVE", "WARNING",
     "PAPER", "SURFACE", "NAVY",
 ]
@@ -357,6 +359,69 @@ _CSS = f"""
   }}
   .bs-rd {{ font-size: 0.72rem; font-weight: 600; margin-left: 0.4rem; }}
 
+  /* Discover results table: rules, not gridlines */
+  .bs-dtable {{ margin-top: 0.3rem; }}
+  .bs-dhead, .bs-drow {{
+      display: grid;
+      grid-template-columns: minmax(0,3.2fr) 62px repeat(4, 74px) 92px;
+      align-items: center; gap: 0 0.5rem;
+  }}
+  .bs-dhead {{
+      font-size: 0.66rem; letter-spacing: 0.07em; text-transform: uppercase;
+      color: {FAINT}; padding: 0 0.6rem 0.5rem; border-bottom: 1px solid {INK};
+  }}
+  .bs-dhead span:not(:first-child), .bs-drow > span:not(.bs-dco) {{ text-align: right; }}
+  .bs-drow {{
+      padding: 0.62rem 0.6rem; border-bottom: 1px solid {RULE};
+      text-decoration: none !important; color: inherit !important;
+      transition: background 0.12s ease;
+  }}
+  .bs-drow:hover {{ background: #f2efe9; }}
+  .bs-drow:focus-visible {{ outline: 2px solid {BRASS}; outline-offset: -2px; }}
+  .bs-dco {{ display: block; min-width: 0; }}
+  .bs-dco b {{
+      display: block; font-size: 0.88rem; font-weight: 620; color: {INK};
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }}
+  .bs-dco em {{
+      display: block; font-style: normal; font-size: 0.73rem; color: {FAINT};
+      margin-top: 0.05rem;
+  }}
+  .bs-dco i {{
+      display: block; font-style: normal; font-size: 0.78rem; color: {MUTED};
+      margin-top: 0.15rem;
+  }}
+  .bs-dscore {{
+      font-size: 1.05rem; font-weight: 680; color: {INK};
+      font-variant-numeric: tabular-nums;
+  }}
+  .bs-cell {{
+      font-size: 0.85rem; color: {INK}; font-variant-numeric: tabular-nums;
+      display: inline-block;
+  }}
+  .bs-cell.na {{ color: {FAINT}; }}
+  .bs-mini {{
+      display: block; height: 2px; width: var(--mw, 42px); background: {RULE};
+      margin: 0.22rem 0 0 auto; position: relative;
+  }}
+  .bs-mini::after {{
+      content: ""; position: absolute; right: 0; top: 0; height: 2px;
+      width: var(--w, 0%); background: {BRASS};
+  }}
+  .bs-conf {{
+      display: inline-block; font-size: 0.68rem; font-weight: 600;
+      padding: 0.12rem 0.42rem; border-radius: 2px; border: 1px solid {RULE};
+  }}
+  .bs-conf-high {{ color: {INK}; background: #f1eee7; }}
+  .bs-conf-moderate {{ color: {WARNING}; background: #f6f1e4; }}
+  .bs-conf-low {{ color: {FAINT}; background: transparent; }}
+
+  /* Company header */
+  .bs-chead {{ display: flex; justify-content: space-between; align-items: flex-start; gap: 1.5rem; }}
+  .bs-chname {{ font-size: 1.45rem; font-weight: 680; color: {INK}; letter-spacing: -0.02em; line-height: 1.15; }}
+  .bs-chmeta {{ font-size: 0.78rem; color: {FAINT}; margin-top: 0.2rem; }}
+  .bs-chprice {{ font-size: 1.3rem; font-weight: 650; color: {INK}; font-variant-numeric: tabular-nums; white-space: nowrap; }}
+
   /* ── Responsive ────────────────────────────────────────── */
   @media (max-width: 900px) {{
       .block-container {{ padding: 1.4rem 1.1rem 3rem 1.1rem; }}
@@ -365,6 +430,18 @@ _CSS = f"""
       .bs-score {{ min-width: 72px; }}
       .bs-stats {{ grid-template-columns: 1fr; gap: 0; }}
       .bs-mtable {{ grid-template-columns: 1fr !important; column-gap: 0; }}
+      .bs-dhead {{ display: none; }}
+      .bs-drow {{
+          grid-template-columns: 1fr auto; gap: 0.15rem 0.6rem;
+          padding: 0.75rem 0.4rem;
+      }}
+      .bs-drow > span:not(.bs-dco):not(.bs-dscore) {{
+          text-align: left; margin-top: 0.2rem;
+      }}
+      .bs-dco {{ grid-column: 1; }}
+      .bs-dscore {{ grid-column: 2; grid-row: 1; font-size: 1.15rem; }}
+      .bs-drow > .bs-cell {{ grid-column: 1 / -1; display: inline-block; margin-right: 0.9rem; }}
+      .bs-mini {{ margin-left: 0; }}
       .bs-lrow {{ grid-template-columns: 58px 1fr auto; }}
       h1 {{ font-size: 1.5rem !important; }}
       h2 {{ font-size: 1.08rem !important; }}
@@ -677,3 +754,79 @@ def list_rows(rows: list) -> None:
             f'<span class="bs-ls">{r["score"]}{delta}</span></div>'
         )
     st.markdown("".join(html), unsafe_allow_html=True)
+
+
+# ── Discover results ─────────────────────────────────────────────────────────
+
+_CONF_WORD = {"high": "High", "moderate": "Moderate", "low": "Low"}
+
+
+def confidence_badge(level: str) -> str:
+    """Confidence as a muted pill.
+
+    Deliberately not green: confidence describes how complete the data was, not
+    whether the company is any good. Colouring "High" green would read as an
+    endorsement of the business, which is a different claim entirely.
+    """
+    word = _CONF_WORD.get(level, "Low")
+    return f'<span class="bs-conf bs-conf-{level}">{word}</span>'
+
+
+def score_indicator(value, width: int = 42) -> str:
+    """A number with a short bar beneath it. No gauges, no traffic lights."""
+    if value is None:
+        return '<span class="bs-cell na">—</span>'
+    pct = max(0, min(100, float(value)))
+    return (f'<span class="bs-cell"><b>{value:.0f}</b>'
+            f'<i class="bs-mini" style="--w:{pct:.0f}%;--mw:{width}px"></i></span>')
+
+
+def discover_rows(rows: list) -> None:
+    """Ranked results as clickable rows.
+
+    Each row is an anchor carrying ?company=TICKER, which the app reads to open
+    the research page. Real links rather than a widget per row: the whole row is
+    the target, it hovers and focuses like a link because it is one, and it does
+    not cost a Streamlit rerun to render.
+    """
+    head = (
+        '<div class="bs-dhead">'
+        '<span>Company</span><span>Score</span><span>Quality</span>'
+        '<span>Growth</span><span>Value</span><span>Momentum</span>'
+        '<span>Confidence</span></div>'
+    )
+    body = []
+    for r in rows:
+        body.append(
+            f'<a class="bs-drow" href="?company={r["ticker"]}" target="_self">'
+            f'  <span class="bs-dco">'
+            f'    <b>{r["name"]}</b>'
+            f'    <em>{r["ticker"]} · {r["sector"]}</em>'
+            f'    <i>{r["reason"]}</i>'
+            f'  </span>'
+            f'  <span class="bs-dscore">{r["score"]:.0f}</span>'
+            f'  {score_indicator(r.get("quality"))}'
+            f'  {score_indicator(r.get("growth"))}'
+            f'  {score_indicator(r.get("valuation"))}'
+            f'  {score_indicator(r.get("momentum"))}'
+            f'  <span class="bs-cell">{confidence_badge(r.get("confidence", "low"))}</span>'
+            f'</a>'
+        )
+    st.markdown(f'<div class="bs-dtable">{head}{"".join(body)}</div>',
+                unsafe_allow_html=True)
+
+
+def company_header(name: str, meta: str, price: str | None, change: float | None) -> None:
+    """Identity line for the research page. No hero card."""
+    right = ""
+    if price:
+        chg = ""
+        if change is not None:
+            cls = "bs-pos" if change >= 0 else "bs-neg"
+            chg = f'<span class="{cls}" style="font-size:0.9rem;margin-left:0.5rem;">{change:+.2f}%</span>'
+        right = f'<div class="bs-chprice">{price}{chg}</div>'
+    st.markdown(
+        f'<div class="bs-chead"><div><div class="bs-chname">{name}</div>'
+        f'<div class="bs-chmeta">{meta}</div></div>{right}</div>',
+        unsafe_allow_html=True,
+    )

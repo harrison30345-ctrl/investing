@@ -59,6 +59,7 @@ from services.hidden_gems import (
 from config.screener_presets import FILTERABLE, PRESETS, PRESETS_BY_KEY
 from services.comparison import MAX_COMPANIES, MIN_MEANINGFUL_GAP, compare
 from services.momentum import assess_momentum
+from services.narrative import rank_reason, situation
 from services.score_history import ScoreHistory, describe_change
 from services.screening import apply_preset, screen
 from content.lessons import CATEGORIES, LESSONS, LESSONS_BY_KEY, lesson_for_metric
@@ -283,6 +284,7 @@ def _research(ticker: str, bucket: int) -> dict:
     score = score_company(snap.ticker, snap.fundamentals, snap.sector)
     return {
         "name": snap.name, "sector": snap.sector, "industry": snap.industry,
+        "exchange": snap.exchange, "description": snap.description,
         "price": snap.price, "currency": snap.currency or "USD",
         "fetched_at": snap.fetched_at, "fundamentals": snap.fundamentals,
         "score": score, "explanation": explain(score, snap.name),
@@ -629,6 +631,16 @@ view = st.session_state.get("_view")
 page = view if view in ("Company", "Compare") else nav
 
 
+# A ?company=TICKER link anywhere in the app opens that research page. Used by
+# the clickable Discover rows, which are real anchors rather than widgets.
+_qp_company = st.query_params.get("company")
+if _qp_company:
+    st.query_params.clear()
+    st.session_state["_view"] = "Company"
+    st.session_state["_co_last"] = str(_qp_company).upper()
+    page = "Company"
+
+
 def _open_company(ticker: str) -> None:
     st.session_state["_view"] = "Company"
     st.session_state["_co_last"] = ticker
@@ -905,28 +917,14 @@ elif page == "Company":
         closes = hist["Close"].dropna()
         day_change = (float(closes.iloc[-1]) / float(closes.iloc[-2]) - 1) * 100
 
-    meta = " · ".join(x for x in (query, res["sector"], res["industry"]) if x)
-    price_html = ""
-    if res["price"]:
-        chg = ""
-        if day_change is not None:
-            cls = "bs-pos" if day_change >= 0 else "bs-neg"
-            chg = f' <span class="{cls}" style="font-size:0.9rem;">{day_change:+.2f}%</span>'
-        price_html = (f'<div style="text-align:right;"><span style="font-size:1.35rem;'
-                      f'font-weight:600;color:{theme.INK};font-variant-numeric:tabular-nums;">'
-                      f'{cur}{res["price"]:,.2f}</span>{chg}</div>')
+    meta = " · ".join(x for x in (query, res.get("exchange"), res["sector"],
+                                  res["industry"]) if x)
+    theme.company_header(
+        res["name"], meta,
+        f'{cur}{res["price"]:,.2f}' if res["price"] else None,
+        day_change,
+    )
 
-    left, right = st.columns([3, 1])
-    with left:
-        st.markdown(
-            f'<div style="font-size:1.4rem;font-weight:620;color:{theme.INK};'
-            f'letter-spacing:-0.018em;line-height:1.2;">{res["name"]}</div>'
-            f'<div style="font-size:0.78rem;color:{theme.FAINT};margin:0.15rem 0 0.9rem 0;">{meta}</div>',
-            unsafe_allow_html=True,
-        )
-    with right:
-        if price_html:
-            st.markdown(price_html, unsafe_allow_html=True)
 
     # Small actions, not a toolbar.
     act1, act2, _act3 = st.columns([1, 1, 4])
@@ -948,6 +946,35 @@ elif page == "Company":
             st.rerun()
 
     theme.hairline()
+
+    # ── What the company does ────────────────────────────────
+    theme.section("What the company does")
+    if res.get("description"):
+        text = res["description"]
+        parts = [x.strip() for x in text.replace("\n", " ").split(". ") if x.strip()]
+        shown = ". ".join(parts[:3]).rstrip(".") + "."
+        st.markdown(
+            f'<div style="font-size:0.89rem;color:{theme.MUTED};line-height:1.65;'
+            f'max-width:78ch;">{shown}</div>', unsafe_allow_html=True)
+        if len(parts) > 3:
+            with st.expander("Full company profile"):
+                st.markdown(f'<div style="font-size:0.86rem;color:{theme.MUTED};'
+                            f'line-height:1.62;">{text}</div>', unsafe_allow_html=True)
+        st.caption(f"Company profile as published by {PROVIDER_NAME}.")
+    else:
+        st.caption("Company description unavailable from current data source.")
+
+    # ── Current situation ────────────────────────────────────
+    theme.section("Current situation")
+    st.markdown(
+        '<div class="bs-mtable" style="--cols:2;">' + "".join(
+            f'<div class="bs-mrow"><span class="bs-mk">{label}</span>'
+            + (f'<span class="bs-mv">{word}</span>' if value is not None
+               else f'<span class="bs-mv na">{word}</span>')
+            + '</div>'
+            for label, word, value in situation(score)
+        ) + '</div>', unsafe_allow_html=True)
+    st.caption("Each reading comes from a fixed band of the score, not a judgement.")
 
     # ── Scores, one row ──────────────────────────────────────
     conf_note = f"{score.confidence.title()} confidence · {score.coverage:.0%} of figures available"
@@ -1324,6 +1351,7 @@ elif page == "Discover":
                 built.append({
                     "Company": info.get("shortName", t)[:34],
                     "Ticker": t,
+                    "Reason": rank_reason(sc),
                     "Score": sc.overall,
                     "Quality": sc.categories["quality"].score,
                     "Growth": sc.categories["growth"].score,
@@ -1367,24 +1395,19 @@ elif page == "Discover":
             if subset.empty:
                 st.info("No company in this universe meets that filter.")
                 continue
-            shown = (subset.drop(columns=["_gem"])
-                           .sort_values("Score", ascending=False)
-                           .reset_index(drop=True))
-            st.dataframe(
-                shown, hide_index=True, width="stretch",
-                height=min(620, 36 * len(shown) + 40),
-                column_config={
-                    "Score": st.column_config.NumberColumn("Score", format="%d", width="small"),
-                    "Quality": st.column_config.NumberColumn(format="%d", width="small"),
-                    "Growth": st.column_config.NumberColumn(format="%d", width="small"),
-                    "Valuation": st.column_config.NumberColumn(format="%d", width="small"),
-                    "Momentum": st.column_config.NumberColumn(format="%d", width="small"),
-                    "Health": st.column_config.NumberColumn(format="%d", width="small"),
-                    "Ticker": st.column_config.TextColumn(width="small"),
-                },
-            )
-            st.caption(f"{len(shown)} companies. Click a column heading to sort. "
-                       f"Search any ticker above to open its research page.")
+            shown = (subset.sort_values("Score", ascending=False)
+                           .reset_index(drop=True).head(60))
+            st.caption(f"{len(subset)} companies · sorted by research score")
+            theme.discover_rows([
+                {"ticker": r["Ticker"], "name": r["Company"], "sector": r["Sector"],
+                 "reason": r["Reason"], "score": r["Score"],
+                 "quality": r["Quality"], "growth": r["Growth"],
+                 "valuation": r["Valuation"], "momentum": r["Momentum"],
+                 "confidence": r["Confidence"]}
+                for _, r in shown.iterrows()
+            ])
+            if len(subset) > 60:
+                st.caption(f"Showing the top 60 of {len(subset)}.")
 
     theme.hairline()
     st.caption(
