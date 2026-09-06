@@ -109,19 +109,22 @@ _CSS = f"""
 
   /* ── Headings ──────────────────────────────────────────── */
   h1 {{
-      font-size: 1.5rem !important; font-weight: 620 !important;
-      letter-spacing: -0.018em !important; color: {INK} !important;
-      margin: 0 0 0.15rem 0 !important; padding: 0 !important;
+      font-size: 1.85rem !important; font-weight: 700 !important;
+      letter-spacing: -0.022em !important; color: {INK} !important;
+      margin: 0 0 0.2rem 0 !important; padding: 0 !important;
   }}
   h2 {{
-      font-size: 1.05rem !important; font-weight: 600 !important;
-      color: {INK} !important; letter-spacing: -0.01em !important;
-      margin: 1.6rem 0 0.55rem 0 !important;
+      font-size: 1.2rem !important; font-weight: 680 !important;
+      color: {INK} !important; letter-spacing: -0.012em !important;
+      margin: 1.7rem 0 0.6rem 0 !important;
   }}
+  /* Section headings. Previously a small faint uppercase label, which read as
+     a caption rather than a title and left each block looking untitled. Now
+     set in ink at a size that anchors the section it introduces. */
   h3, h4, h5 {{
-      font-size: 0.72rem !important; font-weight: 600 !important;
-      letter-spacing: 0.09em !important; text-transform: uppercase !important;
-      color: {FAINT} !important; margin: 1.5rem 0 0.6rem 0 !important;
+      font-size: 0.95rem !important; font-weight: 680 !important;
+      letter-spacing: -0.005em !important; text-transform: none !important;
+      color: {INK} !important; margin: 1.7rem 0 0.7rem 0 !important;
   }}
   .stMarkdown p {{ color: {MUTED}; font-size: 0.875rem; line-height: 1.62; }}
   .stCaption, small, [data-testid="stCaptionContainer"] p {{
@@ -238,8 +241,8 @@ _CSS = f"""
 
   /* ── Shared components ─────────────────────────────────── */
   .bs-eyebrow {{
-      font-size: 0.68rem; font-weight: 600; letter-spacing: 0.1em;
-      text-transform: uppercase; color: {FAINT}; margin-bottom: 0.5rem;
+      font-size: 0.72rem; font-weight: 650; letter-spacing: 0.08em;
+      text-transform: uppercase; color: {MUTED}; margin-bottom: 0.5rem;
   }}
   .bs-sub {{ font-size: 0.83rem; color: {MUTED}; margin: 0.2rem 0 1.1rem 0; }}
 
@@ -247,8 +250,9 @@ _CSS = f"""
   .bs-scores {{ display: flex; gap: 2.4rem; flex-wrap: wrap; margin: 0.2rem 0 0.2rem; }}
   .bs-score {{ min-width: 88px; }}
   .bs-score-label {{
-      font-size: 0.66rem; letter-spacing: 0.07em; text-transform: uppercase;
-      color: {FAINT}; margin-bottom: 0.22rem; white-space: nowrap;
+      font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase;
+      color: {MUTED}; margin-bottom: 0.24rem; white-space: nowrap;
+      font-weight: 600;
   }}
   .bs-score-value {{
       font-size: 1.28rem; font-weight: 600; color: {INK}; line-height: 1;
@@ -322,7 +326,9 @@ _CSS = f"""
       .bs-scores {{ gap: 1.3rem 1.6rem; }}
       .bs-score {{ min-width: 72px; }}
       .bs-stats {{ grid-template-columns: 1fr; gap: 0; }}
-      h1 {{ font-size: 1.3rem !important; }}
+      h1 {{ font-size: 1.5rem !important; }}
+      h2 {{ font-size: 1.08rem !important; }}
+      h3, h4, h5 {{ font-size: 0.9rem !important; }}
   }}
   @media (max-width: 560px) {{
       .bs-row {{ grid-template-columns: 54px 1fr auto; }}
