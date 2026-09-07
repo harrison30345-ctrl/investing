@@ -65,6 +65,7 @@ from services.screening import apply_preset, screen
 from content.lessons import (
     CATEGORIES, CATEGORY_INTROS, LESSONS, LESSONS_BY_KEY, lesson_for_metric,
 )
+from services.progress import LearningProgress
 from services.watchlist import Watchlist
 
 try:
@@ -72,6 +73,13 @@ try:
 except ImportError:  # pragma: no cover
     import theme  # type: ignore
 from services.scoring import SCORING_VERSION, score_company
+
+
+@st.cache_resource(show_spinner=False)
+def _learning_progress() -> LearningProgress:
+    """Which topics have been completed. Explicit only -- opening a page is not
+    the same as having read it, so nothing marks itself done."""
+    return LearningProgress()
 
 
 @st.cache_resource(show_spinner=False)
@@ -638,9 +646,11 @@ nav = st.sidebar.radio(
 if st.session_state.get("_nav_last") != nav:
     st.session_state["_nav_last"] = nav
     st.session_state.pop("_view", None)      # changing section leaves a company
+    if nav != "Learn":
+        st.session_state.pop("_lesson", None)
 
 view = st.session_state.get("_view")
-page = view if view in ("Company", "Compare") else nav
+page = view if view in ("Company", "Compare", "Learn") else nav
 
 
 # A ?company=TICKER link anywhere in the app opens that research page. Used by
@@ -657,7 +667,7 @@ if _qp_company:
 _qp_lesson = st.query_params.get("lesson")
 if _qp_lesson:
     st.query_params.clear()
-    st.session_state.pop("_view", None)
+    st.session_state["_view"] = "Learn"
     st.session_state["_lesson"] = str(_qp_lesson)
     page = "Learn"
 
@@ -1311,63 +1321,126 @@ elif page == "Compare":
 # ════════════════════════════════════════════════════════════
 elif page == "Learn":
 
-    theme.page_header(
-        "Learn",
-        "Short, practical explanations of the ideas this platform uses.",
-    )
+    try:
+        prog = _learning_progress()
+        done_keys = prog.completed()
+    except Exception:  # noqa: BLE001 - the topics still read without tracking
+        prog, done_keys = None, set()
+
+    all_keys = [l.key for l in LESSONS]
+    overall = prog.progress_for(all_keys) if prog else None
 
     opened = st.session_state.get("_lesson")
     if opened and opened in LESSONS_BY_KEY:
         lesson = LESSONS_BY_KEY[opened]
+        is_done = opened in done_keys
         if st.button("Back to all topics", key="_lesson_back"):
             st.session_state.pop("_lesson", None)
             st.rerun()
         st.markdown(f"## {lesson.title}")
         st.markdown(
             f'<div style="font-size:0.76rem;color:{theme.FAINT};margin:-0.3rem 0 1rem;">'
-            f'{lesson.category} · {lesson.minutes} min read</div>',
+            f'{lesson.category} · {lesson.minutes} min read'
+            + (' · <span style="color:' + theme.POSITIVE + ';">Completed</span>'
+               if is_done else '') + '</div>',
             unsafe_allow_html=True,
         )
         st.markdown(lesson.body)
+
+        theme.hairline()
+        mark_col, next_col = st.columns([1, 2])
+        with mark_col:
+            label = "Mark as not done" if is_done else "Mark as done"
+            if prog and st.button(label, key=f"_mark_{opened}"):
+                prog.toggle(opened)
+                st.rerun()
+        with next_col:
+            nxt = prog.next_unread(all_keys) if prog else None
+            if nxt and nxt != opened:
+                if st.button(f"Next: {LESSONS_BY_KEY[nxt].title}", key="_next_lesson"):
+                    st.session_state["_lesson"] = nxt
+                    st.rerun()
         st.stop()
+
+    # ── Topic list ───────────────────────────────────────────
+    theme.page_header(
+        "Learn",
+        "Short, practical explanations of the ideas this platform uses.",
+    )
+
+    if overall:
+        st.markdown(
+            f'<div style="display:flex;align-items:baseline;gap:0.8rem;margin:0.2rem 0 0.2rem;">'
+            f'<span style="font-size:1.35rem;font-weight:680;color:{theme.INK};'
+            f'font-variant-numeric:tabular-nums;">{overall.done}</span>'
+            f'<span style="font-size:0.85rem;color:{theme.MUTED};">'
+            f'of {overall.total} topics done</span></div>'
+            f'<div style="height:3px;background:{theme.RULE};max-width:420px;">'
+            f'<div style="height:3px;width:{overall.fraction*100:.0f}%;'
+            f'background:{theme.BRASS};"></div></div>',
+            unsafe_allow_html=True,
+        )
+        if overall.complete:
+            st.caption("You have been through every topic.")
+        else:
+            nxt = prog.next_unread(all_keys)
+            if nxt:
+                st.caption(f"Next up: {LESSONS_BY_KEY[nxt].title}")
 
     for category in CATEGORIES:
         items = [l for l in LESSONS if l.category == category]
         if not items:
             continue
+        cat_prog = prog.progress_for([l.key for l in items]) if prog else None
+
         theme.section(category)
         intro = CATEGORY_INTROS.get(category)
         if intro:
             st.markdown(
                 f'<div style="font-size:0.85rem;color:{theme.MUTED};line-height:1.6;'
-                f'max-width:76ch;margin:-0.2rem 0 0.5rem;">{intro}</div>'
-                f'<div style="font-size:0.73rem;color:{theme.FAINT};margin-bottom:0.6rem;">'
-                f'{len(items)} topics · about {sum(l.minutes for l in items)} minutes</div>',
+                f'max-width:76ch;margin:-0.2rem 0 0.45rem;">{intro}</div>',
                 unsafe_allow_html=True,
             )
+        if cat_prog:
+            tick = ("<span style='color:" + theme.POSITIVE + ";'>All done</span>"
+                    if cat_prog.complete else f"{cat_prog} done")
+            st.markdown(
+                f'<div style="font-size:0.73rem;color:{theme.FAINT};margin-bottom:0.6rem;">'
+                f'{tick} · about {sum(l.minutes for l in items)} minutes</div>',
+                unsafe_allow_html=True,
+            )
+
         cols = st.columns(2, gap="large")
         for i, lesson in enumerate(items):
             with cols[i % 2]:
-                # Each topic gets its own vertical space; the buttons previously
-                # sat directly under one another with nothing between them.
+                is_done = lesson.key in done_keys
+                marker = (f'<span style="color:{theme.POSITIVE};font-weight:700;">✓</span> '
+                          if is_done else
+                          f'<span style="color:{theme.RULE};font-weight:700;">○</span> ')
+                title_colour = theme.MUTED if is_done else theme.INK
                 st.markdown(
                     f'<div style="padding:0.9rem 0 0.2rem;border-top:1px solid {theme.RULE};">'
-                    f'<div style="font-size:0.9rem;font-weight:640;color:{theme.INK};">'
-                    f'{lesson.title}</div>'
+                    f'<div style="font-size:0.9rem;font-weight:640;color:{title_colour};">'
+                    f'{marker}{lesson.title}</div>'
                     f'<div style="font-size:0.82rem;color:{theme.MUTED};margin-top:0.2rem;'
                     f'line-height:1.55;">{lesson.summary}</div>'
                     f'<div style="font-size:0.72rem;color:{theme.FAINT};margin-top:0.3rem;">'
                     f'{lesson.minutes} min read</div></div>',
                     unsafe_allow_html=True,
                 )
-                if st.button("Read", key=f"_lesson_{lesson.key}"):
+                if st.button("Read again" if is_done else "Read",
+                             key=f"_lesson_{lesson.key}"):
                     st.session_state["_lesson"] = lesson.key
                     st.rerun()
                 st.markdown("<div style='height:0.9rem;'></div>", unsafe_allow_html=True)
 
-# ════════════════════════════════════════════════════════════
-# PAGE 1 — MOMENTUM
-# ════════════════════════════════════════════════════════════
+    if prog and overall and overall.done:
+        theme.hairline()
+        if st.button("Reset progress", key="_reset_progress"):
+            prog.reset()
+            st.rerun()
+        st.caption("Progress is stored on this device only.")
+
 elif page == "Discover":
 
     theme.page_header(
