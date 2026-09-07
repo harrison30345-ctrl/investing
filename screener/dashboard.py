@@ -1414,24 +1414,34 @@ elif page == "Learn":
         for i, lesson in enumerate(items):
             with cols[i % 2]:
                 is_done = lesson.key in done_keys
-                marker = (f'<span style="color:{theme.POSITIVE};font-weight:700;">✓</span> '
-                          if is_done else
-                          f'<span style="color:{theme.RULE};font-weight:700;">○</span> ')
                 title_colour = theme.MUTED if is_done else theme.INK
                 st.markdown(
                     f'<div style="padding:0.9rem 0 0.2rem;border-top:1px solid {theme.RULE};">'
                     f'<div style="font-size:0.9rem;font-weight:640;color:{title_colour};">'
-                    f'{marker}{lesson.title}</div>'
+                    f'{lesson.title}</div>'
                     f'<div style="font-size:0.82rem;color:{theme.MUTED};margin-top:0.2rem;'
                     f'line-height:1.55;">{lesson.summary}</div>'
                     f'<div style="font-size:0.72rem;color:{theme.FAINT};margin-top:0.3rem;">'
                     f'{lesson.minutes} min read</div></div>',
                     unsafe_allow_html=True,
                 )
-                if st.button("Read again" if is_done else "Read",
-                             key=f"_lesson_{lesson.key}"):
-                    st.session_state["_lesson"] = lesson.key
-                    st.rerun()
+                # The tick is a control, not a marker. Previously the reader had
+                # to open a topic to change its state, which makes no sense for
+                # something they may already know.
+                read_col, tick_col = st.columns([1, 1.4])
+                with read_col:
+                    if st.button("Read again" if is_done else "Read",
+                                 key=f"_lesson_{lesson.key}"):
+                        st.session_state["_lesson"] = lesson.key
+                        st.rerun()
+                with tick_col:
+                    if prog:
+                        ticked = st.checkbox(
+                            "Done", value=is_done, key=f"_done_{lesson.key}",
+                        )
+                        if ticked != is_done:
+                            prog.mark_done(lesson.key) if ticked else prog.mark_undone(lesson.key)
+                            st.rerun()
                 st.markdown("<div style='height:0.9rem;'></div>", unsafe_allow_html=True)
 
     if prog and overall and overall.done:

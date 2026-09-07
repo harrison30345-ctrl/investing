@@ -446,6 +446,14 @@ _CSS = f"""
   .bs-chmeta {{ font-size: 0.78rem; color: {FAINT}; margin-top: 0.2rem; }}
   .bs-chprice {{ font-size: 1.3rem; font-weight: 650; color: {INK}; font-variant-numeric: tabular-nums; white-space: nowrap; }}
 
+  /* Completion ticks in Learn: small, muted, not a form control shouting for
+     attention. Green only when actually ticked, where it means something. */
+  .stCheckbox label {{ font-size: 0.78rem !important; color: {FAINT} !important; }}
+  .stCheckbox label:hover {{ color: {MUTED} !important; }}
+  .stCheckbox [data-baseweb="checkbox"] div[data-checked="true"] {{
+      background-color: {POSITIVE} !important; border-color: {POSITIVE} !important;
+  }}
+
   /* ── Responsive ────────────────────────────────────────── */
   @media (max-width: 900px) {{
       .block-container {{ padding: 1.4rem 1.1rem 3rem 1.1rem; }}
