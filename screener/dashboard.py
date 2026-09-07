@@ -62,7 +62,9 @@ from services.momentum import assess_momentum
 from services.narrative import rank_reason, situation
 from services.score_history import ScoreHistory, describe_change
 from services.screening import apply_preset, screen
-from content.lessons import CATEGORIES, LESSONS, LESSONS_BY_KEY, lesson_for_metric
+from content.lessons import (
+    CATEGORIES, CATEGORY_INTROS, LESSONS, LESSONS_BY_KEY, lesson_for_metric,
+)
 from services.watchlist import Watchlist
 
 try:
@@ -793,14 +795,14 @@ if page == "Overview":
                 if not rows:
                     st.caption("Nothing met the threshold.")
                     continue
-                st.markdown("".join(
+                st.markdown('<div class="bs-rowset">' + "".join(
                     f'<a class="bs-row bs-link" href="?company={r["ticker"]}" target="_self">'
-                    f'<div class="bs-row-t">{r["ticker"]}</div>'
-                    f'<div><div class="bs-row-n">{r["name"]}</div>'
-                    f'<div class="bs-row-r">{r["detail"]}</div></div>'
-                    f'<div class="bs-row-s">{r["score"]:.0f}</div></a>'
+                    f'<span class="bs-row-t">{r["ticker"]}</span>'
+                    f'<span><span class="bs-row-n">{r["name"]}</span>'
+                    f'<span class="bs-row-r">{r["detail"]}</span></span>'
+                    f'<span class="bs-row-s">{r["score"]:.0f}</span></a>'
                     for r in rows
-                ), unsafe_allow_html=True)
+                ) + '</div>', unsafe_allow_html=True)
                 st.caption(rows[0]["reason"])
         st.caption(
             "Highest scoring on our methodology within a curated universe. "
@@ -1334,22 +1336,34 @@ elif page == "Learn":
         if not items:
             continue
         theme.section(category)
+        intro = CATEGORY_INTROS.get(category)
+        if intro:
+            st.markdown(
+                f'<div style="font-size:0.85rem;color:{theme.MUTED};line-height:1.6;'
+                f'max-width:76ch;margin:-0.2rem 0 0.5rem;">{intro}</div>'
+                f'<div style="font-size:0.73rem;color:{theme.FAINT};margin-bottom:0.6rem;">'
+                f'{len(items)} topics · about {sum(l.minutes for l in items)} minutes</div>',
+                unsafe_allow_html=True,
+            )
         cols = st.columns(2, gap="large")
         for i, lesson in enumerate(items):
             with cols[i % 2]:
+                # Each topic gets its own vertical space; the buttons previously
+                # sat directly under one another with nothing between them.
                 st.markdown(
-                    f'<div style="padding:0.5rem 0 0.1rem;">'
-                    f'<div style="font-size:0.87rem;font-weight:620;color:{theme.INK};">'
+                    f'<div style="padding:0.9rem 0 0.2rem;border-top:1px solid {theme.RULE};">'
+                    f'<div style="font-size:0.9rem;font-weight:640;color:{theme.INK};">'
                     f'{lesson.title}</div>'
-                    f'<div style="font-size:0.79rem;color:{theme.MUTED};margin-top:0.15rem;">'
-                    f'{lesson.summary}</div>'
-                    f'<div style="font-size:0.72rem;color:{theme.FAINT};margin-top:0.2rem;">'
+                    f'<div style="font-size:0.82rem;color:{theme.MUTED};margin-top:0.2rem;'
+                    f'line-height:1.55;">{lesson.summary}</div>'
+                    f'<div style="font-size:0.72rem;color:{theme.FAINT};margin-top:0.3rem;">'
                     f'{lesson.minutes} min read</div></div>',
                     unsafe_allow_html=True,
                 )
                 if st.button("Read", key=f"_lesson_{lesson.key}"):
                     st.session_state["_lesson"] = lesson.key
                     st.rerun()
+                st.markdown("<div style='height:0.9rem;'></div>", unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════
 # PAGE 1 — MOMENTUM

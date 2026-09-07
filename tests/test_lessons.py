@@ -11,7 +11,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from content.lessons import CATEGORIES, LESSONS, LESSONS_BY_KEY, lesson_for_metric  # noqa: E402
+from content.lessons import (  # noqa: E402
+    CATEGORIES, CATEGORY_INTROS, LESSONS, LESSONS_BY_KEY, lesson_for_metric,
+)
 from services.explanations import GLOSSARY  # noqa: E402
 
 
@@ -83,3 +85,26 @@ def test_core_beginner_topics_are_covered():
     for key in ("what_is_a_share", "pe_ratio", "isa", "diversification",
                 "risk", "how_to_research", "market_cap", "dividends"):
         assert key in LESSONS_BY_KEY
+
+
+# ── Each group explains what it is for ───────────────────────────────────────
+
+@pytest.mark.parametrize("category", CATEGORIES)
+def test_every_category_has_an_introduction(category):
+    """A list of titles tells a beginner nothing about which group they need."""
+    intro = CATEGORY_INTROS.get(category)
+    assert intro, f"{category} has no introduction"
+    assert len(intro) > 80, f"{category} introduction is too thin to orient anyone"
+    assert intro.strip().endswith(".")
+
+
+def test_category_intros_do_not_promise_outcomes():
+    text = " ".join(CATEGORY_INTROS.values()).lower()
+    for banned in ("guarantee", "beat the market", "get rich", "you should buy",
+                   "best stocks", "make money"):
+        assert banned not in text
+
+
+def test_no_orphan_intros():
+    for key in CATEGORY_INTROS:
+        assert key in CATEGORIES, f"{key} has an intro but no category"

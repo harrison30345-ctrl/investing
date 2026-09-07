@@ -15,7 +15,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-__all__ = ["Lesson", "LESSONS", "LESSONS_BY_KEY", "CATEGORIES", "lesson_for_metric"]
+__all__ = ["Lesson", "LESSONS", "LESSONS_BY_KEY", "CATEGORIES",
+           "CATEGORY_INTROS", "lesson_for_metric"]
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,28 @@ class Lesson:
 
 
 CATEGORIES = ["Getting started", "Reading the numbers", "Judging a company", "Investing in the UK"]
+
+# What each group is for. A list of titles tells a beginner nothing about why
+# these topics sit together or which one they need first, so each section says
+# what it covers and who it is for.
+CATEGORY_INTROS: dict[str, str] = {
+    "Getting started": (
+        "The ideas everything else assumes you already know. If you have never bought "
+        "a share, or you are not certain what you own when you do, start here."
+    ),
+    "Reading the numbers": (
+        "The figures on a company page and what they actually measure. These are the "
+        "measures this platform scores, so reading them makes every score legible."
+    ),
+    "Judging a company": (
+        "Moving from individual numbers to a view of the whole business — what makes "
+        "one durable, what makes one risky, and where the common traps are."
+    ),
+    "Investing in the UK": (
+        "The parts that are specific to investing from the UK: the ISA wrapper, "
+        "currency, stamp duty and the costs that are easy to miss."
+    ),
+}
 
 
 LESSONS: list[Lesson] = [

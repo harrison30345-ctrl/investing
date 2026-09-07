@@ -367,7 +367,15 @@ _CSS = f"""
       padding-left: 0.4rem; padding-right: 0.4rem; margin: 0 -0.4rem;
       display: grid;
   }}
-  a.bs-row {{ grid-template-columns: 62px 1fr auto; gap: 0 1rem; align-items: baseline; }}
+  .bs-rowset {{ display: block; }}
+  .bs-tagset {{ display: block; line-height: 2; }}
+  a.bs-row {{
+      grid-template-columns: 62px 1fr auto; gap: 0 1rem; align-items: baseline;
+      padding-top: 0.6rem; padding-bottom: 0.6rem;
+      border-bottom: 1px solid {RULE};
+  }}
+  a.bs-row .bs-row-t, a.bs-row .bs-row-s {{ display: block; }}
+  a.bs-row .bs-row-n, a.bs-row .bs-row-r {{ display: block; }}
   a.bs-row:hover {{ background: #f2efe9; }}
   a.bs-lrow:hover {{ background: #f2efe9; }}
   a.bs-lrow:focus-visible, a.bs-tag:focus-visible {{
@@ -775,16 +783,17 @@ def list_rows(rows: list, linked: bool = True) -> None:
                         f'target="_self">{inner}</a>')
         else:
             html.append(f'<div class="bs-lrow">{inner}</div>')
-    st.markdown("".join(html), unsafe_allow_html=True)
+    st.markdown('<div class="bs-rowset">' + "".join(html) + '</div>',
+                unsafe_allow_html=True)
 
 
 def company_tags(entries: list) -> None:
     """Tickers as small clickable chips, for recently viewed."""
     st.markdown(
-        " ".join(
+        '<div class="bs-tagset">' + " ".join(
             f'<a class="bs-tag bs-link" href="?company={t}" target="_self">{t}</a>'
             for t in entries
-        ),
+        ) + '</div>',
         unsafe_allow_html=True,
     )
 
