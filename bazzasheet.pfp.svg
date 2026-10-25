@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <!-- Background -->
+  <rect width="400" height="400" fill="#080808" rx="88"/>
+
+  <!-- Grid 2x2 product cards -->
+  <rect x="52" y="52" width="132" height="160" rx="16" fill="#111"/>
+  <rect x="52" y="52" width="132" height="100" rx="16" fill="#1a2200"/>
+  <rect x="64" y="162" width="80" height="10" rx="5" fill="#222"/>
+  <rect x="64" y="178" width="50" height="10" rx="5" fill="#c8f135"/>
+
+  <rect x="216" y="52" width="132" height="160" rx="16" fill="#111" stroke="#c8f135" stroke-width="2"/>
+  <rect x="216" y="52" width="132" height="100" rx="16" fill="#1e2800"/>
+  <rect x="228" y="162" width="80" height="10" rx="5" fill="#222"/>
+  <rect x="228" y="178" width="50" height="10" rx="5" fill="#c8f135"/>
+
+  <rect x="52" y="228" width="132" height="160" rx="16" fill="#111" stroke="#c8f135" stroke-width="2"/>
+  <rect x="52" y="228" width="132" height="100" rx="16" fill="#1e2800"/>
+  <rect x="64" y="338" width="80" height="10" rx="5" fill="#222"/>
+  <rect x="64" y="354" width="50" height="10" rx="5" fill="#c8f135"/>
+
+  <rect x="216" y="228" width="132" height="160" rx="16" fill="#111"/>
+  <rect x="216" y="228" width="132" height="100" rx="16" fill="#1a2200"/>
+  <rect x="228" y="338" width="80" height="10" rx="5" fill="#222"/>
+  <rect x="228" y="354" width="50" height="10" rx="5" fill="#c8f135"/>
+
+  <!-- Green dot accent -->
+  <circle cx="322" cy="78" r="18" fill="#c8f135"/>
+</svg>

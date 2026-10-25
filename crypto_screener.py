@@ -58,12 +58,31 @@ console = Console()
 # ---------------------------------------------------------------------------
 # HTTP helper with retry + rate-limit sleep
 # ---------------------------------------------------------------------------
+RATE_LIMIT_COOLDOWN = 60   # seconds to wait when an API returns HTTP 429
+
+
 def get_json(url, params=None):
-    """GET with up to MAX_RETRIES retries. Returns parsed JSON or None on failure."""
+    """GET with retries. Returns parsed JSON or None on failure.
+
+    HTTP 429 (rate limited) is handled separately with a long cooldown and does
+    not consume the normal retry budget — the free CoinGecko tier 429s easily.
+    """
     attempt = 0
+    rate_limit_hits = 0
     while attempt <= MAX_RETRIES:
         try:
             resp = requests.get(url, params=params, headers=HEADERS, timeout=30)
+            if resp.status_code == 429:
+                rate_limit_hits += 1
+                if rate_limit_hits > 3:
+                    console.print(f"[yellow]⚠ Persistent rate limiting on {url} — giving up.[/yellow]")
+                    return None
+                console.print(
+                    f"[dim]Rate limited (429). Cooling down {RATE_LIMIT_COOLDOWN}s "
+                    f"(hit {rate_limit_hits}/3)…[/dim]"
+                )
+                time.sleep(RATE_LIMIT_COOLDOWN)
+                continue   # retry without counting against MAX_RETRIES
             resp.raise_for_status()
             data = resp.json()
             time.sleep(SLEEP_BETWEEN_CALLS)   # rate-limit cushion after every call

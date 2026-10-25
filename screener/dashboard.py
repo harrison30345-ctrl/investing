@@ -62,10 +62,6 @@ from services.momentum import assess_momentum
 from services.narrative import rank_reason, situation
 from services.score_history import ScoreHistory, describe_change
 from services.screening import apply_preset, screen
-from content.lessons import (
-    CATEGORIES, CATEGORY_INTROS, LESSONS, LESSONS_BY_KEY, lesson_for_metric,
-)
-from services.progress import LearningProgress
 from services.watchlist import Watchlist
 
 try:
@@ -73,13 +69,6 @@ try:
 except ImportError:  # pragma: no cover
     import theme  # type: ignore
 from services.scoring import SCORING_VERSION, score_company
-
-
-@st.cache_resource(show_spinner=False)
-def _learning_progress() -> LearningProgress:
-    """Which topics have been completed. Explicit only -- opening a page is not
-    the same as having read it, so nothing marks itself done."""
-    return LearningProgress()
 
 
 @st.cache_resource(show_spinner=False)
@@ -635,7 +624,7 @@ st.sidebar.markdown("""
 
 nav = st.sidebar.radio(
     "Navigate",
-    ["Overview", "Learn", "Discover", "Screener", "Watchlist", "UK Investor"],
+    ["Overview", "Hedge Fund", "Discover", "Screener", "Watchlist", "UK Investor"],
     index=0,
     label_visibility="collapsed",
 )
@@ -646,11 +635,9 @@ nav = st.sidebar.radio(
 if st.session_state.get("_nav_last") != nav:
     st.session_state["_nav_last"] = nav
     st.session_state.pop("_view", None)      # changing section leaves a company
-    if nav != "Learn":
-        st.session_state.pop("_lesson", None)
 
 view = st.session_state.get("_view")
-page = view if view in ("Company", "Compare", "Learn") else nav
+page = view if view in ("Company", "Compare") else nav
 
 
 # A ?company=TICKER link anywhere in the app opens that research page. Used by
@@ -662,14 +649,6 @@ if _qp_company:
     st.session_state["_co_last"] = str(_qp_company).upper()
     page = "Company"
 
-# ?lesson=KEY opens the Learn section at that topic, so a metric on the company
-# page can link straight to the explanation of it.
-_qp_lesson = st.query_params.get("lesson")
-if _qp_lesson:
-    st.query_params.clear()
-    st.session_state["_view"] = "Learn"
-    st.session_state["_lesson"] = str(_qp_lesson)
-    page = "Learn"
 
 
 def _open_company(ticker: str) -> None:
@@ -871,20 +850,6 @@ if page == "Overview":
             theme.company_tags([e.ticker for e in recent])
         else:
             st.caption("Companies you look at will appear here.")
-
-    # ── Continue learning ────────────────────────────────────
-    theme.section("Continue learning")
-    # One lesson a day, drawn from the shared Learn content rather than a
-    # second copy maintained here.
-    _today = LESSONS[date.today().toordinal() % len(LESSONS)]
-    st.markdown(
-        f'<div style="font-size:0.875rem;font-weight:620;color:{theme.INK};">{_today.title}</div>'
-        f'<div style="font-size:0.85rem;color:{theme.MUTED};line-height:1.62;margin-top:0.25rem;'
-        f'max-width:72ch;">{_today.summary}</div>'
-        f'<div style="font-size:0.74rem;color:{theme.FAINT};margin-top:0.3rem;">'
-        f'{_today.minutes} min read · open Learn to continue</div>',
-        unsafe_allow_html=True,
-    )
 
     theme.hairline()
     st.caption(
@@ -1102,21 +1067,6 @@ elif page == "Company":
                 "information about the quality of the business."
             )
 
-    # ── Learn more, once, rather than under every metric ─────
-    _linked = [f for _h, fields in GROUPS for f in fields if lesson_for_metric(f)]
-    if _linked:
-        _lessons = {lesson_for_metric(f).key: lesson_for_metric(f) for f in _linked}
-        st.markdown(
-            '<div style="margin-top:0.9rem;font-size:0.78rem;color:' + theme.FAINT + ';">'
-            'Hover the marker beside any measure for what it means. Related reading: '
-            + " · ".join(
-                f'<a href="?lesson={k}" target="_self" style="color:{theme.BRASS};'
-                f'text-decoration:none;">{l.title}</a>'
-                for k, l in list(_lessons.items())[:5]
-            ) + '</div>',
-            unsafe_allow_html=True,
-        )
-
     if expl["could_change"]:
         with st.expander("What could change the score"):
             for item in expl["could_change"]:
@@ -1319,137 +1269,1410 @@ elif page == "Compare":
 # ════════════════════════════════════════════════════════════
 # PAGE — LEARN
 # ════════════════════════════════════════════════════════════
-elif page == "Learn":
+elif page == "Hedge Fund":
 
-    try:
-        prog = _learning_progress()
-        done_keys = prog.completed()
-    except Exception:  # noqa: BLE001 - the topics still read without tracking
-        prog, done_keys = None, set()
+    st.markdown("""
+    <div style="padding:1.4rem 1.8rem 1.2rem; background:#ffffff; border:1px solid #e7e4dd;
+                border-left:5px solid #8d7434; border-radius:4px; margin-bottom:1.4rem;">
+        <div style="font-size:1.9rem; font-weight:800; color:#12161f; letter-spacing:-0.02em; line-height:1.1;">
+            📊 Stock Research
+        </div>
+        <div style="font-size:0.88rem; color:#5f6672; margin-top:0.5rem; line-height:1.6; max-width:780px;">
+            Scores every company in your chosen universe and explains, in plain English, what its numbers
+            show. Each company gets a research score, a written summary of its strengths and risks, its
+            risk characteristics, and the profile that best describes it —
+            <b>Momentum</b>, <b>Oversold</b>, <b>Growth</b>, or <b>Consolidating</b>.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    all_keys = [l.key for l in LESSONS]
-    overall = prog.progress_for(all_keys) if prog else None
+    # ── Sidebar ──────────────────────────────────────────────
+    st.sidebar.markdown("### Research settings")
 
-    opened = st.session_state.get("_lesson")
-    if opened and opened in LESSONS_BY_KEY:
-        lesson = LESSONS_BY_KEY[opened]
-        is_done = opened in done_keys
-        if st.button("Back to all topics", key="_lesson_back"):
-            st.session_state.pop("_lesson", None)
-            st.rerun()
-        st.markdown(f"## {lesson.title}")
-        st.markdown(
-            f'<div style="font-size:0.76rem;color:{theme.FAINT};margin:-0.3rem 0 1rem;">'
-            f'{lesson.category} · {lesson.minutes} min read'
-            + (' · <span style="color:' + theme.POSITIVE + ';">Completed</span>'
-               if is_done else '') + '</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(lesson.body)
-
-        theme.hairline()
-        mark_col, next_col = st.columns([1, 2])
-        with mark_col:
-            label = "Mark as not done" if is_done else "Mark as done"
-            if prog and st.button(label, key=f"_mark_{opened}"):
-                prog.toggle(opened)
-                st.rerun()
-        with next_col:
-            nxt = prog.next_unread(all_keys) if prog else None
-            if nxt and nxt != opened:
-                if st.button(f"Next: {LESSONS_BY_KEY[nxt].title}", key="_next_lesson"):
-                    st.session_state["_lesson"] = nxt
-                    st.rerun()
-        st.stop()
-
-    # ── Topic list ───────────────────────────────────────────
-    theme.page_header(
-        "Learn",
-        "Short, practical explanations of the ideas this platform uses.",
+    hf_universe = st.sidebar.selectbox(
+        "Scan universe",
+        ["broad", "all_curated", "tech", "ai", "growth", "nasdaq100", "t212"],
+        format_func=lambda x: {
+            "broad":       "Broad Market (~300)",
+            "all_curated": "All Curated (~130)",
+            "tech":        "Tech & Mega Caps (~60)",
+            "ai":          "AI & Machine Learning (~55)",
+            "growth":      "High Growth (~50)",
+            "nasdaq100":   "NASDAQ 100",
+            "t212":        "T212 ISA (~145)",
+        }[x],
+        index=0,
     )
 
-    if overall:
+    hf_top_n = st.sidebar.slider("Picks per strategy", 3, 20, 6)
+
+    st.sidebar.markdown("### Risk profile")
+    risk_profile = st.sidebar.radio(
+        "My risk appetite",
+        ["Conservative", "Balanced", "Aggressive"],
+        index=1,
+    )
+    portfolio_size = st.sidebar.number_input(
+        "Portfolio size (£/$)",
+        min_value=500, max_value=500_000, value=10_000, step=500,
+    )
+
+    refresh_hf = st.sidebar.button("Run research scan", type="primary")
+
+    # Risk profile → position sizing caps
+    risk_caps = {
+        "Conservative": {"high": 0.05, "med": 0.025, "low": 0.01},
+        "Balanced":      {"high": 0.10, "med": 0.05,  "low": 0.025},
+        "Aggressive":    {"high": 0.15, "med": 0.08,  "low": 0.04},
+    }[risk_profile]
+
+    hf_cache_key = f"hf_{hf_universe}"
+    if refresh_hf or hf_cache_key not in st.session_state:
+        st.session_state[hf_cache_key] = None
+
+    # ── Data fetch & scoring ──────────────────────────────────
+    if _scan_gate(hf_cache_key, "Run research scan", forced=refresh_hf,
+                  note="Scores and explains every company in your chosen universe. "
+                       "This is the heaviest scan in the app — up to ~360 tickers."):
+        scan_tickers  = get_universe(hf_universe)
+        hf_tup        = tuple(scan_tickers)
+
+        with st.spinner(f"Running hedge fund scan on {len(scan_tickers)} stocks..."):
+            rows = []
+            prog = st.progress(0, text="Downloading price data (batch)...")
+
+            # ── Pass 1: prices for all tickers ────────────────────
+            hf_prices = _batch_prices(hf_tup, period="3mo", interval="1d")
+
+            # ── Pass 2: only fetch fundamentals for tickers with
+            #            valid price history — skips dead/delisted tickers
+            valid_tickers = tuple(
+                t for t in scan_tickers
+                if t in hf_prices and len(hf_prices[t]) >= 20
+            )
+            prog.progress(0.40, text=f"Fetching fundamentals for {len(valid_tickers)} active stocks (parallel)...")
+            hf_info = _batch_info(valid_tickers)
+            prog.progress(0.85, text="Computing strategy scores...")
+
+            for ticker in scan_tickers:
+                try:
+                    info   = hf_info.get(ticker, {})
+                    if not info or info.get("regularMarketPrice") is None:
+                        continue
+
+                    hist3m = hf_prices.get(ticker)
+                    if hist3m is None or len(hist3m) < 20:
+                        continue
+
+                    # ── Helpers ───────────────────────────────
+                    def _f(key, d=None):
+                        v = info.get(key)
+                        try:    return float(v) if v is not None else d
+                        except: return d
+
+                    closes  = hist3m["Close"]
+                    volumes = hist3m["Volume"]
+                    price   = float(closes.iloc[-1])
+
+                    # ── Price momentum signals ─────────────────
+                    p1w  = float(closes.iloc[-6])  if len(closes) >= 6  else price
+                    p1m  = float(closes.iloc[-22]) if len(closes) >= 22 else float(closes.iloc[0])
+                    p3m  = float(closes.iloc[0])
+
+                    chg_1w  = (price - p1w)  / p1w  * 100
+                    chg_1m  = (price - p1m)  / p1m  * 100
+                    chg_3m  = (price - p3m)  / p3m  * 100
+
+                    # ── Moving averages ────────────────────────
+                    sma20  = float(closes.rolling(20).mean().iloc[-1])
+                    sma50  = float(closes.rolling(min(50, len(closes))).mean().iloc[-1])
+                    vs_20  = (price - sma20) / sma20 * 100
+                    vs_50  = (price - sma50) / sma50 * 100
+                    # MA alignment: sma20 > sma50 = uptrend
+                    ma_aligned = sma20 > sma50
+
+                    # ── RSI (14) ───────────────────────────────
+                    delta  = closes.diff().dropna()
+                    gain   = delta.clip(lower=0).rolling(14).mean()
+                    loss   = (-delta.clip(upper=0)).rolling(14).mean()
+                    rs     = gain / loss.replace(0, float("nan"))
+                    rsi    = float((100 - 100 / (1 + rs)).iloc[-1]) if not rs.empty else 50.0
+                    rsi    = rsi if not pd.isna(rsi) else 50.0
+
+                    # ── Volume analysis ────────────────────────
+                    vol_5d   = float(volumes.iloc[-5:].mean())
+                    vol_20d  = float(volumes.iloc[-20:].mean())
+                    vol_surge = vol_5d / vol_20d if vol_20d > 0 else 1.0
+
+                    # ── ATR (14d) — volatility / position sizing
+                    high = hist3m["High"]
+                    low  = hist3m["Low"]
+                    tr   = pd.concat([
+                        high - low,
+                        (high - closes.shift(1)).abs(),
+                        (low  - closes.shift(1)).abs(),
+                    ], axis=1).max(axis=1)
+                    atr    = float(tr.rolling(14).mean().iloc[-1]) if len(tr) >= 14 else price * 0.02
+                    atr_pct = atr / price * 100   # ATR as % of price
+
+                    # ── 52-week positioning ────────────────────
+                    w52_high = _f("fiftyTwoWeekHigh")
+                    w52_low  = _f("fiftyTwoWeekLow")
+                    if w52_high and w52_low and w52_high > w52_low:
+                        pct_range = (price - w52_low) / (w52_high - w52_low) * 100  # 0=52wk low, 100=52wk high
+                    else:
+                        pct_range = 50.0
+
+                    # ── Fundamentals ───────────────────────────
+                    rev_growth  = (_f("revenueGrowth")  or 0) * 100
+                    earn_growth = (_f("earningsGrowth") or 0) * 100
+                    net_margin  = (_f("profitMargins")  or 0) * 100
+                    roe         = (_f("returnOnEquity") or 0) * 100
+                    pe          = _f("trailingPE")
+                    forward_pe  = _f("forwardPE")
+                    beta        = _f("beta", 1.0)
+                    market_cap  = _f("marketCap", 0)
+                    fcf         = _f("freeCashflow", 0)
+                    _short_raw  = _f("shortPercentOfFloat")
+                    short_pct   = _short_raw * 100 if _short_raw is not None else None
+
+                    # ── Analyst data ───────────────────────────
+                    rec_mean    = _f("recommendationMean")  # 1=strong buy, 5=sell
+                    analyst_score = max(0, min(100, (5 - (rec_mean or 3)) / 4 * 100))
+                    n_analysts  = _f("numberOfAnalystOpinions", 0)
+
+                    # Target price vs current
+                    target_price = _f("targetMeanPrice")
+                    upside       = ((target_price - price) / price * 100) if target_price and price else None
+
+                    name = info.get("shortName", ticker)[:28]
+
+                    # ══════════════════════════════════════════
+                    # STRATEGY SCORING
+                    # ══════════════════════════════════════════
+
+                    # ── 1. MOMENTUM ROCKET ─────────────────────
+                    # Sweet spot: RSI 52-72, above both MAs, volume expanding,
+                    # positive 1w & 1m, MAs aligned upward
+                    rsi_mom = min(100, max(0, 100 - abs(rsi - 62) * 4))  # peak at RSI=62
+                    ma_mom  = (
+                        (30 if vs_20 > 0 else 0) +
+                        (30 if vs_50 > 0 else 0) +
+                        (40 if ma_aligned else 0)
+                    )
+                    chg_mom = min(100, max(0, (chg_1w * 3 + chg_1m) / 4 * 5 + 50))
+                    vol_mom = min(100, max(0, (vol_surge - 0.8) / 1.2 * 100))
+                    momentum_score = (
+                        rsi_mom   * 0.25 +
+                        ma_mom    * 0.30 +
+                        chg_mom   * 0.25 +
+                        vol_mom   * 0.20
+                    )
+
+                    # ── 2. BOUNCE CANDIDATE ────────────────────
+                    # Oversold RSI (<38), stock above SMA50 long-term (intact bull trend),
+                    # strong fundamentals, near support
+                    rsi_bounce   = min(100, max(0, (45 - rsi) / 20 * 100))  # high score when RSI very low
+                    trend_intact = min(100, max(0, (vs_50 + 20) / 25 * 100))  # not too far below SMA50
+                    fund_bounce  = min(100, max(0, net_margin / 20 * 100)) * 0.5 + \
+                                   min(100, max(0, roe / 30 * 100)) * 0.5
+                    support_prox = min(100, max(0, 100 - pct_range))  # closer to 52wk low = more bounce potential
+                    bounce_score = (
+                        rsi_bounce   * 0.35 +
+                        trend_intact * 0.25 +
+                        fund_bounce  * 0.25 +
+                        support_prox * 0.15
+                    )
+
+                    # ── 3. GROWTH CATALYST ─────────────────────
+                    # Revenue + earnings accelerating, analyst upgrades, PE compression,
+                    # positive upside to price target
+                    rev_cat    = min(100, max(0, (rev_growth + 5)  / 60 * 100))
+                    earn_cat   = min(100, max(0, (earn_growth + 5) / 65 * 100))
+                    upsid_cat  = min(100, max(0, (upside or 0)     / 40 * 100)) if upside else 40
+                    pe_comp    = 0.0
+                    if pe and forward_pe and forward_pe > 0 and forward_pe < pe:
+                        pe_comp = min(100, (pe - forward_pe) / pe * 300)
+                    analyst_cat = analyst_score
+                    catalyst_score = (
+                        rev_cat     * 0.25 +
+                        earn_cat    * 0.25 +
+                        upsid_cat   * 0.20 +
+                        pe_comp     * 0.15 +
+                        analyst_cat * 0.15
+                    )
+
+                    # ── 4. BREAKOUT WATCH ──────────────────────
+                    # Near 52W high (85-97%), low recent volatility (coiling),
+                    # volume starting to expand, above all MAs
+                    near_high   = min(100, max(0, 100 - abs(pct_range - 91) * 3.5))  # sweet spot 85-97%
+                    vol_coiling = min(100, max(0, (1.5 - atr_pct) / 1.5 * 100))       # low ATR = coiling
+                    vol_expand  = min(100, max(0, (vol_surge - 0.9) / 1.1 * 100))
+                    above_mas   = (50 if vs_20 > 0 else 0) + (50 if vs_50 > 0 else 0)
+                    breakout_score = (
+                        near_high   * 0.35 +
+                        vol_coiling * 0.25 +
+                        vol_expand  * 0.20 +
+                        above_mas   * 0.20
+                    )
+
+                    # ── OVERALL RESEARCH SCORE ─────────────────
+                    best_score = max(momentum_score, bounce_score, catalyst_score, breakout_score)
+
+                    # Primary strategy classification
+                    scores_map = {
+                        "Momentum":  momentum_score,
+                        "Oversold":    bounce_score,
+                        "Growth":  catalyst_score,
+                        "Consolidating":  breakout_score,
+                    }
+                    primary_strategy = max(scores_map, key=scores_map.get)
+
+                    # Secondary strategy if close to primary
+                    sorted_strats = sorted(scores_map.items(), key=lambda x: x[1], reverse=True)
+                    secondary_strategy = sorted_strats[1][0] if sorted_strats[1][1] > sorted_strats[0][1] * 0.80 else None
+
+                    # ── RISK METRICS ───────────────────────────
+                    beta_risk    = min(100, max(0, abs((beta or 1.0) - 1.3) * 30))  # ideal beta ~1.3 for short-term
+                    vol_risk     = min(100, atr_pct / 8 * 100)                       # ATR > 8% is high risk
+                    short_risk   = (min(100, short_pct / 20 * 100)
+                                    if short_pct is not None else None)
+                    # An unknown short interest is excluded, not scored as zero
+                    # risk -- absent data must never make a company look safer.
+                    risk_score, risk_cov = _weighted_known([
+                        (beta_risk, 0.40), (vol_risk, 0.35), (short_risk, 0.25),
+                    ])
+                    if risk_score is None:
+                        risk_score = vol_risk
+                    # risk_score 0=low risk, 100=very high risk
+
+                    # ── POSITION SIZING ────────────────────────
+                    score_band_tier = (
+                        "high" if best_score >= 72 else
+                        "med"  if best_score >= 58 else
+                        "low"
+                    )
+                    pos_pct   = risk_caps[score_band_tier]
+                    # Reduce if risk is elevated
+                    if risk_score > 65:
+                        pos_pct *= 0.6
+                    elif risk_score > 45:
+                        pos_pct *= 0.8
+                    pos_value = portfolio_size * pos_pct
+
+                    # ── STOP LOSS & TARGET ─────────────────────
+                    # Stop: 1.5x ATR below current price (or SMA20 whichever is closer)
+                    stop_atr  = price - 1.5 * atr
+                    stop_sma  = sma20 * 0.98
+                    stop_loss = max(stop_atr, stop_sma)   # take the higher (tighter) stop
+                    stop_pct  = (price - stop_loss) / price * 100
+
+                    # Target: analyst consensus or 2x ATR extension upward
+                    if target_price and target_price > price:
+                        target = target_price
+                    else:
+                        target = price + 2.5 * atr
+                    reward_pct = (target - price) / price * 100
+                    rr_ratio   = reward_pct / stop_pct if stop_pct > 0 else 0
+
+                    rows.append({
+                        "ticker":             ticker,
+                        "name":               name,
+                        "best_score":         round(best_score, 1),
+                        "primary_strategy":   primary_strategy,
+                        "secondary_strategy": secondary_strategy or "",
+                        "momentum_score":     round(momentum_score,  1),
+                        "bounce_score":       round(bounce_score,    1),
+                        "catalyst_score":     round(catalyst_score,  1),
+                        "breakout_score":     round(breakout_score,  1),
+                        "score_band":         score_band_tier,
+                        "risk_score":         round(risk_score, 1),
+                        # Price data
+                        "price":              round(price, 2),
+                        "chg_1w":             round(chg_1w, 2),
+                        "chg_1m":             round(chg_1m, 2),
+                        "chg_3m":             round(chg_3m, 2),
+                        "rsi":                round(rsi, 1),
+                        "vol_surge":          round(vol_surge, 2),
+                        "vs_sma20":           round(vs_20, 2),
+                        "vs_sma50":           round(vs_50, 2),
+                        "atr_pct":            round(atr_pct, 2),
+                        "pct_52w_range":      round(pct_range, 1),
+                        "beta":               round(beta, 2) if beta else None,
+                        "short_pct":          round(short_pct, 1) if short_pct is not None else None,
+                        # Fundamentals
+                        "rev_growth":         round(rev_growth, 1),
+                        "earn_growth":        round(earn_growth, 1),
+                        "net_margin":         round(net_margin, 1),
+                        "roe":                round(roe, 1),
+                        "pe":                 round(pe, 1)    if pe    else None,
+                        "forward_pe":         round(forward_pe, 1) if forward_pe else None,
+                        "upside":             round(upside, 1) if upside else None,
+                        # Position management
+                        "pos_pct":            round(pos_pct * 100, 1),
+                        "pos_value":          round(pos_value, 0),
+                        "stop_loss":          round(stop_loss, 2),
+                        "stop_pct":           round(stop_pct, 1),
+                        "target":             round(target, 2),
+                        "reward_pct":         round(reward_pct, 1),
+                        "rr_ratio":           round(rr_ratio, 2),
+                        "market_cap":         market_cap,
+                    })
+
+                except Exception:
+                    continue
+
+            prog.empty()
+
+            hf_df = pd.DataFrame(rows)
+            hf_df = hf_df.sort_values("best_score", ascending=False).reset_index(drop=True)
+            st.session_state[hf_cache_key] = hf_df
+
+    hf_df = st.session_state.get(hf_cache_key)
+
+    if hf_df is None:
+        st.stop()  # gate is showing its own prompt — nothing to render yet
+    if hf_df.empty:
+        st.error(
+            "The scan finished but no stocks came back. This is usually a temporary "
+            "data-provider hiccup — press Run research scan to try again, or pick a "
+            "smaller universe in the sidebar."
+        )
+        st.stop()
+
+    # ── FUND OVERVIEW CARDS ───────────────────────────────────
+    total_picks   = len(hf_df[hf_df["best_score"] >= 55])
+    high_scoring     = len(hf_df[hf_df["score_band"] == "high"])
+    avg_volatility = hf_df[hf_df["atr_pct"] > 0]["atr_pct"].mean()
+    avg_research_score= hf_df["best_score"].mean()
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    metric_card("Stocks scanned",     str(len(hf_df)),             c1)
+    metric_card("High scoring",       str(high_scoring),              c2)
+    metric_card("Avg research score", f"{avg_research_score:.1f}",     c3)
+    metric_card("Avg volatility",     f"{avg_volatility:.1f}%" if not pd.isna(avg_volatility) else "—", c4)
+    metric_card("Risk profile",       risk_profile,                c5)
+
+    st.markdown("---")
+
+    # ── STRATEGY TABS ─────────────────────────────────────────
+    tab_all, tab_mom, tab_bnc, tab_cat, tab_brk, tab_risk, tab_returns = st.tabs([
+        "All companies", "Momentum", "Oversold", "Growth", "Consolidating", "Risk", "Scenarios",
+    ])
+
+    # ── Helper: render a strategy card grid ───────────────────
+    def render_pick_cards(df_strat, score_col, n=6):
+        top = df_strat.head(n)
+        cols = st.columns(min(3, len(top)))
+        for idx, (_, row) in enumerate(top.iterrows()):
+            col = cols[idx % 3]
+            score = row[score_col]
+            conv  = row["score_band"]
+            stop  = row["stop_pct"]
+            win_p = row["best_score"] / 100
+            exp_r = win_p * (row["reward_pct"] or 0) - (1 - win_p) * (row["stop_pct"] or 0)
+
+            border_clr = "#2f6b4f" if conv=="high" else "#8d7434" if conv=="med" else "#5f6672"
+            badge = "HIGH" if conv=="high" else "MED" if conv=="med" else "LOW"
+            sec   = f'<span style="font-size:0.72rem;color:#9aa1ad;">&nbsp;+{row["secondary_strategy"]}</span>' if row.get("secondary_strategy") else ""
+
+            snap   = generate_hf_summary(row.to_dict())
+            bull1  = snap["bull_factors"][0][:95] + "…" if snap["bull_factors"] and len(snap["bull_factors"][0]) > 95 else (snap["bull_factors"][0] if snap["bull_factors"] else "")
+            bear1  = snap["bear_factors"][0][:85] + "…" if snap["bear_factors"] and len(snap["bear_factors"][0]) > 85 else (snap["bear_factors"][0] if snap["bear_factors"] else "")
+
+            col.markdown(
+                f'<div style="background:#ffffff; border:1px solid #e7e4dd; '
+                f'border-top:4px solid {border_clr}; border-radius:4px; '
+                f'padding:1.2rem 1.3rem 1.1rem; margin-bottom:0.8rem; '
+                f'">'
+
+                # Header row
+                f'<div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:0.2rem;">'
+                f'  <div style="font-size:1.15rem; font-weight:800; color:#8d7434; letter-spacing:0.01em;">{row["ticker"]}{sec}</div>'
+                f'  <div style="font-size:0.68rem; font-weight:700; color:{border_clr}; letter-spacing:0.07em;">{badge}</div>'
+                f'</div>'
+                f'<div style="font-size:0.76rem; color:#5f6672; margin-bottom:0.6rem;">{row["name"]} &nbsp;·&nbsp; {row["primary_strategy"]}</div>'
+
+                # Score
+                f'<div style="font-size:2rem; font-weight:900; color:#12161f; line-height:1; margin-bottom:0.5rem;">{score:.0f}'
+                f'  <span style="font-size:0.8rem; font-weight:400; color:#9aa1ad;">/ 100</span>'
+                f'</div>'
+
+                # Metrics grid
+                f'<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.3rem; font-size:0.78rem; color:#5f6672; margin-bottom:0.5rem;">'
+                f'  <div><span style="color:#9aa1ad;font-size:0.68rem;">PRICE</span><br><b>${row["price"]:.2f}</b></div>'
+                f'  <div><span style="color:#9aa1ad;font-size:0.68rem;">WEEK</span><br><b style="color:{"#2f6b4f" if row["chg_1w"]>=0 else "#9b3b3b"}">{row["chg_1w"]:+.1f}%</b></div>'
+                f'  <div><span style="color:#9aa1ad;font-size:0.68rem;">RSI</span><br><b>{row["rsi"]:.0f}</b></div>'
+                f'  <div><span style="color:#9aa1ad;font-size:0.68rem;">TYP. DOWNSIDE</span><br><b style="color:#5f6672">−{stop:.1f}%</b></div>'
+                f'  <div><span style="color:#9aa1ad;font-size:0.68rem;">VOLATILITY</span><br><b style="color:#5f6672">{row["atr_pct"]:.1f}%</b></div>'
+                f'  <div><span style="color:#9aa1ad;font-size:0.68rem;">EXP. RET</span><br><b style="color:{"#2f6b4f" if exp_r>=0 else "#9b3b3b"}">{exp_r:+.1f}%</b></div>'
+                f'</div>'
+
+                # Bull snippet
+                + (f'<div style="padding:0.4rem 0.6rem; background:#f0fdf4; border-left:2px solid #2f6b4f; '
+                   f'border-radius:0 4px 4px 0; font-size:0.74rem; color:#1e4a2f; line-height:1.4; margin-bottom:0.3rem;">'
+                   f'▲ {bull1}</div>' if bull1 else "")
+
+                # Bear snippet
+                + (f'<div style="padding:0.4rem 0.6rem; background:#fff5f5; border-left:2px solid #9b3b3b; '
+                   f'border-radius:0 4px 4px 0; font-size:0.74rem; color:#4a1e1e; line-height:1.4; margin-bottom:0.5rem;">'
+                   f'▼ {bear1}</div>' if bear1 else "")
+
+                + f'<div style="padding:0.38rem 0.6rem; background:#f8fafc; border-radius:4px; '
+                f'font-size:0.74rem; color:#5f6672;">'
+                f'  📊 Beta <b>{row["beta"]:.2f}</b> &nbsp;·&nbsp; Analyst upside <b>{row["reward_pct"]:+.0f}%</b>'
+                f'</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+    # ── Helper: full table for a strategy ─────────────────────
+    def render_strategy_table(df_strat, score_col, label):
+        top = df_strat.head(hf_top_n * 2)
+        disp = top[[
+            "ticker", "name", score_col, "score_band",
+            "price", "chg_1w", "chg_1m", "rsi", "vol_surge",
+            "vs_sma20", "beta", "atr_pct", "pct_52w_range",
+            "stop_pct", "reward_pct",
+            "rev_growth", "earn_growth", "net_margin", "upside",
+        ]].copy()
+        disp.insert(0, "Rank", range(1, len(disp) + 1))
+        rename = {
+            "ticker": "Ticker", "name": "Company", score_col: f"📊 {label} Score",
+            "score_band": "Score band", "price": "Price",
+            "chg_1w": "Week %", "chg_1m": "Month %", "rsi": "RSI",
+            "vol_surge": "Vol Surge", "vs_sma20": "vs SMA20%",
+            "beta": "Beta", "atr_pct": "ATR%", "pct_52w_range": "52W Range%",
+            "stop_pct": "Typical downside%",
+            "reward_pct": "Analyst upside%",
+            "rev_growth": "Rev Gr%", "earn_growth": "EPS Gr%",
+            "net_margin": "Net Mgn%", "upside": "Analyst Upside%",
+        }
+        st.dataframe(
+            disp.rename(columns=rename),
+            hide_index=True, width="stretch",
+            height=min(600, 36 * len(disp) + 40),
+        )
+
+    # ════════════════════════════════
+    with tab_all:
+        st.markdown(f"### Top {hf_top_n * 2} picks across all strategies")
         st.markdown(
-            f'<div style="display:flex;align-items:baseline;gap:0.8rem;margin:0.2rem 0 0.2rem;">'
-            f'<span style="font-size:1.35rem;font-weight:680;color:{theme.INK};'
-            f'font-variant-numeric:tabular-nums;">{overall.done}</span>'
-            f'<span style="font-size:0.85rem;color:{theme.MUTED};">'
-            f'of {overall.total} topics done</span></div>'
-            f'<div style="height:3px;background:{theme.RULE};max-width:420px;">'
-            f'<div style="height:3px;width:{overall.fraction*100:.0f}%;'
-            f'background:{theme.BRASS};"></div></div>',
+            "Ranked by overall research score. Each company is tagged with the profile that best "
+            "describes its current characteristics, and a secondary profile where relevant."
+        )
+        top_all = hf_df.head(hf_top_n * 2)
+
+        cols = st.columns(3)
+        for idx, (_, row) in enumerate(top_all.head(6).iterrows()):
+            col = cols[idx % 3]
+            conv  = row["score_band"]
+            border_clr = "#2f6b4f" if conv=="high" else "#8d7434" if conv=="med" else "#5f6672"
+            badge = "HIGH" if conv=="high" else "MED" if conv=="med" else "LOW"
+            sec   = f' <span style="font-size:0.7rem;color:#9aa1ad;">+{row["secondary_strategy"]}</span>' if row.get("secondary_strategy") else ""
+            # Quick one-liner from the summary engine
+            snap  = generate_hf_summary(row.to_dict())
+            bull1 = snap["bull_factors"][0] if snap["bull_factors"] else ""
+            bull1_short = bull1[:90] + "…" if len(bull1) > 90 else bull1
+            col.markdown(
+                f'<div style="background:#ffffff; border:1px solid #e7e4dd; '
+                f'border-top:3px solid {border_clr}; border-radius:3px; '
+                f'padding:1rem 1.1rem 0.9rem; margin-bottom:0.6rem; '
+                f'">'
+                f'<div style="display:flex; justify-content:space-between;">'
+                f'  <span style="font-size:1rem; font-weight:700; color:#8d7434;">{row["ticker"]}</span>'
+                f'  <span style="font-size:0.65rem; font-weight:600; color:{border_clr};">{badge}</span>'
+                f'</div>'
+                f'<div style="font-size:0.7rem; color:#9aa1ad; margin:0.1rem 0 0.4rem;">'
+                f'  {row["primary_strategy"]}{sec}'
+                f'</div>'
+                f'<div style="font-size:1.6rem; font-weight:800; color:#12161f; line-height:1;">'
+                f'  {row["best_score"]:.0f}<span style="font-size:0.75rem;font-weight:400;color:#9aa1ad;"> / 100</span>'
+                f'</div>'
+                f'<hr style="border:none;border-top:1px solid #f0f4fa;margin:0.45rem 0;">'
+                f'<div style="font-size:0.75rem; color:#5f6672; display:grid; grid-template-columns:1fr 1fr; gap:0.2rem;">'
+                f'  <div>${row["price"]:.2f}</div>'
+                f'  <div style="color:{"#2f6b4f" if row["chg_1w"]>=0 else "#9b3b3b"}">{row["chg_1w"]:+.1f}% wk</div>'
+                f'  <div>Typical swing: <b style="color:#5f6672">{row["atr_pct"]:.1f}%</b></div>'
+                f'  <div>Beta: <b style="color:#5f6672">{row["beta"]:.2f}</b></div>'
+                f'</div>'
+                + (f'<div style="margin-top:0.5rem; padding:0.4rem 0.5rem; background:#f8fafc; '
+                   f'border-radius:4px; font-size:0.72rem; color:#5f6672; line-height:1.4; '
+                   f'border-left:2px solid #2f6b4f;">'
+                   f'▲ {bull1_short}'
+                   f'</div>' if bull1 else "")
+                + f'<div style="margin-top:0.4rem;font-size:0.72rem;color:#9aa1ad;">Volatility {row["atr_pct"]:.1f}% · Beta {row["beta"]:.2f}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("---")
+        render_strategy_table(hf_df, "best_score", "Research")
+
+        # Strategy distribution chart
+        st.markdown("---")
+        st.markdown("### Strategy distribution")
+        strat_counts = hf_df.head(50)["primary_strategy"].value_counts()
+        fig_dist = go.Figure(go.Pie(
+            labels=strat_counts.index.tolist(),
+            values=strat_counts.values.tolist(),
+            hole=0.55,
+            marker_colors=[GOLD, "#2563eb", "#2f6b4f", "#7c3aed"],
+            textinfo="label+percent",
+            textfont=dict(size=12),
+        ))
+        fig_dist.update_layout(**chart_layout(
+            height=320, showlegend=False,
+            title=dict(text="Primary strategy breakdown (top 50 picks)", font=dict(size=11, color=CHART_TEXT)),
+        ))
+        st.plotly_chart(fig_dist, width="stretch")
+
+        # ── Deep Dive panel ──────────────────────────────────────
+        st.markdown("---")
+        st.markdown("### Stock deep dive")
+        st.markdown("Select any stock from the scan to get a detailed narrative breakdown.")
+
+        dive_ticker = st.selectbox(
+            "Select stock to analyse",
+            hf_df["ticker"].tolist(),
+            key="hf_deep_dive_sel",
+        )
+        dive_row = hf_df[hf_df["ticker"] == dive_ticker].iloc[0].to_dict()
+        summary  = generate_hf_summary(dive_row)
+
+        # ── Header strip ─────────────────────────────────────────
+        strat      = dive_row.get("primary_strategy", "")
+        sec_strat  = dive_row.get("secondary_strategy", "")
+        conv       = dive_row.get("score_band", "med")
+        conv_clr   = "#2f6b4f" if conv=="high" else "#8d7434" if conv=="med" else "#5f6672"
+        conv_lbl   = {"high":"HIGH SCORE","med":"MID SCORE","low":"LOW SCORE"}.get(conv,"")
+
+        st.markdown(
+            f'<div style="background:#ffffff; border:1px solid #e7e4dd; border-radius:4px; '
+            f'padding:1.2rem 1.5rem; margin-bottom:1rem;">'
+            f'<div style="display:flex; justify-content:space-between; align-items:start; flex-wrap:wrap; gap:0.5rem;">'
+            f'  <div>'
+            f'    <div style="font-size:1.6rem; font-weight:800; color:#8d7434; line-height:1;">{dive_ticker}</div>'
+            f'    <div style="font-size:0.82rem; color:#5f6672; margin-top:0.2rem;">{dive_row.get("name","")}</div>'
+            f'  </div>'
+            f'  <div style="text-align:right;">'
+            f'    <div style="font-size:0.72rem; font-weight:700; color:{conv_clr}; letter-spacing:0.1em; '
+            f'text-transform:uppercase;">{conv_lbl}</div>'
+            f'    <div style="font-size:0.78rem; color:#5f6672; margin-top:0.2rem;">'
+            f'      {strat}{("  ·  " + sec_strat) if sec_strat else ""}'
+            f'    </div>'
+            f'  </div>'
+            f'</div>'
+            f'<hr style="border:none; border-top:1px solid #f0f4fa; margin:0.8rem 0;">'
+            f'<p style="font-size:0.88rem; color:#5f6672; line-height:1.65; margin:0;">{summary["overview"]}</p>'
+            f'</div>',
             unsafe_allow_html=True,
         )
-        if overall.complete:
-            st.caption("You have been through every topic.")
+
+        # ── Bull / Bear columns ──────────────────────────────────
+        col_bull, col_bear = st.columns(2)
+
+        with col_bull:
+            st.markdown(
+                '<div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:3px; padding:1rem 1.2rem;">'
+                '<div style="font-size:0.75rem; font-weight:700; color:#2f6b4f; letter-spacing:0.1em; '
+                'text-transform:uppercase; margin-bottom:0.6rem;">📈 Bull Case</div>',
+                unsafe_allow_html=True,
+            )
+            if summary["bull_factors"]:
+                for pt in summary["bull_factors"]:
+                    st.markdown(
+                        f'<div style="display:flex; gap:0.5rem; margin-bottom:0.5rem; font-size:0.83rem; color:#1e3a2f;">'
+                        f'  <span style="color:#2f6b4f; flex-shrink:0; font-weight:700; margin-top:0.05rem;">▲</span>'
+                        f'  <span style="line-height:1.5;">{pt}</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.markdown('<p style="font-size:0.83rem; color:#5f6672;">No strong bull signals identified.</p>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with col_bear:
+            st.markdown(
+                '<div style="background:#fff5f5; border:1px solid #fecaca; border-radius:3px; padding:1rem 1.2rem;">'
+                '<div style="font-size:0.75rem; font-weight:700; color:#9b3b3b; letter-spacing:0.1em; '
+                'text-transform:uppercase; margin-bottom:0.6rem;">📉 Bear Case & Risks</div>',
+                unsafe_allow_html=True,
+            )
+            if summary["bear_factors"]:
+                for pt in summary["bear_factors"]:
+                    st.markdown(
+                        f'<div style="display:flex; gap:0.5rem; margin-bottom:0.5rem; font-size:0.83rem; color:#3b1a1a;">'
+                        f'  <span style="color:#9b3b3b; flex-shrink:0; font-weight:700; margin-top:0.05rem;">▼</span>'
+                        f'  <span style="line-height:1.5;">{pt}</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.markdown('<p style="font-size:0.83rem; color:#5f6672;">No major risk flags on this metric set.</p>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        # ── Strategy note ────────────────────────────────────────
+        st.markdown(
+            f'<div style="background:#fffbeb; border:1px solid #fde68a; border-radius:3px; '
+            f'padding:0.9rem 1.2rem; margin-top:0.8rem;">'
+            f'<div style="font-size:0.75rem; font-weight:700; color:#92400e; letter-spacing:0.1em; '
+            f'text-transform:uppercase; margin-bottom:0.4rem;">🎯 Strategy rationale</div>'
+            f'<p style="font-size:0.85rem; color:#78350f; line-height:1.6; margin:0;">{summary["strategy_note"]}</p>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        # ── Risk management box ───────────────────────────────────
+        st.markdown(
+            f'<div style="background:#f8fafc; border:1px solid #e7e4dd; border-radius:3px; '
+            f'padding:0.9rem 1.2rem; margin-top:0.7rem;">'
+            f'<div style="font-size:0.75rem; font-weight:700; color:#5f6672; letter-spacing:0.1em; '
+            f'text-transform:uppercase; margin-bottom:0.4rem;">⚖️ Risk management</div>'
+            f'<p style="font-size:0.84rem; color:#5f6672; line-height:1.6; margin:0;">{summary["risk_note"]}</p>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        # ── Key metrics grid ─────────────────────────────────────
+        st.markdown("<div style='margin-top:1rem;'></div>", unsafe_allow_html=True)
+        m1, m2, m3, m4, m5, m6 = st.columns(6)
+        def _kpi(col, label, value, good_thresh=None, bad_thresh=None, fmt="{:.1f}", suffix=""):
+            try:
+                val_str = (fmt + suffix).format(value) if value is not None else "—"
+            except Exception:
+                val_str = str(value)
+            col.markdown(
+                f'<div style="background:#ffffff; border:1px solid #e7e4dd; border-top:3px solid #8d7434; '
+                f'border-radius:5px; padding:0.7rem 0.9rem; text-align:center;">'
+                f'<div style="font-size:0.62rem; color:#9aa1ad; text-transform:uppercase; letter-spacing:0.1em;">{label}</div>'
+                f'<div style="font-size:1.2rem; font-weight:800; color:#12161f; margin-top:0.2rem;">{val_str}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        _kpi(m1, "Price",       dive_row.get("price"),      fmt="${:.2f}", suffix="")
+        _kpi(m2, "Week chg",    dive_row.get("chg_1w"),     fmt="{:+.1f}", suffix="%")
+        _kpi(m3, "RSI (14)",    dive_row.get("rsi"),        fmt="{:.0f}")
+        _kpi(m4, "Beta",        dive_row.get("beta"),       fmt="{:.2f}")
+        _kpi(m5, "Typical low", dive_row.get("stop_loss"),  fmt="${:.2f}", suffix="")
+        _kpi(m6, "Beta",        dive_row.get("beta"),       fmt="{:.2f}", suffix="")
+
+        n1, n2, n3, n4, n5, n6 = st.columns(6)
+        _kpi(n1, "Rev growth",  dive_row.get("rev_growth"),   fmt="{:+.1f}", suffix="%")
+        _kpi(n2, "EPS growth",  dive_row.get("earn_growth"),  fmt="{:+.1f}", suffix="%")
+        _kpi(n3, "Net margin",  dive_row.get("net_margin"),   fmt="{:.1f}",  suffix="%")
+        _kpi(n4, "P/E (trail)", dive_row.get("pe"),           fmt="{:.1f}",  suffix="×")
+        _kpi(n5, "Fwd P/E",     dive_row.get("forward_pe"),   fmt="{:.1f}",  suffix="×")
+        _kpi(n6, "Analyst ↑",   dive_row.get("upside"),       fmt="{:+.1f}", suffix="%")
+
+        # ── Price chart ───────────────────────────────────────────
+        st.markdown("<div style='margin-top:1rem;'></div>", unsafe_allow_html=True)
+        try:
+            chart_hist = yf.Ticker(dive_ticker).history(period="6mo", interval="1d", auto_adjust=True)
+            if not chart_hist.empty:
+                closes_c   = chart_hist["Close"]
+                sma20_c    = closes_c.rolling(20).mean()
+                sma50_c    = closes_c.rolling(50).mean()
+
+                fig_dive = go.Figure()
+                fig_dive.add_trace(go.Candlestick(
+                    x=chart_hist.index,
+                    open=chart_hist["Open"], high=chart_hist["High"],
+                    low=chart_hist["Low"],   close=chart_hist["Close"],
+                    name=dive_ticker,
+                    increasing_line_color="#2f6b4f",
+                    decreasing_line_color="#9b3b3b",
+                    increasing_fillcolor="#2f6b4f",
+                    decreasing_fillcolor="#9b3b3b",
+                ))
+                fig_dive.add_trace(go.Scatter(
+                    x=chart_hist.index, y=sma20_c, name="SMA 20",
+                    line=dict(color=GOLD, width=1.5, dash="dot"),
+                ))
+                fig_dive.add_trace(go.Scatter(
+                    x=chart_hist.index, y=sma50_c, name="SMA 50",
+                    line=dict(color="#2563eb", width=1.5, dash="dash"),
+                ))
+                # Typical downside band
+                stop_val = dive_row.get("stop_loss")
+                if stop_val:
+                    fig_dive.add_hline(
+                        y=stop_val, line_dash="dash", line_color="#9b3b3b", line_width=1.2,
+                        annotation_text=f"Typical downside ${stop_val:.2f}",
+                        annotation_position="right",
+                        annotation_font=dict(color="#9b3b3b", size=10),
+                    )
+                # Target line
+                target_val = dive_row.get("target")
+                if target_val:
+                    fig_dive.add_hline(
+                        y=target_val, line_dash="dot", line_color="#2f6b4f", line_width=1.2,
+                        annotation_text=f"Target ${target_val:.2f}",
+                        annotation_position="right",
+                        annotation_font=dict(color="#2f6b4f", size=10),
+                    )
+
+                # Volume subplot
+                vol_colors = [
+                    "#2f6b4f" if chart_hist["Close"].iloc[i] >= chart_hist["Open"].iloc[i]
+                    else "#9b3b3b"
+                    for i in range(len(chart_hist))
+                ]
+                fig_dive.add_trace(go.Bar(
+                    x=chart_hist.index, y=chart_hist["Volume"],
+                    name="Volume", marker_color=vol_colors, opacity=0.4,
+                    yaxis="y2",
+                ))
+
+                fig_dive.update_layout(**chart_layout(
+                    height=440,
+                    xaxis_rangeslider_visible=False,
+                    yaxis=dict(gridcolor=CHART_GRID, linecolor=CHART_GRID, zeroline=False, domain=[0.25, 1]),
+                    yaxis2=dict(domain=[0, 0.20], showgrid=False, showticklabels=False),
+                    title=dict(
+                        text=f"{dive_ticker} — 6 months  |  SMA20 (gold)  ·  SMA50 (blue)  |  Typical downside (red)  ·  Analyst target (green)",
+                        font=dict(size=11, color=CHART_TEXT),
+                    ),
+                ))
+                st.plotly_chart(fig_dive, width="stretch")
+        except Exception:
+            st.info("Chart unavailable — data may be loading. Try switching tickers.")
+
+    # ════════════════════════════════
+    with tab_mom:
+        st.markdown("### Momentum")
+        st.markdown(
+            "Stocks in a **strong, confirmed uptrend** — above both moving averages, "
+            "RSI in the continuation sweet spot (52–72), and volume expanding. "
+            "Best held for **1–3 weeks** riding the trend."
+        )
+        mom_df = hf_df.sort_values("momentum_score", ascending=False)
+        render_pick_cards(mom_df, "momentum_score", n=hf_top_n)
+        st.markdown("---")
+        render_strategy_table(mom_df, "momentum_score", "Momentum")
+
+        st.markdown("---")
+        st.markdown("### Momentum score components — top picks")
+        top_mom = mom_df.head(min(hf_top_n, 10))
+        fig_mom = go.Figure()
+        for col, name, clr in [
+            ("chg_1w",    "Week Change%", PALETTE[0]),
+            ("vol_surge", "Vol Surge",    PALETTE[1]),
+            ("vs_sma20",  "vs SMA20%",    PALETTE[2]),
+        ]:
+            fig_mom.add_trace(go.Bar(name=name, x=top_mom["ticker"], y=top_mom[col], marker_color=clr))
+        fig_mom.update_layout(**chart_layout(barmode="group", height=320))
+        st.plotly_chart(fig_mom, width="stretch")
+
+    # ════════════════════════════════
+    with tab_bnc:
+        st.markdown("### Oversold")
+        st.markdown(
+            "Stocks that are **temporarily oversold** — RSI below 38, but sitting in a "
+            "broader uptrend with solid fundamentals. The bull thesis is intact; "
+            "this is a dip. Best held for **3–10 days** targeting a mean-reversion bounce."
+        )
+        bnc_df = hf_df[hf_df["rsi"] < 45].sort_values("bounce_score", ascending=False)
+        if bnc_df.empty:
+            st.info("No strongly oversold stocks found right now. The market may be in a broad uptrend. Try refreshing or expanding the universe.")
         else:
-            nxt = prog.next_unread(all_keys)
-            if nxt:
-                st.caption(f"Next up: {LESSONS_BY_KEY[nxt].title}")
+            render_pick_cards(bnc_df, "bounce_score", n=hf_top_n)
+            st.markdown("---")
+            render_strategy_table(bnc_df, "bounce_score", "Bounce")
 
-    for category in CATEGORIES:
-        items = [l for l in LESSONS if l.category == category]
-        if not items:
-            continue
-        cat_prog = prog.progress_for([l.key for l in items]) if prog else None
+            # RSI visualisation
+            st.markdown("---")
+            st.markdown("### RSI levels — bounce candidates")
+            top_bnc = bnc_df.head(min(hf_top_n, 12))
+            fig_rsi = go.Figure()
+            bar_clrs = [GOLD if r < 30 else "#2563eb" for r in top_bnc["rsi"]]
+            fig_rsi.add_trace(go.Bar(x=top_bnc["ticker"], y=top_bnc["rsi"], marker_color=bar_clrs, name="RSI (14)"))
+            fig_rsi.add_hline(y=30, line_dash="dash", line_color="#9b3b3b", line_width=1.2,
+                              annotation_text="Oversold (30)", annotation_position="right",
+                              annotation_font=dict(color="#9b3b3b", size=10))
+            fig_rsi.add_hline(y=45, line_dash="dot", line_color="#8d7434", line_width=1,
+                              annotation_text="Oversold threshold (45)", annotation_position="right",
+                              annotation_font=dict(color="#8d7434", size=10))
+            fig_rsi.update_layout(**chart_layout(height=300, yaxis_range=[0, 60], showlegend=False,
+                                                  title=dict(text="RSI (gold = extreme oversold)", font=dict(size=11, color=CHART_TEXT))))
+            st.plotly_chart(fig_rsi, width="stretch")
 
-        theme.section(category)
-        intro = CATEGORY_INTROS.get(category)
-        if intro:
-            st.markdown(
-                f'<div style="font-size:0.85rem;color:{theme.MUTED};line-height:1.6;'
-                f'max-width:76ch;margin:-0.2rem 0 0.45rem;">{intro}</div>',
+    # ════════════════════════════════
+    with tab_cat:
+        st.markdown("### Growth")
+        st.markdown(
+            "Stocks with **accelerating fundamentals** — revenue beating expectations, "
+            "earnings growing fast, analyst price targets well above current price. "
+            "A catalyst is building; best held for **2–4 weeks** into or around earnings."
+        )
+        cat_df = hf_df.sort_values("catalyst_score", ascending=False)
+        render_pick_cards(cat_df, "catalyst_score", n=hf_top_n)
+        st.markdown("---")
+        render_strategy_table(cat_df, "catalyst_score", "Catalyst")
+
+        # Analyst upside vs research score
+        st.markdown("---")
+        st.markdown("### Analyst upside vs catalyst score")
+        top_cat = cat_df[cat_df["upside"].notna()].head(min(hf_top_n * 2, 20))
+        if not top_cat.empty:
+            fig_cat = go.Figure(go.Scatter(
+                x=top_cat["catalyst_score"],
+                y=top_cat["upside"],
+                mode="markers+text",
+                text=top_cat["ticker"],
+                textposition="top center",
+                textfont=dict(size=9, color=CHART_TEXT),
+                marker=dict(
+                    size=top_cat["earn_growth"].clip(5, 60) / 3,
+                    color=top_cat["catalyst_score"],
+                    colorscale=[[0, "#e7e4dd"], [0.5, GOLD], [1, "#2f6b4f"]],
+                    showscale=True,
+                    colorbar=dict(title="Catalyst Score", thickness=10, len=0.6),
+                    line=dict(color="#ffffff", width=1),
+                ),
+            ))
+            fig_cat.update_layout(**chart_layout(
+                height=380,
+                xaxis_title="Catalyst Score",
+                yaxis_title="Analyst Upside %",
+                title=dict(text="Bubble size = earnings growth rate", font=dict(size=11, color=CHART_TEXT)),
+            ))
+            st.plotly_chart(fig_cat, width="stretch")
+
+    # ════════════════════════════════
+    with tab_brk:
+        st.markdown("### Consolidating")
+        st.markdown(
+            "Stocks **coiling near their 52-week high** with low volatility and starting "
+            "volume expansion — classic pre-breakout setup. Best held for "
+            "**1–2 weeks** once the breakout is confirmed with a volume surge."
+        )
+        brk_df = hf_df[hf_df["pct_52w_range"] >= 75].sort_values("breakout_score", ascending=False)
+        if brk_df.empty:
+            st.info("No pre-breakout setups found right now. Try a broader universe.")
+        else:
+            render_pick_cards(brk_df, "breakout_score", n=hf_top_n)
+            st.markdown("---")
+            render_strategy_table(brk_df, "breakout_score", "Breakout")
+
+            # 52-week range chart
+            st.markdown("---")
+            st.markdown("### Position in 52-week range (85–97% = ideal breakout zone)")
+            top_brk = brk_df.head(min(hf_top_n * 2, 15))
+            bar_clrs_brk = [
+                "#2f6b4f" if 85 <= r <= 97 else GOLD if r > 75 else "#e7e4dd"
+                for r in top_brk["pct_52w_range"]
+            ]
+            fig_brk = go.Figure(go.Bar(
+                x=top_brk["ticker"], y=top_brk["pct_52w_range"],
+                marker_color=bar_clrs_brk, name="52W Range %",
+            ))
+            fig_brk.add_hrect(y0=85, y1=97, fillcolor="rgba(22,163,74,0.07)",
+                               line_width=0, annotation_text="Ideal breakout zone",
+                               annotation_position="right",
+                               annotation_font=dict(color="#2f6b4f", size=10))
+            fig_brk.update_layout(**chart_layout(height=300, yaxis_range=[60, 105], showlegend=False,
+                                                  title=dict(text="Green = ideal breakout zone (85–97%)", font=dict(size=11, color=CHART_TEXT))))
+            st.plotly_chart(fig_brk, width="stretch")
+
+    # ════════════════════════════════
+    with tab_risk:
+        st.markdown("### Risk characteristics")
+        st.markdown(
+            "How volatile these companies have been, and how far their shares have historically moved. "
+            "These are descriptions of past behaviour — they are not guidance on what to buy, how much to "
+            "hold, or when to exit."
+        )
+
+        # Volatility vs analyst expectations. Deliberately NOT a risk/reward
+        # map with target lines: that framing presents a trade to execute.
+        top_risk = hf_df[hf_df["atr_pct"] > 0].head(40)
+        fig_rr = go.Figure(go.Scatter(
+            x=top_risk["atr_pct"],
+            y=top_risk["beta"],
+            mode="markers+text",
+            text=top_risk["ticker"],
+            textposition="top center",
+            textfont=dict(size=9, color=CHART_TEXT),
+            marker=dict(
+                size=12,
+                color=top_risk["best_score"],
+                colorscale=[[0, "#e7e4dd"], [0.5, GOLD], [1, "#2f6b4f"]],
+                showscale=True,
+                colorbar=dict(title="Research<br>score", thickness=10, len=0.6),
+                line=dict(color="#ffffff", width=1),
+            ),
+        ))
+        fig_rr.add_hline(y=1.0, line_dash="dot", line_color="#9aa1ad",
+                         annotation_text="Moves with the market (beta 1.0)",
+                         annotation_font=dict(color="#9aa1ad", size=10))
+        fig_rr.update_layout(**chart_layout(
+            height=420,
+            xaxis_title="Daily volatility (ATR as % of price)",
+            yaxis_title="Beta (sensitivity to the wider market)",
+            title=dict(text="Further right = larger daily swings. Higher up = amplifies market moves.",
+                       font=dict(size=11, color=CHART_TEXT)),
+        ))
+        st.plotly_chart(fig_rr, width="stretch")
+        st.caption(
+            "Beta above 1.0 means the shares have historically moved more than the market in both "
+            "directions. ATR is the average daily price range — a higher figure means larger day-to-day swings."
+        )
+
+        st.markdown("---")
+        st.markdown("### Risk characteristics table")
+
+        pos_cols = [
+            "ticker", "name", "best_score", "primary_strategy", "score_band",
+            "risk_score", "beta", "atr_pct", "short_pct",
+            "price", "stop_pct", "reward_pct",
+        ]
+        avail_pos = [c for c in pos_cols if c in hf_df.columns]
+        rename_pos = {
+            "ticker": "Ticker", "name": "Company",
+            "best_score": "Research score", "primary_strategy": "Profile",
+            "score_band": "Band", "risk_score": "Risk score",
+            "beta": "Beta", "atr_pct": "Volatility%", "short_pct": "Short%",
+            "price": "Price $", "stop_pct": "Typical downside%",
+            "reward_pct": "Analyst upside%",
+        }
+        st.dataframe(
+            hf_df[avail_pos].head(hf_top_n * 2).rename(columns=rename_pos),
+            hide_index=True, width="stretch",
+            height=min(700, 36 * hf_top_n * 2 + 40),
+        )
+
+        # Risk distribution
+        st.markdown("---")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("### Risk score distribution")
+            fig_risk_hist = go.Figure(go.Histogram(
+                x=hf_df["risk_score"], nbinsx=20,
+                marker_color=GOLD, opacity=0.75,
+                name="Risk score",
+            ))
+            fig_risk_hist.add_vline(x=45, line_dash="dot", line_color="#8d7434",
+                                    annotation_text="Moderate risk", annotation_font=dict(color="#8d7434", size=10))
+            fig_risk_hist.add_vline(x=65, line_dash="dash", line_color="#9b3b3b",
+                                    annotation_text="High risk", annotation_font=dict(color="#9b3b3b", size=10))
+            fig_risk_hist.update_layout(**chart_layout(height=280, showlegend=False,
+                                                         xaxis_title="Risk score (0=low, 100=high)"))
+            st.plotly_chart(fig_risk_hist, width="stretch")
+
+        with c2:
+            st.markdown("### Beta distribution")
+            valid_beta = hf_df["beta"].dropna()
+            fig_beta = go.Figure(go.Histogram(
+                x=valid_beta, nbinsx=20,
+                marker_color="#2563eb", opacity=0.75,
+                name="Beta",
+            ))
+            fig_beta.add_vline(x=1.0, line_dash="dot",  line_color="#5f6672",
+                               annotation_text="Market (β=1)", annotation_font=dict(color="#5f6672", size=10))
+            fig_beta.add_vline(x=1.5, line_dash="dash", line_color=GOLD,
+                               annotation_text="β=1.5", annotation_font=dict(color=GOLD, size=10))
+            fig_beta.update_layout(**chart_layout(height=280, showlegend=False, xaxis_title="Beta"))
+            st.plotly_chart(fig_beta, width="stretch")
+
+        st.markdown("---")
+        st.download_button(
+            "⬇ Download full fund scan as CSV",
+            data=hf_df.to_csv(index=False),
+            file_name=f"hedge_fund_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+        )
+
+    # ════════════════════════════════
+    with tab_returns:
+        st.markdown("### Return scenarios")
+        st.markdown(
+            "Filter by profile and score band, pick your companies, set a holding period, "
+            "and see projected returns adjust in real time — including compounding across "
+            "multiple rotations. Bull returns scale with hold time; stops are fixed."
+        )
+
+        # Reference hold periods per strategy (weeks) — used to time-scale bull returns.
+        # These represent the "full expected move" window for each strategy type.
+        STRATEGY_REF_HOLD: dict[str, float] = {
+            "Momentum":  4.0,   # ~1 month momentum burst
+            "Oversold":    3.0,   # ~3-week mean-reversion snap
+            "Growth":  8.0,   # ~2-month catalyst play
+            "Consolidating":  5.0,   # ~5-week breakout development
+        }
+
+        # ── Step 1: Filter controls ───────────────────────────────
+        st.markdown("#### 1 · Filter the candidate pool")
+        f1, f2 = st.columns(2)
+        with f1:
+            strat_filter = st.multiselect(
+                "Strategy types to include",
+                options=["Momentum", "Oversold", "Growth", "Consolidating"],
+                default=["Momentum", "Oversold", "Growth", "Consolidating"],
+                key="ret_strat_filter",
+            )
+        with f2:
+            conv_filter = st.multiselect(
+                "Score bands to include",
+                options=["high", "med", "low"],
+                default=["high", "med", "low"],
+                key="ret_conv_filter",
+            )
+
+        # Build filtered candidate pool
+        _cand = hf_df[
+            hf_df["primary_strategy"].isin(strat_filter) &
+            hf_df["score_band"].isin(conv_filter)
+        ].copy()
+
+        if _cand.empty:
+            st.warning("No companies match the selected profile / score band filters. Adjust the filters above.")
+            st.stop()
+
+        # Stock picker — label shows strategy + score so user knows what they're picking
+        _cand_labels = {
+            row["ticker"]: f"{row['ticker']}  ·  {row['primary_strategy']}  ·  score {row['best_score']:.0f}  ·  {row['score_band']}"
+            for _, row in _cand.iterrows()
+        }
+        default_tickers = list(_cand_labels.keys())[:min(10, len(_cand_labels))]
+        selected_tickers = st.multiselect(
+            "Stocks to include in projection",
+            options=list(_cand_labels.keys()),
+            default=default_tickers,
+            format_func=lambda t: _cand_labels[t],
+            key="ret_stock_picker",
+        )
+
+        if not selected_tickers:
+            st.info("Select at least one stock above to see projections.")
+            st.stop()
+
+        sel_df = _cand[_cand["ticker"].isin(selected_tickers)].copy()
+
+        # ── Step 2: Projection inputs ─────────────────────────────
+        st.markdown("---")
+        st.markdown("#### 2 · Set projection parameters")
+        pi1, pi2, pi3 = st.columns(3)
+        with pi1:
+            invest_total = st.number_input(
+                "Initial investment (£/$)", min_value=100, max_value=1_000_000,
+                value=int(portfolio_size), step=100, key="ret_invest",
+            )
+        with pi2:
+            hold_weeks = st.slider(
+                "Hold period per rotation (weeks)", 1, 16, 3, key="ret_weeks",
+                help="Bull return scales proportionally to this vs the strategy's reference hold period.",
+            )
+        with pi3:
+            n_rotations = st.slider(
+                "Number of rotations", 1, 20, 6, key="ret_rots",
+                help="How many times you re-deploy capital in succession (compounding chart).",
+            )
+
+        # ── Step 3: Allocation method ─────────────────────────────
+        st.markdown("---")
+        st.markdown("#### 3 · Allocation method")
+        alloc_method = st.radio(
+            "How to split capital across stocks",
+            options=["Score weighted (auto)", "Equal weight", "Custom weighting"],
+            horizontal=True,
+            key="ret_alloc_method",
+        )
+
+        n_sel = len(sel_df)
+
+        if alloc_method == "Score weighted (auto)":
+            _conv_w = {"high": 3, "med": 2, "low": 1}
+            sel_df["_w"] = sel_df["score_band"].map(_conv_w).fillna(1)
+            sel_df["alloc_pct"] = sel_df["_w"] / sel_df["_w"].sum() * 100
+        elif alloc_method == "Equal weight":
+            sel_df["alloc_pct"] = 100.0 / n_sel
+        else:  # Custom
+            # Seed with equal weight; user edits
+            sel_df["alloc_pct"] = (sel_df.get("pos_pct", pd.Series([100.0 / n_sel] * n_sel, index=sel_df.index))
+                                   .clip(0.1))
+            # Normalise seed
+            sel_df["alloc_pct"] = sel_df["alloc_pct"] / sel_df["alloc_pct"].sum() * 100
+
+            edit_df = sel_df[["ticker", "primary_strategy", "score_band", "alloc_pct"]].copy()
+            edit_df = edit_df.rename(columns={
+                "ticker": "Ticker", "primary_strategy": "Strategy",
+                "score_band": "Tier", "alloc_pct": "Allocation %",
+            })
+            st.caption("Edit the **Allocation %** column — values will be re-normalised automatically.")
+            edited = st.data_editor(
+                edit_df,
+                column_config={
+                    "Allocation %": st.column_config.NumberColumn(
+                        "Allocation %", min_value=0.1, max_value=100.0, step=0.5, format="%.1f %%"
+                    ),
+                    "Ticker":   st.column_config.TextColumn(disabled=True),
+                    "Strategy": st.column_config.TextColumn(disabled=True),
+                    "Tier":     st.column_config.TextColumn(disabled=True),
+                },
+                hide_index=True,
+                width="stretch",
+                key="ret_custom_alloc",
+            )
+            # Write normalised pct back to sel_df
+            raw_pcts = edited["Allocation %"].values
+            total_raw = raw_pcts.sum()
+            sel_df["alloc_pct"] = (raw_pcts / total_raw * 100) if total_raw > 0 else (100.0 / n_sel)
+
+        # Dollar allocation
+        sel_df["adj_alloc"] = sel_df["alloc_pct"] / 100 * invest_total
+
+        # ── Step 4: Time-adjusted return calculations ─────────────
+        sel_df["ref_hold"]   = sel_df["primary_strategy"].map(STRATEGY_REF_HOLD).fillna(2.5)
+        # Scale bull return proportionally to hold time vs reference window.
+        # Clip: minimum 0.1× (very short holds), maximum 3.0× (very long holds).
+        # This ensures 6w vs 13w always produces meaningfully different projections.
+        sel_df["time_scale"] = (hold_weeks / sel_df["ref_hold"]).clip(0.1, 3.0)
+
+        sel_df["win_prob"]  = (sel_df["best_score"] / 100 * 0.45 + 0.40).clip(0.40, 0.85)
+        # Bull scales with hold time; bear (stop) is fixed
+        sel_df["bull_ret"]  = (sel_df["reward_pct"].fillna(10) / 100) * sel_df["time_scale"]
+        sel_df["bear_ret"]  = -(sel_df["stop_pct"].fillna(5) / 100)
+        sel_df["base_ret"]  = (
+            sel_df["win_prob"] * sel_df["bull_ret"] +
+            (1 - sel_df["win_prob"]) * sel_df["bear_ret"]
+        )
+
+        sel_df["bull_value"]  = sel_df["adj_alloc"] * (1 + sel_df["bull_ret"])
+        sel_df["base_value"]  = sel_df["adj_alloc"] * (1 + sel_df["base_ret"])
+        sel_df["bear_value"]  = sel_df["adj_alloc"] * (1 + sel_df["bear_ret"])
+        sel_df["bull_profit"] = sel_df["bull_value"] - sel_df["adj_alloc"]
+        sel_df["base_profit"] = sel_df["base_value"] - sel_df["adj_alloc"]
+        sel_df["bear_profit"] = sel_df["bear_value"] - sel_df["adj_alloc"]
+
+        # Portfolio totals
+        port_invested = sel_df["adj_alloc"].sum()
+        port_bull     = sel_df["bull_value"].sum()
+        port_base     = sel_df["base_value"].sum()
+        port_bear     = sel_df["bear_value"].sum()
+        port_bull_pct = (port_bull - port_invested) / port_invested * 100
+        port_base_pct = (port_base - port_invested) / port_invested * 100
+        port_bear_pct = (port_bear - port_invested) / port_invested * 100
+
+        # ── Scenario headline cards ───────────────────────────────
+        st.markdown("---")
+        st.markdown(f"#### Portfolio projection — {hold_weeks}-week hold · {n_sel} positions")
+        sc1, sc2, sc3, sc4 = st.columns(4)
+
+        sc1.markdown(
+            f'<div style="background:#ffffff; border:1px solid #e7e4dd; border-top:4px solid #5f6672; '
+            f'border-radius:4px; padding:1.1rem 1.3rem;">'
+            f'<div style="font-size:0.68rem; color:#9aa1ad; text-transform:uppercase; letter-spacing:0.1em;">Invested</div>'
+            f'<div style="font-size:1.8rem; font-weight:900; color:#12161f; margin:0.2rem 0;">${invest_total:,.0f}</div>'
+            f'<div style="font-size:0.78rem; color:#5f6672;">{n_sel} positions · {alloc_method}</div>'
+            f'</div>', unsafe_allow_html=True,
+        )
+        sc2.markdown(
+            f'<div style="background:#f0fdf4; border:1px solid #bbf7d0; border-top:4px solid #2f6b4f; '
+            f'border-radius:4px; padding:1.1rem 1.3rem;">'
+            f'<div style="font-size:0.68rem; color:#2f6b4f; text-transform:uppercase; letter-spacing:0.1em; font-weight:700;">🐂 Bull Case</div>'
+            f'<div style="font-size:1.8rem; font-weight:900; color:#2f6b4f; margin:0.2rem 0;">${port_bull:,.0f}</div>'
+            f'<div style="font-size:0.9rem; font-weight:700; color:#2f6b4f;">+{port_bull_pct:.1f}%'
+            f'  <span style="font-size:0.75rem; font-weight:400; color:#4ade80;">(+${port_bull-port_invested:,.0f})</span></div>'
+            f'</div>', unsafe_allow_html=True,
+        )
+        sc3.markdown(
+            f'<div style="background:#fffbeb; border:1px solid #fde68a; border-top:4px solid #8d7434; '
+            f'border-radius:4px; padding:1.1rem 1.3rem;">'
+            f'<div style="font-size:0.68rem; color:#92400e; text-transform:uppercase; letter-spacing:0.1em; font-weight:700;">📊 Base Case</div>'
+            f'<div style="font-size:1.8rem; font-weight:900; color:#8d7434; margin:0.2rem 0;">${port_base:,.0f}</div>'
+            f'<div style="font-size:0.9rem; font-weight:700; color:#8d7434;">{port_base_pct:+.1f}%'
+            f'  <span style="font-size:0.75rem; font-weight:400; color:#d97706;">(${port_base-port_invested:+,.0f})</span></div>'
+            f'</div>', unsafe_allow_html=True,
+        )
+        sc4.markdown(
+            f'<div style="background:#fff5f5; border:1px solid #fecaca; border-top:4px solid #9b3b3b; '
+            f'border-radius:4px; padding:1.1rem 1.3rem;">'
+            f'<div style="font-size:0.68rem; color:#9b3b3b; text-transform:uppercase; letter-spacing:0.1em; font-weight:700;">🐻 Bear Case</div>'
+            f'<div style="font-size:1.8rem; font-weight:900; color:#9b3b3b; margin:0.2rem 0;">${port_bear:,.0f}</div>'
+            f'<div style="font-size:0.9rem; font-weight:700; color:#9b3b3b;">{port_bear_pct:+.1f}%'
+            f'  <span style="font-size:0.75rem; font-weight:400; color:#f87171;">(${port_bear-port_invested:+,.0f})</span></div>'
+            f'</div>', unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"<p style='font-size:0.8rem; color:#9aa1ad; margin-top:0.5rem;'>"
+            f"Bull returns are scaled to your {hold_weeks}-week hold (reference periods: "
+            + ", ".join(f"{k} {v}w" for k, v in STRATEGY_REF_HOLD.items()) +
+            f"). Downside estimates are based on volatility and do not vary with holding period.</p>",
+            unsafe_allow_html=True,
+        )
+
+        # ── Per-stock waterfall chart ─────────────────────────────
+        st.markdown("---")
+        st.markdown("### Per-stock projected profit / loss")
+
+        fig_proj = go.Figure()
+        fig_proj.add_trace(go.Bar(
+            name="Bull",
+            x=sel_df["ticker"],
+            y=sel_df["bull_profit"].round(0),
+            marker_color="#2f6b4f", opacity=0.85,
+            text=sel_df["bull_profit"].apply(lambda x: f"+${x:,.0f}"),
+            textposition="outside", textfont=dict(size=9, color="#2f6b4f"),
+        ))
+        fig_proj.add_trace(go.Bar(
+            name="Base",
+            x=sel_df["ticker"],
+            y=sel_df["base_profit"].round(0),
+            marker_color=GOLD, opacity=0.85,
+            text=sel_df["base_profit"].apply(lambda x: f"${x:+,.0f}"),
+            textposition="outside", textfont=dict(size=9, color="#8d7434"),
+        ))
+        fig_proj.add_trace(go.Bar(
+            name="Bear",
+            x=sel_df["ticker"],
+            y=sel_df["bear_profit"].round(0),
+            marker_color="#9b3b3b", opacity=0.75,
+            text=sel_df["bear_profit"].apply(lambda x: f"${x:+,.0f}"),
+            textposition="outside", textfont=dict(size=9, color="#9b3b3b"),
+        ))
+        fig_proj.add_hline(y=0, line_color="#e7e4dd", line_width=1)
+        fig_proj.update_layout(**chart_layout(
+            barmode="group", height=400,
+            yaxis_title="Projected profit / loss ($)",
+            title=dict(text=f"Per-stock P&L — {hold_weeks}-week hold", font=dict(size=11, color=CHART_TEXT)),
+        ))
+        st.plotly_chart(fig_proj, width="stretch")
+
+        # ── Detailed table ────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("### Full projection table")
+
+        proj_disp = sel_df[[
+            "ticker", "name", "primary_strategy", "score_band", "ref_hold", "time_scale",
+            "adj_alloc", "win_prob",
+            "bull_ret", "base_ret", "bear_ret",
+            "bull_value", "base_value", "bear_value",
+            "bull_profit", "base_profit", "bear_profit",
+        ]].copy()
+        proj_disp["win_prob"]   = (proj_disp["win_prob"]  * 100).round(0).astype(int).astype(str) + "%"
+        proj_disp["time_scale"] = proj_disp["time_scale"].apply(lambda x: f"{x:.2f}×")
+        proj_disp["ref_hold"]   = proj_disp["ref_hold"].apply(lambda x: f"{x:.1f}w")
+        proj_disp["bull_ret"]   = proj_disp["bull_ret"].apply(lambda x: f"{x*100:+.1f}%")
+        proj_disp["base_ret"]   = proj_disp["base_ret"].apply(lambda x: f"{x*100:+.1f}%")
+        proj_disp["bear_ret"]   = proj_disp["bear_ret"].apply(lambda x: f"{x*100:+.1f}%")
+        for c in ["adj_alloc","bull_value","base_value","bear_value","bull_profit","base_profit","bear_profit"]:
+            proj_disp[c] = proj_disp[c].apply(lambda x: f"${x:,.0f}")
+
+        proj_disp = proj_disp.rename(columns={
+            "ticker":"Ticker","name":"Company","primary_strategy":"Strategy","score_band":"Tier",
+            "ref_hold":"Ref Hold","time_scale":"Time Scale",
+            "adj_alloc":"Invested","win_prob":"Win Prob",
+            "bull_ret":"Bull Ret%","base_ret":"Base Ret%","bear_ret":"Bear Ret%",
+            "bull_value":"Bull Value","base_value":"Base Value","bear_value":"Bear Value",
+            "bull_profit":"Bull P&L","base_profit":"Base P&L","bear_profit":"Bear P&L",
+        })
+        proj_disp.insert(0, "#", range(1, len(proj_disp) + 1))
+        st.dataframe(proj_disp, hide_index=True, width="stretch",
+                     height=min(600, 36 * len(proj_disp) + 40))
+
+        # ── Compounding projection ────────────────────────────────
+        st.markdown("---")
+        st.markdown("### Compounding scenario")
+        st.markdown(
+            f"Reinvesting the full portfolio after each **{hold_weeks}-week** rotation, "
+            f"running **{n_rotations} rotations** in total. "
+            f"Each rotation uses the same time-adjusted base-case return ({port_base_pct:+.1f}% per rotation)."
+        )
+
+        rot_bull = port_bull_pct / 100
+        rot_base = port_base_pct / 100
+        rot_bear = port_bear_pct / 100
+
+        rotation_labels = ["Start"] + [f"R{r+1}" for r in range(n_rotations)]
+        bull_values_c   = [invest_total]
+        base_values_c   = [invest_total]
+        bear_values_c   = [invest_total]
+
+        for r in range(n_rotations):
+            bull_values_c.append(bull_values_c[-1] * (1 + rot_bull))
+            base_values_c.append(base_values_c[-1] * (1 + rot_base))
+            bear_values_c.append(bear_values_c[-1] * (1 + rot_bear))
+
+        fig_compound = go.Figure()
+        fig_compound.add_trace(go.Scatter(
+            x=rotation_labels, y=bull_values_c, name="Bull",
+            line=dict(color="#2f6b4f", width=2.5),
+            fill="tozeroy", fillcolor="rgba(22,163,74,0.07)",
+            mode="lines+markers", marker=dict(size=7, color="#2f6b4f"),
+        ))
+        fig_compound.add_trace(go.Scatter(
+            x=rotation_labels, y=base_values_c, name="Base",
+            line=dict(color=GOLD, width=2.5),
+            fill="tozeroy", fillcolor="rgba(184,150,12,0.07)",
+            mode="lines+markers", marker=dict(size=7, color=GOLD),
+        ))
+        fig_compound.add_trace(go.Scatter(
+            x=rotation_labels, y=bear_values_c, name="Bear",
+            line=dict(color="#9b3b3b", width=2, dash="dot"),
+            mode="lines+markers", marker=dict(size=6, color="#9b3b3b"),
+        ))
+        fig_compound.add_hline(
+            y=invest_total, line_dash="dot", line_color="#9aa1ad", line_width=1,
+            annotation_text="Starting capital", annotation_position="right",
+            annotation_font=dict(color="#9aa1ad", size=10),
+        )
+        fig_compound.update_layout(**chart_layout(
+            height=400,
+            yaxis_title="Portfolio value ($)",
+            yaxis_tickprefix="$", yaxis_tickformat=",.0f",
+            title=dict(
+                text=f"{n_rotations} rotations × {hold_weeks}-week holds — starting ${invest_total:,.0f}",
+                font=dict(size=11, color=CHART_TEXT),
+            ),
+        ))
+        st.plotly_chart(fig_compound, width="stretch")
+
+        # End state summary cards
+        e1, e2, e3 = st.columns(3)
+        final_bull_pct = (bull_values_c[-1] - invest_total) / invest_total * 100
+        final_base_pct = (base_values_c[-1] - invest_total) / invest_total * 100
+        final_bear_pct = (bear_values_c[-1] - invest_total) / invest_total * 100
+
+        total_weeks = hold_weeks * n_rotations
+        for col, label, val, pct, bg, bc in [
+            (e1, f"Bull · {n_rotations}×", bull_values_c[-1], final_bull_pct, "#f0fdf4", "#2f6b4f"),
+            (e2, f"Base · {n_rotations}×", base_values_c[-1], final_base_pct, "#fffbeb", "#8d7434"),
+            (e3, f"Bear · {n_rotations}×", bear_values_c[-1], final_bear_pct, "#fff5f5", "#9b3b3b"),
+        ]:
+            col.markdown(
+                f'<div style="background:{bg}; border:1px solid #e7e4dd; border-top:4px solid {bc}; '
+                f'border-radius:4px; padding:1rem 1.2rem; text-align:center;">'
+                f'<div style="font-size:0.72rem; color:{bc}; font-weight:700; text-transform:uppercase; letter-spacing:0.1em;">{label}</div>'
+                f'<div style="font-size:2rem; font-weight:900; color:{bc}; margin:0.3rem 0;">${val:,.0f}</div>'
+                f'<div style="font-size:0.9rem; font-weight:700; color:{bc};">{pct:+.1f}% total return</div>'
+                f'<div style="font-size:0.75rem; color:#5f6672; margin-top:0.2rem;">'
+                f'${val - invest_total:+,.0f} over {total_weeks}w ({n_rotations} rotations)</div>'
+                f'</div>',
                 unsafe_allow_html=True,
             )
-        if cat_prog:
-            tick = ("<span style='color:" + theme.POSITIVE + ";'>All done</span>"
-                    if cat_prog.complete else f"{cat_prog} done")
-            st.markdown(
-                f'<div style="font-size:0.73rem;color:{theme.FAINT};margin-bottom:0.6rem;">'
-                f'{tick} · about {sum(l.minutes for l in items)} minutes</div>',
-                unsafe_allow_html=True,
-            )
 
-        cols = st.columns(2, gap="large")
-        for i, lesson in enumerate(items):
-            with cols[i % 2]:
-                is_done = lesson.key in done_keys
-                title_colour = theme.MUTED if is_done else theme.INK
-                st.markdown(
-                    f'<div style="padding:0.9rem 0 0.2rem;border-top:1px solid {theme.RULE};">'
-                    f'<div style="font-size:0.9rem;font-weight:640;color:{title_colour};">'
-                    f'{lesson.title}</div>'
-                    f'<div style="font-size:0.82rem;color:{theme.MUTED};margin-top:0.2rem;'
-                    f'line-height:1.55;">{lesson.summary}</div>'
-                    f'<div style="font-size:0.72rem;color:{theme.FAINT};margin-top:0.3rem;">'
-                    f'{lesson.minutes} min read</div></div>',
-                    unsafe_allow_html=True,
-                )
-                # The tick is a control, not a marker. Previously the reader had
-                # to open a topic to change its state, which makes no sense for
-                # something they may already know.
-                read_col, tick_col = st.columns([1, 1.4])
-                with read_col:
-                    if st.button("Read again" if is_done else "Read",
-                                 key=f"_lesson_{lesson.key}"):
-                        st.session_state["_lesson"] = lesson.key
-                        st.rerun()
-                with tick_col:
-                    if prog:
-                        ticked = st.checkbox(
-                            "Done", value=is_done, key=f"_done_{lesson.key}",
-                        )
-                        if ticked != is_done:
-                            prog.mark_done(lesson.key) if ticked else prog.mark_undone(lesson.key)
-                            st.rerun()
-                st.markdown("<div style='height:0.9rem;'></div>", unsafe_allow_html=True)
+        st.markdown(
+            "<p style='font-size:0.78rem; color:#9aa1ad; margin-top:0.8rem;'>"
+            "Bull returns are scaled by your hold period relative to each strategy's reference window. "
+            "Bear/stop returns are fixed regardless of hold time. "
+            "Compounding assumes the same per-rotation return each cycle. "
+            "Scenario likelihood is derived from the research score (40%–85%). "
+            "Illustrative only — not financial advice."
+            "</p>",
+            unsafe_allow_html=True,
+        )
 
-    if prog and overall and overall.done:
-        theme.hairline()
-        if st.button("Reset progress", key="_reset_progress"):
-            prog.reset()
-            st.rerun()
-        st.caption("Progress is stored on this device only.")
+    # ── Disclaimer ───────────────────────────────────────────
+    st.markdown("---")
+    st.caption(
+        "This is a research and education tool, not financial advice, and nothing here is a "
+        "recommendation to buy or sell any investment. Scores describe a company's reported figures "
+        "and past price behaviour; they are not predictions. Analyst upside figures are other "
+        "analysts' published estimates, not forecasts from this platform. Investing carries risk and "
+        "you may get back less than you put in. Consider taking independent financial advice."
+    )
+
 
 elif page == "Discover":
 
@@ -2148,8 +3371,24 @@ elif page == "UK Investor":
 
     # ── ISA ──────────────────────────────────────────────────
     with tab_isa:
-        isa = LESSONS_BY_KEY["isa"]
-        st.markdown(isa.body)
+        st.markdown("""A Stocks and Shares ISA is a **wrapper**, not an investment. You choose what goes
+inside it; the wrapper decides how it is taxed.
+
+Inside one, gains and dividends are free of UK capital gains tax and dividend tax,
+and there is nothing to declare. Outside one, both can be taxable once you pass
+the annual allowances.
+
+There is a yearly limit on how much you can pay in, set by the government and
+occasionally changed. Unused allowance does not roll over.
+
+**What this does not tell you.** An ISA offers no protection from losses — the
+investments inside can fall like any others. The tax advantage only matters if
+there are gains to shelter, and it does not make an unsuitable investment
+suitable.
+
+Tax rules change and depend on your circumstances. This is general information,
+not tax advice.
+""")
 
         theme.section("The allowance, in short")
         theme.metric_table([
@@ -2166,8 +3405,23 @@ elif page == "UK Investor":
 
     # ── Costs and currency ───────────────────────────────────
     with tab_costs:
-        uk_us = LESSONS_BY_KEY["uk_vs_us"]
-        st.markdown(uk_us.body)
+        st.markdown("""UK-listed shares usually carry a `.L` suffix and trade in pounds, often quoted in
+pence rather than pounds — a price of 250 frequently means £2.50, which catches
+people out.
+
+US shares trade in dollars, so a UK investor takes on **currency risk**: if the
+pound strengthens against the dollar, your US holdings are worth less in pounds
+even if the share price has not moved. That works both ways.
+
+Brokers typically charge an FX fee to convert, and it is often a larger cost than
+the trading commission. It is worth knowing what yours charges before assuming a
+small position is cheap to hold.
+
+**Stamp duty** of 0.5% applies to most UK share purchases and not to US ones.
+
+**What this does not tell you.** None of this says which market is a better place
+to invest. It is a description of the friction, not the opportunity.
+""")
 
         theme.section("Costs worth checking with your provider")
         theme.metric_table([
