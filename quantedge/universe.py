@@ -36,6 +36,7 @@ INDICES = [
 
 BENCHMARKS = [
     Instrument("SPY", "SPDR S&P 500 ETF", "US", "etf", "USD"),
+    Instrument("QQQ", "Invesco QQQ (Nasdaq-100) ETF", "US", "etf", "USD"),
     Instrument("ISF.L", "iShares Core FTSE 100 ETF", "UK", "etf", "GBX"),
 ]
 
@@ -66,6 +67,8 @@ CATALOGUE: Dict[str, Instrument] = {i.symbol: i for i in INDICES + BENCHMARKS + 
 UNIVERSES: Dict[str, List[str]] = {
     "us_large": [s for s, _ in _US],
     "uk_large": [s for s, _ in _UK],
+    # Liquid US names for 5-minute research; Yahoo keeps ~60 days of 5-minute history.
+    "us_intraday": ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "AMZN"],
 }
 
 DEFAULT_WATCHLIST = ["AAPL", "MSFT", "NVDA", "JPM", "SHEL.L", "AZN.L", "HSBA.L", "RR.L"]

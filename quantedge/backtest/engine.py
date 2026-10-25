@@ -36,7 +36,9 @@ import pandas as pd
 from ..strategies.base import RebalanceStrategy, SignalStrategy
 from ..strategies.indicators import sma
 from . import metrics as M
+from ..markets import MARKETS
 from .costs import CostModel
+from .portfolio import SignalPortfolio
 
 
 @dataclass
@@ -106,143 +108,64 @@ def _finish(equity, exposure, trades, benchmark, dates, cfg, costs, notional) ->
 # Signal strategies (trend following)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def session_ends(index: pd.DatetimeIndex, tz: str) -> pd.Series:
+    """True on the last bar of each exchange-local trading day (intraday bars are naive UTC)."""
+    local_dates = pd.DatetimeIndex(index).tz_localize("UTC").tz_convert(tz).date
+    nxt = pd.Series(local_dates).shift(-1)
+    return pd.Series((pd.Series(local_dates) != nxt).values, index=index)
+
+
 def run_signal_backtest(strategy: SignalStrategy, params: Dict[str, Any], bars: Dict[str, pd.DataFrame],
                         market: str, config: Optional[BacktestConfig] = None, start=None, end=None,
-                        benchmark: Optional[pd.Series] = None) -> BacktestResult:
+                        benchmark: Optional[pd.Series] = None, intraday: bool = False) -> BacktestResult:
+    """
+    Drives SignalPortfolio over history. With intraday=True, positions are closed at
+    each session's last bar and metrics use the end-of-day equity curve (so Sharpe
+    and drawdown are on the same daily footing as the daily strategies).
+    """
     cfg = config or BacktestConfig()
-    cm = cfg.costs
     # Signals are computed on the full series (including warm-up before `start`).
     # This is safe because every indicator is causal, and tests enforce it.
     sigs = {s: strategy.generate(b, params) for s, b in bars.items() if not b.empty}
     dates = _period_dates(bars, start, end)
-    # Plain dict lookups: pandas .loc per symbol per day dominated run time.
+    # Plain dict lookups: pandas .loc per symbol per bar dominated run time.
     bar_rows = {s: b[["open", "high", "low", "close"]].to_dict("index") for s, b in bars.items() if not b.empty}
     sig_rows = {s: g[["entry", "exit", "stop_dist", "target_r", "max_bars", "reason"]].to_dict("index")
                 for s, g in sigs.items()}
+    ends = session_ends(dates, MARKETS[market].tz) if intraday and len(dates) else None
 
-    cash = cfg.initial_capital
-    positions: Dict[str, dict] = {}
-    pending_entries: List[dict] = []
-    pending_exits: Dict[str, str] = {}
-    last_close: Dict[str, float] = {}
-    trades: List[dict] = []
+    pf = SignalPortfolio(cfg, market)
     equity_curve: List[float] = []
     exposure_curve: List[float] = []
-    total_costs = 0.0
-    notional_traded = 0.0
-
-    def mark() -> float:
-        return cash + sum(p["shares"] * last_close.get(s, p["entry_price"]) for s, p in positions.items())
-
-    def close_position(sym: str, raw_price: float, ts, reason: str) -> None:
-        nonlocal cash, total_costs, notional_traded
-        pos = positions.pop(sym)
-        fill = cm.sell_price(raw_price)
-        proceeds = pos["shares"] * fill
-        fee = cm.fees(proceeds, "sell", market)
-        cash += proceeds - fee
-        implicit = pos["shares"] * (raw_price - fill)
-        total_costs += fee + implicit
-        notional_traded += proceeds
-        cost_basis = pos["shares"] * pos["entry_price"] + pos["entry_fee"]
-        net = proceeds - fee - cost_basis
-        trades.append({
-            "symbol": sym, "entry_ts": pos["entry_ts"], "entry_price": pos["entry_price"], "exit_ts": ts,
-            "exit_price": fill, "shares": pos["shares"], "costs": pos["entry_fee"] + pos["entry_implicit"] + fee + implicit,
-            "net_pnl": net, "return_pct": net / cost_basis, "bars_held": pos["bars_held"],
-            "entry_reason": pos["reason"], "exit_reason": reason,
-        })
-
     for d in dates:
         today = {s: rows[d] for s, rows in bar_rows.items() if d in rows}
-
-        # 1. Open: exits first, so their cash is available for entries.
-        for sym in list(pending_exits):
-            if sym in positions and sym in today:
-                close_position(sym, float(today[sym]["open"]), d, pending_exits.pop(sym))
-            elif sym not in positions:
-                pending_exits.pop(sym)
-        equity_at_open = mark()
-        for order in sorted(pending_entries, key=lambda o: o["symbol"]):
-            sym = order["symbol"]
-            if sym in positions or sym not in today or len(positions) >= cfg.max_positions:
-                continue
-            raw = float(today[sym]["open"])
-            fill = cm.buy_price(raw)
-            stop_dist = order["stop_dist"]
-            if not stop_dist or not np.isfinite(stop_dist) or stop_dist <= 0 or fill - stop_dist <= 0:
-                continue
-            shares = equity_at_open * cfg.risk_per_trade / stop_dist
-            shares = min(shares, equity_at_open * cfg.max_position_pct / fill)
-            fee_rate = (cm.uk_stamp_duty_bps if market == "UK" else 0) / 1e4 + cm.commission_bps / 1e4
-            shares = min(shares, max(cash - cm.commission_min, 0) / (fill * (1 + fee_rate)))
-            shares = math.floor(shares)
-            if shares < 1:
-                continue
-            notional = shares * fill
-            fee = cm.fees(notional, "buy", market)
-            cash -= notional + fee
-            implicit = shares * (fill - raw)
-            total_costs += fee + implicit
-            notional_traded += notional
-            tr = order["target_r"]
-            positions[sym] = {
-                "shares": shares, "entry_price": fill, "entry_ts": d, "entry_fee": fee, "entry_implicit": implicit,
-                "stop": fill - stop_dist,
-                "target": fill + tr * stop_dist if tr and np.isfinite(tr) else None,
-                "max_bars": order["max_bars"], "bars_held": 0, "reason": order["reason"], "entered": d,
-            }
-        pending_entries = []
-
-        # 2. Intraday: stops and targets.
-        for sym in list(positions):
-            if sym not in today:
-                continue
-            pos, bar = positions[sym], today[sym]
-            o, h, lo = float(bar["open"]), float(bar["high"]), float(bar["low"])
-            stop, target = pos["stop"], pos["target"]
-            if pos["entered"] != d and o <= stop:
-                close_position(sym, o, d, "stop_gap")
-            elif pos["entered"] != d and target is not None and o >= target:
-                close_position(sym, o, d, "target_gap")
-            elif lo <= stop:
-                close_position(sym, stop, d, "stop")
-            elif target is not None and h >= target:
-                close_position(sym, target, d, "target")
-
-        # 3. Close: bookkeeping, then queue tomorrow's orders.
-        for sym, bar in today.items():
-            last_close[sym] = float(bar["close"])
-        for sym, pos in positions.items():
-            if sym not in today:
-                continue
-            pos["bars_held"] += 1
-            sig = sig_rows[sym][d]
-            mb = pos["max_bars"]
-            if mb and np.isfinite(mb) and pos["bars_held"] >= mb:
-                pending_exits[sym] = "time_stop"
-            elif bool(sig["exit"]):
-                pending_exits[sym] = "exit_signal"
-        for sym in today:
-            sig = sig_rows[sym][d]
-            if bool(sig["entry"]) and sym not in positions:
-                pending_entries.append({"symbol": sym, "stop_dist": float(sig["stop_dist"]),
-                                        "target_r": float(sig["target_r"]), "max_bars": float(sig["max_bars"]),
-                                        "reason": sig["reason"]})
-
-        eq = mark()
-        equity_curve.append(eq)
-        exposure_curve.append((eq - cash) / eq if eq > 0 else 0.0)
+        pf.step(d, today, {s: sig_rows[s][d] for s in today}, session_end=bool(ends[d]) if ends is not None else False)
+        equity_curve.append(pf.mark())
+        exposure_curve.append(pf.exposure())
 
     # Liquidate whatever is still open at the last close, so P&L includes exit costs.
-    if positions and len(dates):
-        last = dates[-1]
-        for sym in list(positions):
-            close_position(sym, last_close[sym], last, "end_of_period")
-        equity_curve[-1] = cash
+    if pf.positions and len(dates):
+        pf.liquidate(dates[-1], "end_of_period")
+        equity_curve[-1] = pf.cash
         exposure_curve[-1] = 0.0
 
-    return _finish(equity_curve, exposure_curve, trades, benchmark, dates, cfg, total_costs, notional_traded)
+    if intraday and len(dates):
+        # Report on end-of-day equity; exposure is the day's average.
+        eq = pd.Series(equity_curve, index=dates)
+        ex = pd.Series(exposure_curve, index=dates)
+        day = pd.DatetimeIndex(dates).tz_localize("UTC").tz_convert(MARKETS[market].tz).normalize().tz_localize(None)
+        eq_d = eq.groupby(day).last()
+        ex_d = ex.groupby(day).mean()
+        bm_d = None
+        if benchmark is not None and not benchmark.dropna().empty:
+            # Benchmark = buy-and-hold from the first bar's close; one end-of-day value per session.
+            b = benchmark.reindex(dates).ffill().dropna()
+            bday = pd.DatetimeIndex(b.index).tz_localize("UTC").tz_convert(MARKETS[market].tz).normalize().tz_localize(None)
+            bm_d = b.groupby(bday).last()
+        return _finish(list(eq_d.values), list(ex_d.values), pf.trades, bm_d, eq_d.index, cfg,
+                       pf.total_costs, pf.notional_traded)
+    return _finish(equity_curve, exposure_curve, pf.trades, benchmark, dates, cfg, pf.total_costs,
+                   pf.notional_traded)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -370,5 +293,7 @@ def run_rebalance_backtest(strategy: RebalanceStrategy, params: Dict[str, Any], 
 
 
 def run_backtest(strategy, params, bars, market, config=None, start=None, end=None, benchmark=None) -> BacktestResult:
-    fn = run_rebalance_backtest if isinstance(strategy, RebalanceStrategy) else run_signal_backtest
-    return fn(strategy, params, bars, market, config, start, end, benchmark)
+    if isinstance(strategy, RebalanceStrategy):
+        return run_rebalance_backtest(strategy, params, bars, market, config, start, end, benchmark)
+    return run_signal_backtest(strategy, params, bars, market, config, start, end, benchmark,
+                               intraday=strategy.timeframe == "intraday")

@@ -11,6 +11,10 @@ QuantEdge command line.
     python3 -m quantedge.cli agents estimate                # what the next research cycle would cost
     python3 -m quantedge.cli agents run                     # needs QE_LLM_PROVIDER=anthropic + key
     python3 -m quantedge.cli agents approve 7 --note "ok"
+    python3 -m quantedge.cli refresh --intraday             # US 5-minute bars (~60 days on Yahoo)
+    python3 -m quantedge.cli worker                         # always-on scheduler (or: python3 -m quantedge.worker)
+    python3 -m quantedge.cli paper create --experiment 12 --approve --name "Breakout US"
+    python3 -m quantedge.cli health                         # exit code 0/1/2
     python3 -m quantedge.cli status                       # freshness, last jobs, experiments
     python3 -m quantedge.cli health                       # provider reachability
     python3 -m quantedge.cli dashboard                    # launch the web UI
@@ -40,7 +44,13 @@ def _symbols(args) -> list:
 
 
 def cmd_refresh(args) -> int:
-    from quantedge.data.service import refresh_daily
+    from quantedge.data.service import refresh_daily, refresh_intraday
+    if args.intraday:
+        from quantedge.universe import UNIVERSES
+        syms = _symbols(args) or UNIVERSES["us_intraday"]
+        for r in refresh_intraday(syms, trigger="cli"):
+            print(f"{r.symbol:10s} {r.status:10s} {r.rows:6d} rows  {r.message}")
+        return 0
     from quantedge.signals import scan_signals
     from quantedge.universe import BENCHMARKS
     syms = _symbols(args)
@@ -203,11 +213,55 @@ def cmd_status(args) -> int:
 
 
 def cmd_health(args) -> int:
-    from quantedge.data.providers import get_provider
-    p = get_provider()
-    ok, msg = p.healthcheck()
-    print(f"{p.info.name}: {'OK' if ok else 'FAIL'}: {msg}")
-    return 0 if ok else 1
+    """Exit 0 = healthy, 1 = warnings, 2 = errors (usable as a container health check)."""
+    from quantedge import health
+    checks = health.run_checks(include_worker=args.worker, force_provider=True)
+    if args.json:
+        print(json.dumps([c.__dict__ for c in checks], indent=2))
+    else:
+        for c in checks:
+            print(f"{'OK  ' if c.ok else ('ERR ' if c.level == 'error' else 'WARN')} {c.key:22s} {c.message}")
+    if any(not c.ok and c.level == "error" for c in checks):
+        return 2
+    return 1 if any(not c.ok for c in checks) else 0
+
+
+def cmd_worker(args) -> int:
+    from quantedge.worker import main as worker_main
+    argv = (["--once"] if args.once else []) + (["--run", args.run] if args.run else [])
+    return worker_main(argv)
+
+
+def cmd_paper(args) -> int:
+    from quantedge import paper
+    from quantedge.db import session_scope
+    from quantedge.db.models import PaperAccount
+    if args.action == "list":
+        with session_scope() as s:
+            for a in s.query(PaperAccount).order_by(PaperAccount.id):
+                sm = paper.summary(a.id)
+                print(f"#{a.id:<3d} {a.status:7s} {a.name:28s} {a.strategy_key:18s} {a.timeframe:8s} "
+                      f"equity {sm['equity']:,.0f} ({sm['return'] * 100:+.2f}%)  trades {sm['trades']}  "
+                      f"last bar {a.last_bar_ts:%Y-%m-%d %H:%M}")
+        return 0
+    if args.action == "create":
+        if not args.experiment or not args.approve:
+            print("Needs --experiment ID and --approve (you are explicitly approving paper trading).")
+            return 2
+        acct = paper.create_account(args.experiment, args.name or "", "human (cli)", args.note or "",
+                                    capital=args.capital)
+        print(f"Paper account #{acct} created; it trades only bars that arrive from now on.")
+        return 0
+    if args.action == "step":
+        print(paper.step_all())
+        return 0
+    if args.id is None:
+        print("Pass an account id")
+        return 2
+    paper.set_status(args.id, {"pause": "paused", "resume": "active", "close": "closed"}[args.action],
+                     "human (cli)", args.note or "")
+    print(f"Account #{args.id}: {args.action}d")
+    return 0
 
 
 def cmd_dashboard(args) -> int:
@@ -235,6 +289,7 @@ def main(argv=None) -> int:
     p = sub.add_parser("refresh", help="fetch daily bars, validate, store, scan signals")
     sym_args(p)
     p.add_argument("--years", type=int, default=None)
+    p.add_argument("--intraday", action="store_true", help="5-minute bars (default universe us_intraday)")
     p.set_defaults(fn=cmd_refresh)
 
     p = sub.add_parser("scan", help="record signal observations from stored bars")
@@ -285,7 +340,26 @@ def main(argv=None) -> int:
     p.set_defaults(fn=cmd_agents)
 
     sub.add_parser("status", help="data freshness and configuration").set_defaults(fn=cmd_status)
-    sub.add_parser("health", help="check the data provider is reachable").set_defaults(fn=cmd_health)
+    p = sub.add_parser("health", help="run health checks (exit 0 ok, 1 warnings, 2 errors)")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--worker", action="store_true", help="also require a live worker heartbeat")
+    p.set_defaults(fn=cmd_health)
+
+    p = sub.add_parser("worker", help="run the background worker (scheduled jobs)")
+    p.add_argument("--once", action="store_true")
+    p.add_argument("--run", help="run one job now: uk_eod_refresh, us_eod_refresh, us_intraday_poll, "
+                                 "health_check, research_cycle")
+    p.set_defaults(fn=cmd_worker)
+
+    p = sub.add_parser("paper", help="paper trading: list | create | step | pause | resume | close")
+    p.add_argument("action", choices=["list", "create", "step", "pause", "resume", "close"])
+    p.add_argument("id", nargs="?", type=int)
+    p.add_argument("--experiment", type=int, help="validated experiment to paper trade (create)")
+    p.add_argument("--approve", action="store_true", help="explicit human approval (create)")
+    p.add_argument("--name")
+    p.add_argument("--capital", type=float)
+    p.add_argument("--note")
+    p.set_defaults(fn=cmd_paper)
     p = sub.add_parser("dashboard", help="launch the web dashboard")
     p.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8503)))
     p.set_defaults(fn=cmd_dashboard)

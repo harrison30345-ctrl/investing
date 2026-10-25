@@ -20,6 +20,7 @@ from quantedge.markets import MARKETS
 from quantedge.strategies import REGISTRY
 from quantedge.ui import components as C
 from quantedge.universe import EQUITIES, UNIVERSES
+from quantedge.universe import get as catalogue_get
 
 pkey = D.provider()
 C.page_header("Strategy Lab", "Configure a deterministic strategy, run it on stored data, compare variants")
@@ -32,17 +33,25 @@ with cfg_col:
         strat = REGISTRY[skey]
         st.caption(strat.description)
 
+        intraday = strat.timeframe == "intraday"
+        presets = ["us_intraday"] if intraday else [u for u in UNIVERSES if u != "us_intraday"]
         mode = st.segmented_control("Universe", ["Preset", "Custom"], default="Preset", key="lab_umode") or "Preset"
         if mode == "Preset":
-            uname = st.selectbox("Preset universe", list(UNIVERSES), key="lab_universe",
-                                 format_func=lambda u: f"{u} ({len(UNIVERSES[u])} stocks)")
+            uname = st.selectbox("Preset universe", presets, key=f"lab_universe_{intraday}",
+                                 format_func=lambda u: f"{u} ({len(UNIVERSES[u])} symbols)")
             symbols = UNIVERSES[uname]
         else:
-            market = st.segmented_control("Market", ["US", "UK"], default="US", key="lab_mkt") or "US"
+            markets = ["US"] if intraday else ["US", "UK"]
+            market = st.segmented_control("Market", markets, default="US", key=f"lab_mkt_{intraday}") or "US"
             opts = [i.symbol for i in EQUITIES if i.market == market]
-            symbols = st.multiselect("Symbols", opts, default=opts[:5], key=f"lab_syms_{market}")
+            if intraday:
+                opts = list(dict.fromkeys(UNIVERSES["us_intraday"] + opts))
+            symbols = st.multiselect("Symbols", opts, default=opts[:5], key=f"lab_syms_{market}_{intraday}")
             uname = None
-        market = EQUITIES[[i.symbol for i in EQUITIES].index(symbols[0])].market if symbols else "US"
+        market = catalogue_get(symbols[0]).market if symbols else "US"
+        if intraday:
+            st.caption("Intraday: US 5-minute bars, about 60 days of history, so every result is a small sample. "
+                       "Positions are always closed at the session close.")
 
         period = st.segmented_control("Period", ["train", "validation"], default="train", key="lab_period",
                                       help="Develop on train. Use validation to check a choice you've already "
@@ -109,14 +118,20 @@ with cfg_col:
                        "it the result is overfitting.")
 
         # Pre-flight: is the data there?
-        stored = set(D.stored_symbols(pkey))
+        stored = set(D.stored_symbols(pkey, "5m" if intraday else "1d"))
         need = list(symbols) + [MARKETS[market].benchmark]
         missing = [s for s in need if s not in stored]
         if missing:
-            st.warning(f"No stored data for {len(missing)} symbol(s): {', '.join(missing[:8])}"
-                       f"{'…' if len(missing) > 8 else ''}")
+            st.warning(f"No stored {'5-minute' if intraday else 'daily'} data for {len(missing)} symbol(s): "
+                       f"{', '.join(missing[:8])}{'…' if len(missing) > 8 else ''}")
             if st.button("Fetch missing data", icon=":material/sync:", width="stretch"):
-                actions.refresh(missing, label="Fetching")
+                if intraday:
+                    from quantedge.data.service import refresh_intraday
+                    with st.spinner("Fetching 5-minute bars…"):
+                        refresh_intraday(missing)
+                    D.clear()
+                else:
+                    actions.refresh(missing, label="Fetching")
                 st.rerun()
 
         can_run = bool(symbols) and (run_mode == "Single" or len(sweep_values) >= 2)

@@ -127,7 +127,7 @@ def job_runs(limit: int = 20) -> pd.DataFrame:
     return pd.DataFrame(data)
 
 
-@st.cache_data(ttl=TTL, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False)
 def heartbeats() -> List[dict]:
     with session_scope() as s:
         return [{"service": h.service, "last_seen": h.last_seen, "status": h.status, "detail": h.detail}
@@ -135,8 +135,8 @@ def heartbeats() -> List[dict]:
 
 
 @st.cache_data(ttl=TTL, show_spinner=False)
-def stored_symbols(pkey: str) -> List[str]:
-    return [r.symbol for r in repo.freshness(pkey) if r.last_bar is not None]
+def stored_symbols(pkey: str, interval: str = "1d") -> List[str]:
+    return [r.symbol for r in repo.freshness(pkey, interval=interval) if r.last_bar is not None]
 
 
 # ── AI agents ───────────────────────────────────────────────────────────────
@@ -163,3 +163,15 @@ def proposals(limit: int = 500) -> pd.DataFrame:
 def llm_calls(limit: int = 500) -> pd.DataFrame:
     from quantedge.db.models import LLMCall
     return _rows(LLMCall, select(LLMCall).order_by(LLMCall.id.desc()).limit(limit))
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def open_alerts() -> List[dict]:
+    from quantedge.alerts import open_alerts as _open
+    return [{"key": a.key, "level": a.level, "message": a.message, "opened_at": a.opened_at,
+             "last_seen": a.last_seen} for a in _open()]
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def job_history(limit: int = 200) -> pd.DataFrame:
+    return job_runs(limit)

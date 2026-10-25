@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from quantedge.app import actions
+from quantedge.app import chrome
 from quantedge.app import data as D
 from quantedge.config import get_settings
 from quantedge.data.providers import provider_info
@@ -122,9 +123,18 @@ with left:
                                    "Reason": st.column_config.TextColumn(width="large")})
                 st.caption("Full detail (rules, risk, context) on the Signals page.")
         with t_intra:
-            C.empty_state("Intraday signals not built yet",
-                          "US opening-range breakout and VWAP continuation arrive in Phase 7, with a separate intraday "
-                          "data feed. Nothing intraday is being monitored now.")
+            intra = sig[sig["timeframe"] == "intraday"] if not sig.empty else sig
+            if intra.empty:
+                C.empty_state("No intraday signals",
+                              "Intraday rules (opening-range breakout, VWAP continuation) generate signals inside "
+                              "active intraday paper accounts while the worker polls 5-minute bars during the US "
+                              "session. None are running.")
+            else:
+                st.dataframe(pd.DataFrame({
+                    "Time": pd.to_datetime(intra["ts"]), "Symbol": intra["symbol"],
+                    "Strategy": intra["strategy_key"].map(lambda k: REGISTRY[k].name if k in REGISTRY else k),
+                    "Type": intra["kind"], "Reason": intra["reason"]}).head(12), hide_index=True,
+                    use_container_width=True, column_config={"Time": st.column_config.DatetimeColumn(format="DD MMM HH:mm")})
 
 with right:
     info = provider_info()
@@ -224,9 +234,11 @@ with c1:
             st.caption("Evidence and full reports are on the AI Research page.")
 with c2:
     with C.panel("agents", "Background agents & workers"):
-        hb = {h["service"]: h for h in D.heartbeats()}
-        rows = [("Scheduler / worker", "Runs refreshes, scans and cycles on a timetable",
-                 C.pill("", "online", "ok") if "worker" in hb else C.pill("", "not running", "off"))]
+        from datetime import datetime as _dt
+        w = next((h for h in D.heartbeats() if h["service"] == "worker"), None)
+        alive = w and w["status"] == "ok" and _dt.utcnow() - w["last_seen"] < chrome.WORKER_STALE_AFTER
+        rows = [("Scheduler / worker", f"last heartbeat {C.ago(w['last_seen'])}" if w else "never started",
+                 C.pill("", "online", "ok") if alive else C.pill("", "not running", "off"))]
         for key in list(SPECIALIST_ORDER) + ["director"]:
             mine = tasks[tasks["agent"] == key] if not tasks.empty else tasks
             if mine.empty:
@@ -251,6 +263,7 @@ with c3:
             C.list_rows(rows[:4])
         else:
             C.empty_state("No activity yet", "Data refreshes, scans and backtests appear here.")
-        st.caption("Upcoming (UK time). Not executing until the worker is deployed.")
+        st.caption("Upcoming (UK time). " + ("Worker online." if alive else
+                                             "These run only while the worker is running."))
         C.list_rows([(j.name, j.description, C.esc(C.fmt_time(t, "%a %H:%M")) if t is not None else "—")
                      for j, t in upcoming()[:4]])

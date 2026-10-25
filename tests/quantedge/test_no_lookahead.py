@@ -14,7 +14,7 @@ from conftest import random_walk
 from quantedge.strategies import REGISTRY, SignalStrategy
 from quantedge.strategies.indicators import atr, ema, prior_high, prior_low, sma, total_return
 
-SIGNAL_STRATEGIES = [s for s in REGISTRY.values() if isinstance(s, SignalStrategy)]
+SIGNAL_STRATEGIES = [s for s in REGISTRY.values() if isinstance(s, SignalStrategy) and s.timeframe == "daily"]
 COLS = ["entry", "exit", "stop_dist"]
 
 

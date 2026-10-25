@@ -108,8 +108,11 @@ def validate_experiment(payload: dict) -> Tuple[List[str], dict]:
     if len(markets) > 1:
         errors.append("Symbols span UK and US; one market per backtest")
     market = markets.pop() if len(markets) == 1 else "US"
+    intraday = strat.timeframe == "intraday"
+    if intraday and market != "US":
+        errors.append("Intraday strategies are US-only")
     pkey = get_settings().data_provider
-    stored = {r.symbol for r in repo.freshness(pkey) if r.last_bar is not None}
+    stored = {r.symbol for r in repo.freshness(pkey, interval="5m" if intraday else "1d") if r.last_bar is not None}
     missing = [s for s in symbols + [MARKETS[market].benchmark] if s not in stored]
     if missing:
         errors.append(f"No stored data for {', '.join(missing[:6])} (agents cannot fetch data)")

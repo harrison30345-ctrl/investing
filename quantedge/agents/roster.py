@@ -38,8 +38,8 @@ How to work:
   variants are common reasons a backtest flatters a strategy.
 - Proposed experiments must use an existing strategy_key and only its listed parameters, within their min/max or
   choices. `period` is "train" for new ideas; use "validation" only for a configuration already run on train, to
-  check it. You can never use the test period. Universe is "us_large", "uk_large", or comma-separated symbols
-  from one market. Propose at most 3 experiments, each with a falsifiable hypothesis.
+  check it. You can never use the test period. Universe is "us_large", "uk_large", "us_intraday" (intraday
+  strategies only), or comma-separated symbols from one market. Propose at most 3 experiments, each with a falsifiable hypothesis.
 - Anything that would change strategy rules, add a new strategy, change risk limits or promote to paper trading
   goes in `proposed_changes`; a human must approve it. Leave lists empty when you have nothing worth proposing.
 - Write for someone learning quantitative trading: plain English, short sentences, no hype.
@@ -61,10 +61,10 @@ SPECS: Dict[str, AgentSpec] = {
     "intraday": AgentSpec(
         "intraday", "Intraday Research", "Researches intraday setups separately from daily strategies.",
         schemas.SPECIALIST,
-        "Your remit: intraday strategies (US opening-range breakout, VWAP continuation). None are implemented and no "
-        "intraday data is stored, so you can make no performance findings. Produce precise, testable rule "
-        "specifications (entry, exit, session times, time stop, costs) and the data needed to test them, as "
-        "strategy_change proposals. Do not propose experiments: no intraday strategy exists to run."),
+        "Your remit: intraday strategies only (opening-range breakout, VWAP continuation) on US 5-minute bars, "
+        "universe \"us_intraday\". The history is only ~60 days, so treat every result as a small sample and say "
+        "so. Focus on whether costs, the entry cutoff and stop placement explain the results, and propose rule "
+        "changes that need new code as strategy_change proposals with precise, testable specifications."),
     "risk": AgentSpec(
         "risk", "Risk Manager", "Challenges exposure, drawdowns, losing streaks and fragility.",
         schemas.SPECIALIST,

@@ -4,10 +4,12 @@ from __future__ import annotations
 from typing import Dict
 
 from .base import Param, RebalanceStrategy, SignalStrategy, Strategy
+from .intraday import OpeningRangeBreakout, VwapContinuation
 from .momentum import CrossSectionalMomentum
 from .trend import DonchianBreakout, EmaPullback
 
-REGISTRY: Dict[str, Strategy] = {s.key: s for s in (EmaPullback(), DonchianBreakout(), CrossSectionalMomentum())}
+REGISTRY: Dict[str, Strategy] = {s.key: s for s in (EmaPullback(), DonchianBreakout(), CrossSectionalMomentum(),
+                                                    OpeningRangeBreakout(), VwapContinuation())}
 
 
 def get_strategy(key: str) -> Strategy:

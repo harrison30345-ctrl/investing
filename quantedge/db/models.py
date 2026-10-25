@@ -279,3 +279,91 @@ class Proposal(Base):
     decided_by: Mapped[Optional[str]] = mapped_column(String(48), nullable=True)
     decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     decision_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Paper trading (Phase 7). Separate tables from backtests on purpose: a paper
+# account only ever moves forward from the moment a human approved it, on bars
+# that arrive after that moment. No real orders, no broker.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class PaperAccount(Base):
+    __tablename__ = "paper_accounts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    status: Mapped[str] = mapped_column(String(12), index=True)        # active | paused | closed
+    strategy_key: Mapped[str] = mapped_column(String(48))
+    params: Mapped[dict] = mapped_column(JSON)
+    universe: Mapped[list] = mapped_column(JSON)
+    market: Mapped[str] = mapped_column(String(4))
+    timeframe: Mapped[str] = mapped_column(String(8))                  # daily | intraday
+    config: Mapped[dict] = mapped_column(JSON)
+    data_provider: Mapped[str] = mapped_column(String(16))
+    starting_capital: Mapped[float] = mapped_column(Float)
+    source_experiment_id: Mapped[int] = mapped_column(Integer)
+    proposal_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    approved_by: Mapped[str] = mapped_column(String(48))
+    approval_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    started_after: Mapped[datetime] = mapped_column(DateTime)          # only bars after this are traded
+    last_bar_ts: Mapped[datetime] = mapped_column(DateTime)
+    last_step_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    state: Mapped[dict] = mapped_column(JSON, default=dict)            # SignalPortfolio.to_state()
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    status_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class PaperEvent(Base):
+    __tablename__ = "paper_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    account_id: Mapped[int] = mapped_column(Integer, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    ts: Mapped[datetime] = mapped_column(DateTime)                     # bar the event belongs to
+    type: Mapped[str] = mapped_column(String(12))                      # order | fill | note
+    side: Mapped[Optional[str]] = mapped_column(String(6), nullable=True)
+    symbol: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    shares: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    fees: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    detail: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+
+class PaperTrade(Base):
+    __tablename__ = "paper_trades"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    account_id: Mapped[int] = mapped_column(Integer, index=True)
+    symbol: Mapped[str] = mapped_column(String(32))
+    entry_ts: Mapped[datetime] = mapped_column(DateTime)
+    entry_price: Mapped[float] = mapped_column(Float)
+    exit_ts: Mapped[datetime] = mapped_column(DateTime)
+    exit_price: Mapped[float] = mapped_column(Float)
+    shares: Mapped[float] = mapped_column(Float)
+    costs: Mapped[float] = mapped_column(Float)
+    net_pnl: Mapped[float] = mapped_column(Float)
+    return_pct: Mapped[float] = mapped_column(Float)
+    bars_held: Mapped[int] = mapped_column(Integer)
+    entry_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    exit_reason: Mapped[str] = mapped_column(String(32))
+
+
+class PaperEquity(Base):
+    __tablename__ = "paper_equity"
+    account_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, primary_key=True)
+    equity: Mapped[float] = mapped_column(Float)
+    cash: Mapped[float] = mapped_column(Float)
+    exposure: Mapped[float] = mapped_column(Float)
+
+
+class Alert(Base):
+    """Health problems. One open alert per key; resolved automatically when the check passes again."""
+    __tablename__ = "alerts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(80), index=True)
+    level: Mapped[str] = mapped_column(String(8))                      # warning | error
+    message: Mapped[str] = mapped_column(Text)
+    opened_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_seen: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    notified: Mapped[bool] = mapped_column(Boolean, default=False)

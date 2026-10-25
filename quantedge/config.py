@@ -106,3 +106,12 @@ def load_settings() -> Settings:
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return load_settings()
+
+
+def alert_webhook_url() -> Optional[str]:
+    """Optional: POST alerts as JSON to this URL (Slack/Discord-compatible `text` field). Unset = log only."""
+    return _env("QE_ALERT_WEBHOOK_URL")
+
+
+def worker_tick_seconds() -> float:
+    return float(_env("QE_WORKER_TICK_S", "30") or 30)

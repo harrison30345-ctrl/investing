@@ -19,6 +19,7 @@ from .db import session_scope
 from .db.models import JobRun, Signal, utcnow
 from .strategies import REGISTRY, SignalStrategy
 from .strategies.indicators import adjusted_ohlc
+from .markets import last_completed_session
 from .universe import get as catalogue_get
 
 
@@ -36,12 +37,17 @@ def scan_signals(symbols: Iterable[str], lookback_sessions: int = 10, provider: 
                  trigger: str = "manual") -> int:
     symbols = list(symbols)
     pkey = provider or get_settings().data_provider
-    strategies = [s for s in REGISTRY.values() if isinstance(s, SignalStrategy)]
+    strategies = [s for s in REGISTRY.values() if isinstance(s, SignalStrategy) and s.timeframe == "daily"]
     found: List[dict] = []
     for sym in symbols:
         raw = repo.load_bars(pkey, sym)
         inst = catalogue_get(sym)
         if raw.empty or inst.kind == "index":
+            continue
+        # A refresh during market hours can store today's unfinished bar; never treat it as a close.
+        done = last_completed_session(inst.market)
+        raw = raw[raw.index <= pd.Timestamp(done)] if done else raw.iloc[0:0]
+        if raw.empty:
             continue
         bars = adjusted_ohlc(raw)
         as_of = bars.index[-1]

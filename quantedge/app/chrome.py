@@ -19,7 +19,7 @@ from quantedge.universe import CATALOGUE
 from . import data as D
 
 MARKETS_PAGE = "screens/markets.py"
-WORKER_STALE_AFTER = timedelta(minutes=15)
+WORKER_STALE_AFTER = timedelta(minutes=3)   # matches health.WORKER_STALE
 
 ASSETS = Path(__file__).resolve().parent / "assets"
 
@@ -76,13 +76,19 @@ def _status_pills() -> str:
     for m in ("UK", "US"):
         ss = session_status(m)
         parts.append(pill(MARKETS[m].short, f"{ss.label}", "ok" if ss.is_open else "off", ss.detail))
-    hb = D.heartbeats()
-    live = [h for h in hb if h["last_seen"] and datetime.utcnow() - h["last_seen"] < WORKER_STALE_AFTER]
-    if live:
-        parts.append(pill("Worker", "online", "ok", f"Heartbeat {ago(max(h['last_seen'] for h in live))}"))
+    w = next((h for h in D.heartbeats() if h["service"] == "worker"), None)
+    if w and w["status"] == "ok" and datetime.utcnow() - w["last_seen"] < WORKER_STALE_AFTER:
+        parts.append(pill("Worker", "online", "ok", f"Heartbeat {ago(w['last_seen'])}"))
+    elif w and w["status"] == "stopped":
+        parts.append(pill("Worker", "stopped", "off", f"Stopped {ago(w['last_seen'])}. Scheduled jobs are not running."))
     else:
-        parts.append(pill("Worker", "not running", "off",
-                          "No background worker heartbeat. Scheduled jobs are not executing (Phase 7)."))
+        parts.append(pill("Worker", "not running", "off" if not w else "err",
+                          "No recent worker heartbeat. Scheduled refreshes, paper trading and health checks are not "
+                          "running. Start it with: python3 -m quantedge.worker"))
+    alerts = D.open_alerts()
+    if alerts:
+        worst = "err" if any(a["level"] == "error" for a in alerts) else "warn"
+        parts.append(pill("Alerts", str(len(alerts)), worst, " | ".join(a["message"] for a in alerts[:5])))
     return f'<div class="qe-topbar-status">{"".join(parts)}</div>'
 
 

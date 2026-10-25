@@ -141,3 +141,57 @@ def refresh_daily(symbols: Iterable[str], provider: Optional[MarketDataProvider]
         job.status = "ok" if ok == len(results) else ("partial" if ok else "failed")
         job.detail = f"{ok}/{len(results)} symbols updated via {pkey}"
     return results
+
+
+def refresh_intraday(symbols: Iterable[str], interval: str = "5m", provider: Optional[MarketDataProvider] = None,
+                     days: int = 59, trigger: str = "manual") -> List[RefreshResult]:
+    """
+    Fetch and store intraday bars (naive UTC). Incremental after the first load: only the
+    last two days are re-requested, which also picks up corrections to recent bars.
+    """
+    from .validation import validate_intraday
+    provider = provider or get_provider()
+    pkey = provider.info.key
+    minutes = int(interval.rstrip("m"))
+    results: List[RefreshResult] = []
+    with session_scope() as s:
+        job = JobRun(job="refresh_intraday", status="running", trigger=trigger,
+                     detail=f"{interval} bars via {pkey}")
+        s.add(job)
+        s.flush()
+        job_id = job.id
+    for sym in [x.strip().upper() for x in symbols if x.strip()]:
+        inst = catalogue_get(sym)
+        with session_scope() as s:
+            last = repo.last_bar_ts(s, pkey, sym, interval)
+        start = (last - timedelta(days=2)).date() if last else date.today() - timedelta(days=days)
+        t0 = time.monotonic()
+        try:
+            df = clean_daily(provider.fetch_intraday(sym, interval, start, date.today()))
+        except SymbolNotFound as exc:
+            with session_scope() as s:
+                repo.log_fetch(s, pkey, sym, interval, "not_found", message=str(exc))
+            results.append(RefreshResult(sym, "not_found", message=str(exc)))
+            continue
+        except ProviderError as exc:
+            with session_scope() as s:
+                repo.log_fetch(s, pkey, sym, interval, "error", message=str(exc))
+            results.append(RefreshResult(sym, "error", message=str(exc)))
+            continue
+        ms = int((time.monotonic() - t0) * 1000)
+        with session_scope() as s:
+            repo.ensure_instrument(s, sym)
+            n = repo.upsert_bars(s, pkey, sym, interval, df)
+            repo.log_fetch(s, pkey, sym, interval, "ok", rows=n, duration_ms=ms)
+        q = validate_intraday(repo.load_bars(pkey, sym, interval), sym, inst.market, minutes,
+                              expected_last=last_completed_session(inst.market))
+        with session_scope() as s:
+            repo.save_quality(s, pkey, interval, q)
+        results.append(RefreshResult(sym, "ok", n, quality_ok=q.ok))
+    ok = sum(r.status == "ok" for r in results)
+    with session_scope() as s:
+        job = s.get(JobRun, job_id)
+        job.finished_at = utcnow()
+        job.status = "ok" if ok == len(results) else ("partial" if ok else "failed")
+        job.detail = f"{ok}/{len(results)} symbols, {interval} bars via {pkey}"
+    return results

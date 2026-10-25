@@ -30,6 +30,9 @@ from .splits import PERIODS, chronological_split
 log = logging.getLogger(__name__)
 
 
+INTRADAY_INTERVAL = "5m"
+
+
 class TestSetLocked(PermissionError):
     """Raised when the untouched test period is requested without confirmation."""
 
@@ -43,8 +46,13 @@ def _prepare(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     return out.dropna(subset=["open", "high", "low", "close"])
 
 
-def bias_notes(universe_name: Optional[str], provider: str) -> List[str]:
+def bias_notes(universe_name: Optional[str], provider: str, intraday: bool = False) -> List[str]:
     notes = []
+    if intraday:
+        notes.append("Short sample: Yahoo keeps only ~60 days of 5-minute bars, so this covers a few dozen sessions "
+                     "at most. Treat any result as anecdotal.")
+        notes.append("Fills assume the next 5-minute bar's open plus the cost model; real slippage around the open "
+                     "and on breakouts is often larger.")
     if universe_name in UNIVERSES or universe_name is None:
         notes.append("Survivorship bias: universe is today's large caps; delisted or demoted companies are missing.")
     if provider == "yahoo":
@@ -78,12 +86,16 @@ def run_experiment(strategy_key: str, params: Optional[Dict[str, Any]] = None, *
     if len(markets) != 1:
         raise ValueError("A backtest must use one market (one currency). Split UK and US runs.")
     market = markets.pop()
+    intraday = strategy.timeframe == "intraday"
+    interval = INTRADAY_INTERVAL if intraday else "1d"
+    if intraday and market != "US":
+        raise ValueError("Intraday strategies are US-only for now (session rules are written for NYSE hours).")
     bench_sym = MARKETS[market].benchmark
 
     with session_scope() as s:
         exp = Experiment(strategy_key=strategy.key, params=p, universe=syms, market=market, period=period,
                          used_test_set=period in ("test", "full"), config=cfg.to_dict(), data_provider=pkey,
-                         benchmark=bench_sym, status="running", bias_notes=bias_notes(universe, pkey),
+                         benchmark=bench_sym, status="running", bias_notes=bias_notes(universe, pkey, intraday),
                          source=source, notes=notes, batch=batch, parent_id=parent_id)
         s.add(exp)
         s.flush()
@@ -91,25 +103,38 @@ def run_experiment(strategy_key: str, params: Optional[Dict[str, Any]] = None, *
 
     try:
         bars = {}
+        # Intraday bars are used as stored (unadjusted, US dollars); daily bars are adjusted and in major units.
+        prep = (lambda df, sym: df.dropna(subset=["open", "high", "low", "close"])) if intraday else _prepare
         for sym in syms:
-            raw = repo.load_bars(pkey, sym)
+            raw = repo.load_bars(pkey, sym, interval)
             if raw.empty:
-                log.warning("%s: no stored data for provider %s; excluded", sym, pkey)
+                log.warning("%s: no stored %s data for provider %s; excluded", sym, interval, pkey)
                 continue
-            bars[sym] = _prepare(raw, sym)
+            bars[sym] = prep(raw, sym)
         if not bars:
-            raise RuntimeError(f"No stored price data for any symbol under provider {pkey!r}. Run a refresh first.")
-        bench_raw = repo.load_bars(pkey, bench_sym)
-        benchmark = _prepare(bench_raw, bench_sym)["close"] if not bench_raw.empty else None
+            raise RuntimeError(f"No stored {interval} price data for any symbol under provider {pkey!r}. "
+                               "Run a refresh first.")
+        bench_raw = repo.load_bars(pkey, bench_sym, interval)
+        benchmark = prep(bench_raw, bench_sym)["close"] if not bench_raw.empty else None
 
         all_dates = pd.DatetimeIndex(sorted(set().union(*[set(b.index) for b in bars.values()])))
-        # The warm-up decides where the train/validation/test split starts. Sweeps and re-tests pass
-        # min_warmup so every variant is judged on exactly the same dates.
-        warm = max(strategy.warmup_bars(p), int(min_warmup))
-        if len(all_dates) <= warm + 30:
-            raise RuntimeError(f"Only {len(all_dates)} sessions stored; strategy needs {warm} warm-up + 30.")
-        split = chronological_split(all_dates[warm:])
-        start, end = split.window(period)
+        if intraday:
+            # Split by whole sessions so no day is cut in half between train and validation.
+            local_day = all_dates.tz_localize("UTC").tz_convert(MARKETS[market].tz).normalize().tz_localize(None)
+            sessions = pd.DatetimeIndex(sorted(set(local_day)))
+            warm = 0
+            split = chronological_split(sessions)
+            d0, d1 = split.window(period)
+            in_window = all_dates[(local_day >= d0) & (local_day <= d1)]
+            start, end = in_window[0], in_window[-1]
+        else:
+            # The warm-up decides where the train/validation/test split starts. Sweeps and re-tests pass
+            # min_warmup so every variant is judged on exactly the same dates.
+            warm = max(strategy.warmup_bars(p), int(min_warmup))
+            if len(all_dates) <= warm + 30:
+                raise RuntimeError(f"Only {len(all_dates)} sessions stored; strategy needs {warm} warm-up + 30.")
+            split = chronological_split(all_dates[warm:])
+            start, end = split.window(period)
 
         result: BacktestResult = run_backtest(strategy, p, bars, market, cfg, start, end, benchmark)
         _store(exp_id, result, start, end, split, missing=[x for x in syms if x not in bars], warmup=warm)

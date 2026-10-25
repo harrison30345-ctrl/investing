@@ -122,3 +122,57 @@ def validate_daily(df: pd.DataFrame, symbol: str, market: str, *, is_index: bool
                             lag))
 
     return QualityResult(symbol, len(df), idx[0], idx[-1], issues)
+
+
+def validate_intraday(df: pd.DataFrame, symbol: str, market: str, interval_minutes: int = 5,
+                      expected_last: Optional[date] = None) -> QualityResult:
+    """
+    Intraday checks: duplicates, ordering, missing values, OHLC sanity, bars outside the
+    regular session, and sessions with missing bars. Bars are naive UTC.
+    """
+    issues: List[Issue] = []
+    if df is None or df.empty:
+        return QualityResult(symbol, 0, None, None, [Issue("empty", "error", "No intraday bars stored")])
+    idx = pd.DatetimeIndex(df.index)
+    dupes = idx[idx.duplicated()]
+    if len(dupes):
+        issues.append(Issue("duplicates", "error", "Duplicate timestamps", len(dupes), _ex(dupes)))
+    df = clean_daily(df)
+    idx = pd.DatetimeIndex(df.index)
+    price = df[["open", "high", "low", "close"]]
+    nan_rows = df.index[price.isna().any(axis=1)]
+    if len(nan_rows):
+        issues.append(Issue("missing_values", "error", "Bars with missing OHLC values", len(nan_rows), _ex(nan_rows)))
+    tol = 1e-6
+    bad_hl = df.index[(df["high"] + tol < price.max(axis=1)) | (df["low"] - tol > price.min(axis=1))]
+    if len(bad_hl):
+        issues.append(Issue("ohlc_inconsistent", "warning", "High/low don't bracket open/close", len(bad_hl),
+                            _ex(bad_hl)))
+
+    from ..markets import schedule
+    sched = schedule(market, idx[0].date(), idx[-1].date())
+    utc = idx.tz_localize("UTC")
+    inside = pd.Series(False, index=idx)
+    gaps, gap_examples = 0, []
+    for day, row in sched.iterrows():
+        mask = (utc >= row["market_open"]) & (utc < row["market_close"])
+        inside |= pd.Series(mask, index=idx)
+        n = int(mask.sum())
+        expected = int((row["market_close"] - row["market_open"]).total_seconds() // (interval_minutes * 60))
+        if 0 < n < expected:
+            gaps += expected - n
+            gap_examples.append(day.strftime("%Y-%m-%d"))
+        elif n == 0 and day.date() < idx[-1].date():
+            gaps += expected
+            gap_examples.append(day.strftime("%Y-%m-%d") + " (no bars)")
+    outside = idx[~inside.values]
+    if len(outside):
+        issues.append(Issue("outside_session", "warning", "Bars outside regular trading hours", len(outside),
+                            _ex(outside)))
+    if gaps:
+        issues.append(Issue("missing_bars", "warning" if gaps < 50 else "error",
+                            f"Missing {interval_minutes}-minute bars within sessions", gaps, gap_examples[:5]))
+    if expected_last is not None and idx[-1].date() < expected_last:
+        issues.append(Issue("stale", "warning", f"Latest bar {idx[-1]:%Y-%m-%d %H:%M} UTC; last completed session "
+                                                f"{expected_last:%Y-%m-%d}", 1))
+    return QualityResult(symbol, len(df), idx[0], idx[-1], issues)

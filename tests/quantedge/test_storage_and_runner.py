@@ -42,7 +42,7 @@ def test_failed_experiment_is_kept(isolated_db):
         run_experiment("ema_pullback", symbols=["AAPL"], period="train")  # nothing stored yet
     with session_scope() as s:
         e = s.query(Experiment).one()
-        assert e.status == "failed" and "No stored price data" in e.error
+        assert e.status == "failed" and "No stored 1d price data" in e.error
 
 
 def test_signal_scan_writes_labelled_observations(isolated_db):

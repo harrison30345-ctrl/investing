@@ -104,7 +104,7 @@ def data_coverage() -> dict:
             "latest_bar": max((r.last_bar for r in rows), default=None).strftime("%Y-%m-%d") if rows else None,
             "symbols_with_quality_issues": sorted(r.symbol for r in rows if r.quality_ok is False),
             "universes": {"us_large": "20 US large caps", "uk_large": "20 UK large caps"},
-            "intraday_bars_stored": 0}
+            }
 
 
 def _family_pack(family: str, exps: List[dict]) -> dict:
@@ -149,14 +149,17 @@ def build(agent_key: str) -> Dict[str, Any]:
     if agent_key == "momentum":
         return {**base, **_family_pack("momentum", exps)}
     if agent_key == "intraday":
+        from ..data import repository as repo
         from ..data.providers import provider_info as pinfo
+        from ..config import get_settings
         info = pinfo()
-        return {**base, "intraday_strategies_implemented": [],
-                "intraday_data": {"provider": info.name, "intervals": list(info.intraday_intervals),
-                                  "max_history_days": info.max_intraday_days, "bars_stored": 0},
-                "planned_hypotheses": ["US opening-range breakout", "VWAP trend continuation"],
-                "constraint": "No intraday backtests exist yet, so no performance claims are possible. Propose "
-                              "designs and data requirements only (as strategy_change proposals)."}
+        stored = [r for r in repo.freshness(get_settings().data_provider, interval="5m") if r.last_bar is not None]
+        return {**base, **_family_pack("intraday", exps),
+                "intraday_data": {"provider": info.name, "interval": "5m", "max_history_days": info.max_intraday_days,
+                                  "symbols_stored": sorted(r.symbol for r in stored),
+                                  "universe_for_experiments": "us_intraday"},
+                "constraint": "Intraday history is ~60 days (a few dozen sessions), so every result is a small "
+                              "sample. US only. Positions are always closed at the session close."}
     if agent_key == "risk":
         completed = [e for e in exps if e["status"] == "completed"][-MAX_EXPERIMENTS:]
         rows = []

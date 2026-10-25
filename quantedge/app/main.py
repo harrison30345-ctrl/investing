@@ -36,6 +36,7 @@ pages = {
     "Research": [P("screens/signals.py", "Signals", "bolt"),
                  P("screens/strategy_lab.py", "Strategy Lab", "science"),
                  P("screens/backtests.py", "Backtests", "history"),
+                 P("screens/paper.py", "Paper Trading", "account_balance_wallet"),
                  P("screens/ai_research.py", "AI Research", "neurology")],
     "Output": [P("screens/reports.py", "Reports", "description")],
     "System": [P("screens/settings.py", "Settings", "tune")],
