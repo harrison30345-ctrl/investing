@@ -45,6 +45,14 @@ class Settings:
     llm_model: str
     anthropic_api_key: Optional[str]
     llm_monthly_budget_usd: float
+    llm_cycle_budget_usd: float
+    llm_effort: str
+    llm_max_tokens: int
+    llm_timeout_s: float
+    agent_max_attempts: int
+    agent_max_experiments: int
+    agent_autorun_experiments: bool
+    agent_cycle_timeout_s: float
     history_years: int
 
     @property
@@ -80,9 +88,17 @@ def load_settings() -> Settings:
         trading_mode=mode,
         eodhd_api_key=_env("EODHD_API_KEY"),
         llm_provider=(_env("QE_LLM_PROVIDER", "none") or "none").lower(),
-        llm_model=_env("QE_LLM_MODEL", "claude-sonnet-5-5"),
+        llm_model=_env("QE_LLM_MODEL", "claude-opus-5-5"),
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
         llm_monthly_budget_usd=float(_env("QE_LLM_MONTHLY_BUDGET_USD", "10") or 10),
+        llm_cycle_budget_usd=float(_env("QE_LLM_CYCLE_BUDGET_USD", "2.5") or 2.5),
+        llm_effort=(_env("QE_LLM_EFFORT", "high") or "high").lower(),
+        llm_max_tokens=int(_env("QE_LLM_MAX_TOKENS", "16000") or 16000),
+        llm_timeout_s=float(_env("QE_LLM_TIMEOUT_S", "240") or 240),
+        agent_max_attempts=int(_env("QE_AGENT_MAX_ATTEMPTS", "2") or 2),
+        agent_max_experiments=int(_env("QE_AGENT_MAX_EXPERIMENTS", "5") or 5),
+        agent_autorun_experiments=(_env("QE_AGENT_AUTORUN", "true") or "true").lower() in ("1", "true", "yes"),
+        agent_cycle_timeout_s=float(_env("QE_AGENT_CYCLE_TIMEOUT_S", "1200") or 1200),
         history_years=int(_env("QE_HISTORY_YEARS", "10") or 10),
     )
 

@@ -71,7 +71,7 @@ html, body, .stApp, button, input, textarea, select {{ font-family:{FONT_SANS}; 
 .block-container {{ padding:0.9rem 1.4rem 3rem 1.4rem !important; max-width:1680px; }}
 [data-testid="stHeader"] {{ background:transparent; height:2.2rem; }}
 [data-testid="stDecoration"], .stDeployButton, [data-testid="stAppDeployButton"], #MainMenu, footer {{ display:none !important; }}
-[data-testid="stAppViewContainer"] p, .stMarkdown p {{ font-size:13px; line-height:1.5; }}
+[data-testid="stAppViewContainer"] p, .stMarkdown p, .stMarkdown li {{ font-size:13px; line-height:1.5; }}
 h1,h2,h3,h4 {{ letter-spacing:-0.01em; }}
 [data-testid="stVerticalBlock"] {{ gap:0.6rem; }}
 
@@ -95,6 +95,11 @@ h1,h2,h3,h4 {{ letter-spacing:-0.01em; }}
 .stButton > button:hover {{ border-color:var(--qe-accent); color:var(--qe-accent); }}
 .stButton > button[kind="primary"] {{ background:var(--qe-accent); color:#04201f; border-color:var(--qe-accent); font-weight:600; }}
 .stButton > button[kind="primary"]:hover {{ filter:brightness(1.08); color:#04201f; }}
+.stButton > button:disabled, .stButton > button[kind="primary"]:disabled {{ opacity:.4; cursor:not-allowed; filter:none; }}
+/* Streamlit pulls every markdown block up by 1rem to cancel a paragraph margin. Our HTML components
+   have no paragraph margin, so without this the next element overlaps them. */
+[data-testid="stMarkdownContainer"]:has(> .qe-kv, > .qe-list, > .qe-metrics, > .qe-empty, > .qe-tiles,
+  > .qe-panel-head, > .qe-page-head, > .qe-topbar-status, > .qe-banner, > .qe-sidefoot, > div > b) {{ margin-bottom:0 !important; }}
 [data-baseweb="select"] > div, [data-baseweb="input"] > div {{ background:var(--qe-surface) !important; min-height:34px; }}
 [data-testid="stWidgetLabel"] p {{ font-size:11.5px !important; color:var(--qe-muted); }}
 [data-testid="stSegmentedControl"] button, [data-testid="stButtonGroup"] button {{ font-size:12px; min-height:30px; padding:0 .6rem; }}

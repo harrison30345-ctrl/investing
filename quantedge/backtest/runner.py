@@ -113,6 +113,11 @@ def run_experiment(strategy_key: str, params: Optional[Dict[str, Any]] = None, *
 
         result: BacktestResult = run_backtest(strategy, p, bars, market, cfg, start, end, benchmark)
         _store(exp_id, result, start, end, split, missing=[x for x in syms if x not in bars], warmup=warm)
+        if not source.startswith("agent:") and source != "timing":
+            # Event trigger: new human experiments get an independent look at the next research cycle.
+            # Queuing is free; no model is called until a cycle runs.
+            from ..agents.orchestrator import enqueue
+            enqueue("validation", "event", f"Experiment #{exp_id} completed ({strategy.key}, {period})")
         return exp_id
     except Exception as exc:
         with session_scope() as s:

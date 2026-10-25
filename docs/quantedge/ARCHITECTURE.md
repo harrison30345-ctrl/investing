@@ -144,3 +144,27 @@ Nothing paid is required to run locally.
 stops the app at startup. There is no broker execution code. Promoting a
 strategy to paper trading, or changing risk limits, will need a recorded human
 approval (Phase 6).
+
+## 9. AI agents (Phase 6)
+
+```
+evidence.py ─▶ deterministic JSON pack per agent (stored on the task, hashed)
+      │            unchanged hash since last completed run ⇒ skip, no call
+      ▼
+budget.check (worst-case cost vs monthly + cycle caps) ─▶ blocked ⇒ logged, no call
+      ▼
+llm.AnthropicProvider (Claude Opus 5.5, structured JSON output, refusal fallbacks,
+      │                bounded retries for transient errors, timeout)
+      ▼
+verify.py ─▶ every cited {experiment_id, metric, value} checked against the database
+proposals.py ─▶ experiment proposals validated (strategy, params in range, data present,
+      │          train/validation only, no duplicates); changes ⇒ awaiting_approval
+      ▼
+Research Director ─▶ selects ≤ N valid candidates (ids it invents or exceeds are ignored)
+      ▼
+backtest runner (source="agent:<name>") ─▶ normal experiment log
+```
+
+Agents are single structured calls rather than open-ended tool loops: the evidence they need
+is small and known in advance, so a loop would add cost and failure modes without adding
+information. The adapter is the only module that knows the vendor.

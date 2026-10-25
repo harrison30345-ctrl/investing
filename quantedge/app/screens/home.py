@@ -11,6 +11,8 @@ from quantedge.app import data as D
 from quantedge.config import get_settings
 from quantedge.data.providers import provider_info
 from quantedge.markets import MARKETS
+from quantedge.agents.roster import ALL as AGENTS
+from quantedge.agents.roster import SPECIALIST_ORDER
 from quantedge.scheduler import upcoming
 from quantedge.strategies import REGISTRY
 from quantedge.ui import charts
@@ -198,20 +200,44 @@ else:
 
 # ── AI research / agents / activity ─────────────────────────────────────────
 c1, c2, c3 = st.columns(3, gap="small")
+tasks = D.agent_tasks(100)
 with c1:
-    with C.panel("ai", "AI research summaries"):
-        C.empty_state("No agent reports",
-                      "The research agents are built in Phase 6. "
-                      + ("An LLM key is configured." if settings.llm_configured else
-                         "No LLM provider is configured (QE_LLM_PROVIDER=none), so no AI calls are made."))
+    with C.panel("ai", "AI research summaries", C.tag("agent opinions", "") + " &nbsp;numbers checked"):
+        done = tasks[tasks["status"] == "completed"] if not tasks.empty else tasks
+        if done.empty:
+            C.empty_state("No agent reports",
+                          "Agents are built but haven't run. " + (
+                              "Start a cycle on the AI Research page." if settings.llm_configured else
+                              "No LLM is configured (QE_LLM_PROVIDER=none), so no AI calls are made."))
+        else:
+            latest = done.drop_duplicates("agent").head(3)
+            rows = []
+            for t in latest.itertuples():
+                tot = (t.verification or {}).get("totals", {})
+                flag = (f'<span class="qe-neg">{tot["unverified_findings"]} unverified</span>'
+                        if tot.get("unverified_findings") else '<span class="qe-pos">verified</span>' if tot.get("findings")
+                        else '<span class="qe-muted">no citations</span>')
+                summary = (t.output or {}).get("summary", "")
+                rows.append((AGENTS[t.agent].name, summary[:150] + ("…" if len(summary) > 150 else ""),
+                             f"{flag}<br>{C.esc(C.ago(t.finished_at))}"))
+            C.list_rows(rows)
+            st.caption("Evidence and full reports are on the AI Research page.")
 with c2:
     with C.panel("agents", "Background agents & workers"):
         hb = {h["service"]: h for h in D.heartbeats()}
-        agents = ["Research Director", "Trend Research", "Momentum Research", "Intraday Research",
-                  "Risk Manager", "Independent Validation"]
-        rows = [("Scheduler / worker", "Runs data refreshes and scans on a timetable",
+        rows = [("Scheduler / worker", "Runs refreshes, scans and cycles on a timetable",
                  C.pill("", "online", "ok") if "worker" in hb else C.pill("", "not running", "off"))]
-        rows += [(a, "Phase 6", C.pill("", "not built", "off")) for a in agents]
+        for key in list(SPECIALIST_ORDER) + ["director"]:
+            mine = tasks[tasks["agent"] == key] if not tasks.empty else tasks
+            if mine.empty:
+                rows.append((AGENTS[key].name, "never run", C.pill("", "idle", "off")))
+                continue
+            t = mine.iloc[0]
+            state = {"completed": "ok", "queued": "warn", "running": "warn"}.get(t["status"], "err")
+            if t["status"] in ("skipped", "superseded"):
+                state = "off"
+            rows.append((AGENTS[key].name, C.ago(t["finished_at"] or t["created_at"]),
+                         C.pill("", t["status"].replace("_", " "), state)))
         C.list_rows(rows)
 with c3:
     with C.panel("activity", "Activity & schedule"):

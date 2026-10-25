@@ -137,3 +137,29 @@ def heartbeats() -> List[dict]:
 @st.cache_data(ttl=TTL, show_spinner=False)
 def stored_symbols(pkey: str) -> List[str]:
     return [r.symbol for r in repo.freshness(pkey) if r.last_bar is not None]
+
+
+# ── AI agents ───────────────────────────────────────────────────────────────
+
+def _rows(model, q) -> pd.DataFrame:
+    with session_scope() as s:
+        rows = s.scalars(q).all()
+        return pd.DataFrame([{c.name: getattr(r, c.name) for c in model.__table__.columns} for r in rows])
+
+
+@st.cache_data(ttl=TTL, show_spinner=False)
+def agent_tasks(limit: int = 300) -> pd.DataFrame:
+    from quantedge.db.models import AgentTask
+    return _rows(AgentTask, select(AgentTask).order_by(AgentTask.id.desc()).limit(limit))
+
+
+@st.cache_data(ttl=TTL, show_spinner=False)
+def proposals(limit: int = 500) -> pd.DataFrame:
+    from quantedge.db.models import Proposal
+    return _rows(Proposal, select(Proposal).order_by(Proposal.id.desc()).limit(limit))
+
+
+@st.cache_data(ttl=TTL, show_spinner=False)
+def llm_calls(limit: int = 500) -> pd.DataFrame:
+    from quantedge.db.models import LLMCall
+    return _rows(LLMCall, select(LLMCall).order_by(LLMCall.id.desc()).limit(limit))

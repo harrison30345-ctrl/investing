@@ -45,8 +45,8 @@ JOBS: List[Job] = [
         every_minutes=5),
     Job("health_check", "Health & freshness", "Provider reachability, stale data, worker liveness", "interval",
         every_minutes=5),
-    Job("research_cycle", "AI research cycle", "Research Director assigns and reviews experiments", "weekdays",
-        "UK", "23:00", phase=6, needs_llm=True),
+    Job("research_cycle", "AI research cycle", "Agents review new evidence; skipped when nothing changed", "weekdays",
+        "UK", "23:00", phase=7, needs_llm=True),
 ]
 
 

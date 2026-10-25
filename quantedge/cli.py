@@ -8,6 +8,9 @@ QuantEdge command line.
     python3 -m quantedge.cli sweep xs_momentum lookback 63,126,252 --universe us_large
     python3 -m quantedge.cli validate 12                   # same config on the validation period
     python3 -m quantedge.cli report --ids 12,13
+    python3 -m quantedge.cli agents estimate                # what the next research cycle would cost
+    python3 -m quantedge.cli agents run                     # needs QE_LLM_PROVIDER=anthropic + key
+    python3 -m quantedge.cli agents approve 7 --note "ok"
     python3 -m quantedge.cli status                       # freshness, last jobs, experiments
     python3 -m quantedge.cli health                       # provider reachability
     python3 -m quantedge.cli dashboard                    # launch the web UI
@@ -142,6 +145,47 @@ def cmd_report(args) -> int:
     return 0
 
 
+def cmd_agents(args) -> int:
+    from quantedge.agents import orchestrator, proposals
+    from quantedge.agents.budget import month_to_date
+    from quantedge.config import get_settings
+    s = get_settings()
+    if args.action == "estimate":
+        rows = orchestrator.estimate_cycle(args.agents.split(",") if args.agents else None)
+        for r in rows:
+            print(f"{r['name']:24s} ~{r['input_tokens']:6d} in-tokens  typical ${r['typical_usd']:.3f}  "
+                  f"max ${r['max_usd']:.3f}{'  (skipped: no new evidence)' if r['will_skip'] else ''}")
+        print(f"Total typical ${sum(r['typical_usd'] for r in rows):.2f}, worst case ${sum(r['max_usd'] for r in rows):.2f}. "
+              f"Month to date ${month_to_date():.2f} of ${s.llm_monthly_budget_usd:.2f}.")
+        return 0
+    if args.action == "run":
+        r = orchestrator.run_cycle("cli", agents=args.agents.split(",") if args.agents else None, force=args.force)
+        print(f"{r.status}: {r.detail}")
+        if r.experiments:
+            print("Experiments run: " + ", ".join(f"#{i}" for i in r.experiments))
+        return 0 if r.status in ("ok", "skipped") else 1
+    if args.action in ("approve", "decline"):
+        if args.id is None:
+            print("Pass a proposal id")
+            return 2
+        print(proposals.decide(args.id, args.action == "approve", args.note or "", by="human (cli)"))
+        return 0
+    # status
+    from quantedge.db import session_scope
+    from quantedge.db.models import AgentTask, Proposal
+    print(f"Provider {s.llm_provider} · model {s.llm_model} · effort {s.llm_effort} · "
+          f"{'configured' if s.llm_configured else 'NOT configured (no calls will be made)'}")
+    print(f"Spend this month ${month_to_date():.3f} of ${s.llm_monthly_budget_usd:.2f}")
+    with session_scope() as db:
+        for t in db.query(AgentTask).order_by(AgentTask.id.desc()).limit(12):
+            print(f"  task #{t.id:<4d} {t.agent:11s} {t.status:15s} ${t.cost_usd or 0:.3f}  {t.reason or t.error or ''}"[:140])
+        waiting = db.query(Proposal).filter_by(status="awaiting_approval").all()
+        print(f"\n{len(waiting)} proposals awaiting your approval")
+        for p in waiting:
+            print(f"  #{p.id} [{p.kind}] {p.title}  (from {p.agent})")
+    return 0
+
+
 def cmd_status(args) -> int:
     from quantedge.config import get_settings
     from quantedge.data import repository as repo
@@ -231,6 +275,14 @@ def main(argv=None) -> int:
     p = sub.add_parser("report", help="print plain-English reports (Markdown)")
     p.add_argument("--ids", help="comma-separated experiment ids; default all")
     p.set_defaults(fn=cmd_report)
+
+    p = sub.add_parser("agents", help="AI research agents: status | estimate | run | approve | decline")
+    p.add_argument("action", choices=["status", "estimate", "run", "approve", "decline"])
+    p.add_argument("id", nargs="?", type=int, help="proposal id for approve/decline")
+    p.add_argument("--agents", help="comma-separated subset, e.g. trend,validation")
+    p.add_argument("--force", action="store_true", help="run even when evidence is unchanged")
+    p.add_argument("--note", help="decision note for approve/decline")
+    p.set_defaults(fn=cmd_agents)
 
     sub.add_parser("status", help="data freshness and configuration").set_defaults(fn=cmd_status)
     sub.add_parser("health", help="check the data provider is reachable").set_defaults(fn=cmd_health)

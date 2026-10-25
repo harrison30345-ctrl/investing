@@ -200,3 +200,82 @@ class Heartbeat(Base):
 
 
 Index("ix_bars_lookup", PriceBar.provider, PriceBar.symbol, PriceBar.interval, PriceBar.ts)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AI agents (Phase 6). Agents never write experiments or metrics directly: they
+# write tasks (what they were asked and shown), proposals (what they want done)
+# and LLM call records (what it cost). The backtester stays the source of truth.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AgentTask(Base):
+    __tablename__ = "agent_tasks"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent: Mapped[str] = mapped_column(String(32), index=True)
+    cycle_id: Mapped[Optional[str]] = mapped_column(String(16), nullable=True, index=True)
+    trigger: Mapped[str] = mapped_column(String(16))          # manual | cli | schedule | event
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), index=True)
+    # queued | running | completed | failed | skipped | budget_blocked | refused
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    evidence_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    evidence: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)       # exactly what the model was shown
+    output: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)         # parsed structured output
+    verification: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)   # cited numbers checked against the DB
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class LLMCall(Base):
+    __tablename__ = "llm_calls"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    agent: Mapped[str] = mapped_column(String(32))
+    provider: Mapped[str] = mapped_column(String(16))
+    model: Mapped[str] = mapped_column(String(48))
+    served_model: Mapped[Optional[str]] = mapped_column(String(48), nullable=True)   # differs if a fallback ran
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(16))   # ok | refusal | max_tokens | error | budget_blocked
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cache_read_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cache_write_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class Proposal(Base):
+    """
+    Something an agent wants done. kind:
+      experiment         — a backtest (train/validation only). May auto-run within caps.
+      strategy_change    — new or modified rules. Always needs human approval;
+                           approval means "implement this", which is done in code, not by the agent.
+      risk_limit_change  — sizing/exposure limits. Always needs human approval.
+      promote_to_paper   — move a configuration to paper trading. Always needs human approval.
+    """
+    __tablename__ = "proposals"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    task_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    cycle_id: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    agent: Mapped[str] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(24), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    hypothesis: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    priority: Mapped[str] = mapped_column(String(8), default="medium")
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    # proposed | invalid | duplicate | selected | not_selected | running | completed | failed
+    # | awaiting_approval | approved | declined
+    validation_errors: Mapped[list] = mapped_column(JSON, default=list)
+    experiment_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    director_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    decided_by: Mapped[Optional[str]] = mapped_column(String(48), nullable=True)
+    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    decision_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

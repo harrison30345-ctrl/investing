@@ -18,7 +18,7 @@ from quantedge.universe import CATALOGUE
 
 from . import data as D
 
-MARKETS_PAGE = "pages/markets.py"
+MARKETS_PAGE = "screens/markets.py"
 WORKER_STALE_AFTER = timedelta(minutes=15)
 
 ASSETS = Path(__file__).resolve().parent / "assets"

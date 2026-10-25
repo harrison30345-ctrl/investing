@@ -30,17 +30,19 @@ from quantedge.app import chrome  # noqa: E402
 
 P = lambda path, title, icon, **kw: st.Page(path, title=title, icon=f":material/{icon}:", **kw)  # noqa: E731
 pages = {
-    "Overview": [P("pages/home.py", "Home", "space_dashboard", default=True),
-                 P("pages/markets.py", "Markets", "candlestick_chart"),
-                 P("pages/watchlists.py", "Watchlists", "visibility")],
-    "Research": [P("pages/signals.py", "Signals", "bolt"),
-                 P("pages/strategy_lab.py", "Strategy Lab", "science"),
-                 P("pages/backtests.py", "Backtests", "history"),
-                 P("pages/ai_research.py", "AI Research", "neurology")],
-    "Output": [P("pages/reports.py", "Reports", "description")],
-    "System": [P("pages/settings.py", "Settings", "tune")],
+    "Overview": [P("screens/home.py", "Home", "space_dashboard", default=True),
+                 P("screens/markets.py", "Markets", "candlestick_chart"),
+                 P("screens/watchlists.py", "Watchlists", "visibility")],
+    "Research": [P("screens/signals.py", "Signals", "bolt"),
+                 P("screens/strategy_lab.py", "Strategy Lab", "science"),
+                 P("screens/backtests.py", "Backtests", "history"),
+                 P("screens/ai_research.py", "AI Research", "neurology")],
+    "Output": [P("screens/reports.py", "Reports", "description")],
+    "System": [P("screens/settings.py", "Settings", "tune")],
 }
 
+# Page files live in screens/, not pages/: Streamlit auto-discovers a pages/ folder and, on a cold
+# deep link, can serve a page on its own without this shell (no theme, no top bar).
 nav = st.navigation(pages, position="sidebar", expanded=True)
 chrome.inject_css()
 chrome.sidebar()

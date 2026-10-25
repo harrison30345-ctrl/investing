@@ -25,6 +25,9 @@ python3 -m quantedge.cli backtest donchian_breakout --symbols AAPL,MSFT --period
 python3 -m quantedge.cli sweep xs_momentum lookback 63,126,252 --universe us_large
 python3 -m quantedge.cli validate 2   # re-test experiment #2 on the validation period
 python3 -m quantedge.cli report       # plain-English reports for every configuration
+python3 -m quantedge.cli agents estimate   # cost of the next AI research cycle (no calls made)
+python3 -m quantedge.cli agents run        # run one cycle (needs the AI settings below)
+python3 -m quantedge.cli agents status     # recent agent tasks and proposals awaiting you
 python3 -m quantedge.cli status       # what is stored, how fresh
 python3 -m quantedge.cli health       # can we reach the provider?
 python3 -m pytest tests/quantedge -q  # QuantEdge tests
@@ -48,7 +51,7 @@ Demo rows are stored separately and the dashboard shows a DEMO DATA banner.
 | Variable | When |
 |---|---|
 | `EODHD_API_KEY` + `QE_DATA_PROVIDER=eodhd` | licensed UK+US data ($29.99/mo plan for intraday) |
-| `ANTHROPIC_API_KEY` + `QE_LLM_PROVIDER=anthropic` | Phase 6 AI agents |
+| `ANTHROPIC_API_KEY` + `QE_LLM_PROVIDER=anthropic` | AI agents. A full cycle is ≈ $0.70 typical / $2 worst case on Claude Opus 5.5; capped by `QE_LLM_MONTHLY_BUDGET_USD` (default $10) and `QE_LLM_CYCLE_BUDGET_USD` (default $2.50) |
 | `QE_DATABASE_URL` | Postgres in the cloud |
 
 ## Build status
@@ -60,7 +63,7 @@ Demo rows are stored separately and the dashboard shows a DEMO DATA banner.
 | 3. Data providers, storage, quality checks | Done for daily bars. Yahoo verified live; EODHD adapter **not yet tested with a key**; intraday fetch exists but is not stored or scheduled |
 | 4. Backtester + daily strategies | Done: signal and rebalance engines, costs, metrics, splits, experiment log, 41 tests. Walk-forward windows exist but no optimiser uses them yet |
 | 5. Strategy Lab / Backtests / Reports | Done: configure and run backtests or one-parameter sweeps from the Lab (all variants share one date window), re-test on validation with the test period behind confirmation, compare up to 6 runs, deterministic plain-English reports with verdicts and Markdown export. Walk-forward optimisation not built yet |
-| 6. AI agents | Not started |
+| 6. AI agents | Done, **not yet run against the live API** (no key configured). Six agents (Trend, Momentum, Intraday, Risk Manager, Independent Validation, Research Director) on Claude Opus 5.5 via one adapter; structured JSON outputs; cited numbers checked against the database; monthly + per-cycle budget caps checked before every call; bounded retries; skip when evidence unchanged; no overlapping cycles; full task/call/proposal log; agents can only launch train/validation backtests within a per-cycle cap; strategy, risk-limit and paper-trading changes need your approval. Cycles run on demand (dashboard or CLI); scheduling comes with the worker in Phase 7 |
 | 7. Intraday strategies, worker, scheduling, health | Not started (job timetable defined in `quantedge/scheduler.py`) |
 | 8. Deployment | Not started. Nothing is running 24/7 |
 
@@ -71,4 +74,6 @@ Demo rows are stored separately and the dashboard shows a DEMO DATA banner.
 * Yahoo data is unofficial, delayed, personal-use only, and not point-in-time.
 * Local Python is 3.9 (end of life). Code stays 3.9-compatible; deploy on 3.11+.
 * Schema is created with `create_all` plus a small add-missing-nullable-columns step; Alembic is needed before cloud deploy.
+* Agent spend is estimated from token usage at list prices; the Anthropic console is the invoice.
+* Agents only see summaries of stored backtests (evidence packs). They cannot fetch data, read code or run the test period.
 * Report verdicts are rules of thumb (e.g. validation Sharpe below half of train = "degraded"), not statistical tests.
