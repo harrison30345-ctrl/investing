@@ -1199,7 +1199,7 @@ elif page == "Compare":
         conf = comp.confidence[tk]
         conf_colour = {"high": "#2f6b4f", "moderate": "#8d7434", "low": "#9b3b3b"}[conf]
         col.markdown(
-            f'<div style="background:#ffffff;border:1px solid #e7e4dd;border-top:3px solid #8d7434;'
+            f'<div style="border:1px solid #e7e4dd;'
             f'border-radius:3px;padding:0.9rem 1rem;">'
             f'<div style="font-size:0.85rem;font-weight:700;color:#12161f;">{names[tk]}</div>'
             f'<div style="font-size:0.66rem;color:#9aa1ad;margin-bottom:0.4rem;">{tk}</div>'
@@ -1271,20 +1271,11 @@ elif page == "Compare":
 # ════════════════════════════════════════════════════════════
 elif page == "Hedge Fund":
 
-    st.markdown("""
-    <div style="padding:1.4rem 1.8rem 1.2rem; background:#ffffff; border:1px solid #e7e4dd;
-                border-left:5px solid #8d7434; border-radius:4px; margin-bottom:1.4rem;">
-        <div style="font-size:1.9rem; font-weight:800; color:#12161f; letter-spacing:-0.02em; line-height:1.1;">
-            📊 Stock Research
-        </div>
-        <div style="font-size:0.88rem; color:#5f6672; margin-top:0.5rem; line-height:1.6; max-width:780px;">
-            Scores every company in your chosen universe and explains, in plain English, what its numbers
-            show. Each company gets a research score, a written summary of its strengths and risks, its
-            risk characteristics, and the profile that best describes it —
-            <b>Momentum</b>, <b>Oversold</b>, <b>Growth</b>, or <b>Consolidating</b>.
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    theme.page_header(
+        "Hedge Fund",
+        "Scores a whole universe and sorts it into four profiles: Momentum, "
+        "Oversold, Growth and Consolidating.",
+    )
 
     # ── Sidebar ──────────────────────────────────────────────
     st.sidebar.markdown("### Research settings")
@@ -1738,7 +1729,7 @@ elif page == "Hedge Fund":
         ]].copy()
         disp.insert(0, "Rank", range(1, len(disp) + 1))
         rename = {
-            "ticker": "Ticker", "name": "Company", score_col: f"📊 {label} Score",
+            "ticker": "Ticker", "name": "Company", score_col: f"{label} score",
             "score_band": "Score band", "price": "Price",
             "chg_1w": "Week %", "chg_1m": "Month %", "rsi": "RSI",
             "vol_surge": "Vol Surge", "vs_sma20": "vs SMA20%",
@@ -1775,12 +1766,10 @@ elif page == "Hedge Fund":
             bull1 = snap["bull_factors"][0] if snap["bull_factors"] else ""
             bull1_short = bull1[:90] + "…" if len(bull1) > 90 else bull1
             col.markdown(
-                f'<div style="background:#ffffff; border:1px solid #e7e4dd; '
-                f'border-top:3px solid {border_clr}; border-radius:3px; '
-                f'padding:1rem 1.1rem 0.9rem; margin-bottom:0.6rem; '
-                f'">'
+                f'<div style="border:1px solid #e7e4dd; border-radius:3px; '
+                f'padding:0.9rem 1rem 0.8rem; margin-bottom:0.6rem;">'
                 f'<div style="display:flex; justify-content:space-between;">'
-                f'  <span style="font-size:1rem; font-weight:700; color:#8d7434;">{row["ticker"]}</span>'
+                f'  <span style="font-size:1rem; font-weight:650; color:#12161f;">{row["ticker"]}</span>'
                 f'  <span style="font-size:0.65rem; font-weight:600; color:{border_clr};">{badge}</span>'
                 f'</div>'
                 f'<div style="font-size:0.7rem; color:#9aa1ad; margin:0.1rem 0 0.4rem;">'
@@ -1943,7 +1932,7 @@ elif page == "Hedge Fund":
             except Exception:
                 val_str = str(value)
             col.markdown(
-                f'<div style="background:#ffffff; border:1px solid #e7e4dd; border-top:3px solid #8d7434; '
+                f'<div style="border:1px solid #e7e4dd; '
                 f'border-radius:5px; padding:0.7rem 0.9rem; text-align:center;">'
                 f'<div style="font-size:0.62rem; color:#9aa1ad; text-transform:uppercase; letter-spacing:0.1em;">{label}</div>'
                 f'<div style="font-size:1.2rem; font-weight:800; color:#12161f; margin-top:0.2rem;">{val_str}</div>'
