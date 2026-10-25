@@ -8,3 +8,8 @@ rich>=13.0.0
 streamlit>=1.50.0
 yfinance>=0.2.40
 pyyaml>=6.0.0
+# QuantEdge
+sqlalchemy>=2.0
+pandas_market_calendars>=4.4,<5   # 5.x needs Python 3.10+
+python-dotenv>=1.0
+tenacity>=8.0
