@@ -40,3 +40,16 @@ Thumbs.db
 # Local score history (per-machine, not shared)
 *.db
 .screener/
+
+# ── Unrelated projects that live in this directory ────────────
+# Separate work that happens to share the folder; it has its own git repos and
+# must not be committed into the screener's history.
+bazzasheet/
+bazzasheet.pfp.svg
+moonscope/
+trading/
+crypto_dashboard.py
+crypto_dd.py
+acbuy_raw.json
+acbuylinks*.xlsx
+backtest_results.csv
