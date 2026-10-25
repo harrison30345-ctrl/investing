@@ -5,6 +5,9 @@ QuantEdge command line.
     python3 -m quantedge.cli refresh --universe us_large  # plus a strategy universe
     python3 -m quantedge.cli scan                         # record signal observations
     python3 -m quantedge.cli backtest ema_pullback --universe us_large --period train
+    python3 -m quantedge.cli sweep xs_momentum lookback 63,126,252 --universe us_large
+    python3 -m quantedge.cli validate 12                   # same config on the validation period
+    python3 -m quantedge.cli report --ids 12,13
     python3 -m quantedge.cli status                       # freshness, last jobs, experiments
     python3 -m quantedge.cli health                       # provider reachability
     python3 -m quantedge.cli dashboard                    # launch the web UI
@@ -99,6 +102,46 @@ def cmd_backtest(args) -> int:
     return 0
 
 
+def cmd_sweep(args) -> int:
+    from quantedge.backtest.runner import run_sweep
+    values = [json.loads(v) for v in args.values.split(",")]
+    batch, ids = run_sweep(args.strategy, args.param, values, json.loads(args.params) if args.params else None,
+                           symbols=_symbols(args) or None, universe=args.universe, period=args.period, source="cli")
+    print(f"Sweep {batch}: experiments {', '.join('#' + str(i) for i in ids)}")
+    return cmd_report(argparse.Namespace(ids=",".join(map(str, ids)), sweep=True))
+
+
+def cmd_validate(args) -> int:
+    from quantedge.backtest.runner import TestSetLocked, rerun_on_period
+    try:
+        new_id = rerun_on_period(args.experiment, args.period, confirm_test=args.confirm_test, source="cli")
+    except TestSetLocked as exc:
+        print(exc)
+        return 2
+    print(f"Recorded {args.period} re-test of #{args.experiment} as #{new_id}")
+    return cmd_report(argparse.Namespace(ids=f"{args.experiment},{new_id}", sweep=False))
+
+
+def cmd_report(args) -> int:
+    from quantedge.db import session_scope
+    from quantedge.db.models import Experiment
+    from quantedge.reports import build_reports, report_markdown, sweep_summary
+    with session_scope() as s:
+        q = s.query(Experiment)
+        if args.ids:
+            q = q.filter(Experiment.id.in_([int(i) for i in args.ids.split(",")]))
+        rows = [{c.name: getattr(e, c.name) for c in Experiment.__table__.columns} for e in q.all()]
+    rows = [r for r in rows if r["source"] != "timing"]
+    if getattr(args, "sweep", False):
+        sm = sweep_summary(rows)
+        if sm:
+            print(f"\n{sm.finding.title}: {sm.finding.detail}")
+        return 0
+    for r in build_reports(rows):
+        print(report_markdown(r), "\n" + "-" * 72)
+    return 0
+
+
 def cmd_status(args) -> int:
     from quantedge.config import get_settings
     from quantedge.data import repository as repo
@@ -169,6 +212,25 @@ def main(argv=None) -> int:
     p.add_argument("--commission-bps", type=float, default=0.0)
     p.add_argument("--notes")
     p.set_defaults(fn=cmd_backtest)
+
+    p = sub.add_parser("sweep", help="run one experiment per value of a parameter")
+    p.add_argument("strategy")
+    p.add_argument("param")
+    p.add_argument("values", help="comma-separated, e.g. 63,126,252")
+    sym_args(p)
+    p.add_argument("--period", default="train", choices=["train", "validation"])
+    p.add_argument("--params", help="JSON of the other parameters")
+    p.set_defaults(fn=cmd_sweep)
+
+    p = sub.add_parser("validate", help="re-test an experiment on the validation (or test) period")
+    p.add_argument("experiment", type=int)
+    p.add_argument("--period", default="validation", choices=["validation", "test"])
+    p.add_argument("--confirm-test", action="store_true")
+    p.set_defaults(fn=cmd_validate)
+
+    p = sub.add_parser("report", help="print plain-English reports (Markdown)")
+    p.add_argument("--ids", help="comma-separated experiment ids; default all")
+    p.set_defaults(fn=cmd_report)
 
     sub.add_parser("status", help="data freshness and configuration").set_defaults(fn=cmd_status)
     sub.add_parser("health", help="check the data provider is reachable").set_defaults(fn=cmd_health)

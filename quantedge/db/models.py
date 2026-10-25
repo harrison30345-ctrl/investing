@@ -116,8 +116,10 @@ class Experiment(Base):
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     metrics: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     bias_notes: Mapped[list] = mapped_column(JSON, default=list)
-    source: Mapped[str] = mapped_column(String(32), default="human")   # human | cli | agent:<name>
+    source: Mapped[str] = mapped_column(String(32), default="human")   # human | cli | dashboard | agent:<name>
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    batch: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)      # parameter sweep group
+    parent_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)     # run this one re-tests (e.g. validation of a train run)
 
 
 class Trade(Base):

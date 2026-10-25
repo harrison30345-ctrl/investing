@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import logging
 import traceback
-from typing import Any, Dict, List, Optional
+import uuid
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -58,7 +59,8 @@ def run_experiment(strategy_key: str, params: Optional[Dict[str, Any]] = None, *
                    symbols: Optional[List[str]] = None, universe: Optional[str] = None,
                    period: str = "train", config: Optional[BacktestConfig] = None,
                    provider: Optional[str] = None, confirm_test: bool = False,
-                   source: str = "cli", notes: Optional[str] = None) -> int:
+                   source: str = "cli", notes: Optional[str] = None, batch: Optional[str] = None,
+                   parent_id: Optional[int] = None, min_warmup: int = 0) -> int:
     """Returns the experiment id. Failures are recorded and re-raised."""
     if period not in PERIODS:
         raise ValueError(f"period must be one of {PERIODS}")
@@ -82,7 +84,7 @@ def run_experiment(strategy_key: str, params: Optional[Dict[str, Any]] = None, *
         exp = Experiment(strategy_key=strategy.key, params=p, universe=syms, market=market, period=period,
                          used_test_set=period in ("test", "full"), config=cfg.to_dict(), data_provider=pkey,
                          benchmark=bench_sym, status="running", bias_notes=bias_notes(universe, pkey),
-                         source=source, notes=notes)
+                         source=source, notes=notes, batch=batch, parent_id=parent_id)
         s.add(exp)
         s.flush()
         exp_id = exp.id
@@ -101,14 +103,16 @@ def run_experiment(strategy_key: str, params: Optional[Dict[str, Any]] = None, *
         benchmark = _prepare(bench_raw, bench_sym)["close"] if not bench_raw.empty else None
 
         all_dates = pd.DatetimeIndex(sorted(set().union(*[set(b.index) for b in bars.values()])))
-        warm = strategy.warmup_bars(p)
+        # The warm-up decides where the train/validation/test split starts. Sweeps and re-tests pass
+        # min_warmup so every variant is judged on exactly the same dates.
+        warm = max(strategy.warmup_bars(p), int(min_warmup))
         if len(all_dates) <= warm + 30:
             raise RuntimeError(f"Only {len(all_dates)} sessions stored; strategy needs {warm} warm-up + 30.")
         split = chronological_split(all_dates[warm:])
         start, end = split.window(period)
 
         result: BacktestResult = run_backtest(strategy, p, bars, market, cfg, start, end, benchmark)
-        _store(exp_id, result, start, end, split, missing=[x for x in syms if x not in bars])
+        _store(exp_id, result, start, end, split, missing=[x for x in syms if x not in bars], warmup=warm)
         return exp_id
     except Exception as exc:
         with session_scope() as s:
@@ -118,12 +122,12 @@ def run_experiment(strategy_key: str, params: Optional[Dict[str, Any]] = None, *
         raise
 
 
-def _store(exp_id: int, r: BacktestResult, start, end, split, missing: List[str]) -> None:
+def _store(exp_id: int, r: BacktestResult, start, end, split, missing: List[str], warmup: int) -> None:
     with session_scope() as s:
         exp = s.get(Experiment, exp_id)
         exp.status, exp.finished_at = "completed", utcnow()
         exp.start_date, exp.end_date = pd.Timestamp(start).to_pydatetime(), pd.Timestamp(end).to_pydatetime()
-        exp.metrics = {**r.metrics, "split": split.to_dict(), "missing_symbols": missing}
+        exp.metrics = {**r.metrics, "split": split.to_dict(), "missing_symbols": missing, "warmup_bars": warmup}
         for t in r.trades.itertuples(index=False):
             s.add(Trade(experiment_id=exp_id, symbol=t.symbol, entry_ts=pd.Timestamp(t.entry_ts).to_pydatetime(),
                         entry_price=t.entry_price, exit_ts=pd.Timestamp(t.exit_ts).to_pydatetime(),
@@ -135,3 +139,49 @@ def _store(exp_id: int, r: BacktestResult, start, end, split, missing: List[str]
                                benchmark=None if bm is None or pd.isna(bm.loc[ts]) else float(bm.loc[ts]),
                                exposure=float(r.exposure.loc[ts]))
                    for ts, v in r.equity.items()])
+
+
+def run_sweep(strategy_key: str, param: str, values: List[Any], base_params: Optional[Dict[str, Any]] = None,
+              **kwargs) -> Tuple[str, List[int]]:
+    """
+    Run one experiment per value of `param`, all tagged with the same batch id.
+
+    A sweep shows how sensitive a result is to one choice. If only one value
+    works, that's a warning sign (fragility/overfitting), not a discovery.
+    Failed variants are recorded and the sweep carries on.
+    """
+    strategy = get_strategy(strategy_key)
+    if param not in {p.name for p in strategy.params}:
+        raise ValueError(f"{strategy_key} has no parameter {param!r}")
+    batch = uuid.uuid4().hex[:12]
+    ids: List[int] = []
+    variants = [{**(base_params or {}), param: v} for v in values]
+    warm = max(strategy.warmup_bars(strategy.resolve(v)) for v in variants)
+    for v, params in zip(values, variants):
+        note = f"sweep {param}={v}"
+        try:
+            ids.append(run_experiment(strategy_key, params, batch=batch, notes=note, min_warmup=warm, **kwargs))
+        except TestSetLocked:
+            raise
+        except Exception as exc:  # recorded by run_experiment; keep going
+            log.warning("sweep %s=%s failed: %s", param, v, exc)
+            with session_scope() as s:
+                last = s.query(Experiment).filter_by(batch=batch).order_by(Experiment.id.desc()).first()
+                if last is not None and last.id not in ids:
+                    ids.append(last.id)
+    return batch, ids
+
+
+def rerun_on_period(exp_id: int, period: str, confirm_test: bool = False, source: str = "dashboard") -> int:
+    """Re-test an experiment's exact strategy, parameters, universe and costs on another period."""
+    with session_scope() as s:
+        e = s.get(Experiment, exp_id)
+        if e is None:
+            raise KeyError(f"No experiment #{exp_id}")
+        spec = dict(strategy_key=e.strategy_key, params=e.params, symbols=list(e.universe),
+                    config=BacktestConfig.from_dict(e.config), provider=e.data_provider,
+                    min_warmup=int((e.metrics or {}).get("warmup_bars") or 0))
+        universe_name = next((k for k, v in UNIVERSES.items() if v == list(e.universe)), None)
+    return run_experiment(spec.pop("strategy_key"), spec.pop("params"), universe=universe_name, period=period,
+                          confirm_test=confirm_test, source=source, parent_id=exp_id,
+                          notes=f"{period} re-test of #{exp_id}", **spec)

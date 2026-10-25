@@ -115,6 +115,10 @@ def run_signal_backtest(strategy: SignalStrategy, params: Dict[str, Any], bars: 
     # This is safe because every indicator is causal, and tests enforce it.
     sigs = {s: strategy.generate(b, params) for s, b in bars.items() if not b.empty}
     dates = _period_dates(bars, start, end)
+    # Plain dict lookups: pandas .loc per symbol per day dominated run time.
+    bar_rows = {s: b[["open", "high", "low", "close"]].to_dict("index") for s, b in bars.items() if not b.empty}
+    sig_rows = {s: g[["entry", "exit", "stop_dist", "target_r", "max_bars", "reason"]].to_dict("index")
+                for s, g in sigs.items()}
 
     cash = cfg.initial_capital
     positions: Dict[str, dict] = {}
@@ -150,7 +154,7 @@ def run_signal_backtest(strategy: SignalStrategy, params: Dict[str, Any], bars: 
         })
 
     for d in dates:
-        today = {s: b.loc[d] for s, b in bars.items() if d in b.index}
+        today = {s: rows[d] for s, rows in bar_rows.items() if d in rows}
 
         # 1. Open: exits first, so their cash is available for entries.
         for sym in list(pending_exits):
@@ -213,14 +217,14 @@ def run_signal_backtest(strategy: SignalStrategy, params: Dict[str, Any], bars: 
             if sym not in today:
                 continue
             pos["bars_held"] += 1
-            sig = sigs[sym].loc[d]
+            sig = sig_rows[sym][d]
             mb = pos["max_bars"]
             if mb and np.isfinite(mb) and pos["bars_held"] >= mb:
                 pending_exits[sym] = "time_stop"
             elif bool(sig["exit"]):
                 pending_exits[sym] = "exit_signal"
         for sym in today:
-            sig = sigs[sym].loc[d]
+            sig = sig_rows[sym][d]
             if bool(sig["entry"]) and sym not in positions:
                 pending_entries.append({"symbol": sym, "stop_dist": float(sig["stop_dist"]),
                                         "target_r": float(sig["target_r"]), "max_bars": float(sig["max_bars"]),

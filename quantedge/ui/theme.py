@@ -34,6 +34,9 @@ INFO = "#5aa9e6"
 SERIES_1 = "#1fa8a8"     # strategy / primary
 SERIES_2 = "#b08840"     # benchmark
 GRID = "#18212c"
+# Comparison overlays, in this fixed order (validated: CVD ΔE ≥ 13.8 between neighbours on SURFACE)
+COMPARE = ["#1fa8a8", "#b08840", "#5b8def", "#d9735a", "#9085e9", "#8f9a3a"]
+MAX_COMPARE = len(COMPARE)
 
 FONT_SANS = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
 FONT_MONO = "'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace"
@@ -107,6 +110,7 @@ code {{ font-family:var(--qe-mono); font-size:12px; background:var(--qe-surface-
 /* QuantEdge components */
 .qe-mono {{ font-family:var(--qe-mono); font-variant-numeric:tabular-nums; }}
 .qe-pos {{ color:var(--qe-pos); }} .qe-neg {{ color:var(--qe-neg); }} .qe-muted {{ color:var(--qe-muted); }}
+.qe-warn {{ color:var(--qe-warn); }}
 .qe-brand {{ display:flex; align-items:center; gap:8px; padding:6px 4px 10px 4px; }}
 .qe-brand b {{ font-size:15px; letter-spacing:.02em; }}
 .qe-brand span {{ font-size:10px; color:var(--qe-muted); letter-spacing:.08em; text-transform:uppercase; }}

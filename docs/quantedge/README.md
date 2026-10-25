@@ -22,6 +22,9 @@ Other commands:
 python3 -m quantedge.cli backtest ema_pullback --universe us_large --period train
 python3 -m quantedge.cli backtest xs_momentum --universe uk_large --params '{"lookback": 126}'
 python3 -m quantedge.cli backtest donchian_breakout --symbols AAPL,MSFT --period validation
+python3 -m quantedge.cli sweep xs_momentum lookback 63,126,252 --universe us_large
+python3 -m quantedge.cli validate 2   # re-test experiment #2 on the validation period
+python3 -m quantedge.cli report       # plain-English reports for every configuration
 python3 -m quantedge.cli status       # what is stored, how fresh
 python3 -m quantedge.cli health       # can we reach the provider?
 python3 -m pytest tests/quantedge -q  # QuantEdge tests
@@ -56,7 +59,7 @@ Demo rows are stored separately and the dashboard shows a DEMO DATA banner.
 | 2. Design system + Home | Done. Agent and intraday panels show honest "not built" states |
 | 3. Data providers, storage, quality checks | Done for daily bars. Yahoo verified live; EODHD adapter **not yet tested with a key**; intraday fetch exists but is not stored or scheduled |
 | 4. Backtester + daily strategies | Done: signal and rebalance engines, costs, metrics, splits, experiment log, 41 tests. Walk-forward windows exist but no optimiser uses them yet |
-| 5. Strategy Lab / Backtests / Reports | Partial: Backtests page reads the experiment log; Strategy Lab lists strategies; running from the UI, comparison and Reports are not built |
+| 5. Strategy Lab / Backtests / Reports | Done: configure and run backtests or one-parameter sweeps from the Lab (all variants share one date window), re-test on validation with the test period behind confirmation, compare up to 6 runs, deterministic plain-English reports with verdicts and Markdown export. Walk-forward optimisation not built yet |
 | 6. AI agents | Not started |
 | 7. Intraday strategies, worker, scheduling, health | Not started (job timetable defined in `quantedge/scheduler.py`) |
 | 8. Deployment | Not started. Nothing is running 24/7 |
@@ -67,4 +70,5 @@ Demo rows are stored separately and the dashboard shows a DEMO DATA banner.
   especially for momentum. Every experiment records this.
 * Yahoo data is unofficial, delayed, personal-use only, and not point-in-time.
 * Local Python is 3.9 (end of life). Code stays 3.9-compatible; deploy on 3.11+.
-* Schema is created with `create_all`; Alembic migrations needed before cloud deploy.
+* Schema is created with `create_all` plus a small add-missing-nullable-columns step; Alembic is needed before cloud deploy.
+* Report verdicts are rules of thumb (e.g. validation Sharpe below half of train = "degraded"), not statistical tests.

@@ -118,3 +118,21 @@ def sparkline_svg(values, width: int = 180, height: int = 30) -> str:
     return (f'<svg viewBox="0 0 {width} {height}" preserveAspectRatio="none" aria-hidden="true">'
             f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="1.5" '
             f'vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg>')
+
+
+def compare_equity(curves: dict, height: int = 300, benchmark: Optional[pd.Series] = None,
+                   benchmark_label: str = "Benchmark") -> go.Figure:
+    """Several equity curves rebased to 100. Colours follow T.COMPARE in order; never more than six."""
+    fig = _fig(height)
+    for (label, eq), color in zip(list(curves.items())[: T.MAX_COMPARE], T.COMPARE):
+        eq = eq.dropna()
+        if eq.empty:
+            continue
+        fig.add_trace(go.Scatter(x=eq.index, y=eq / eq.iloc[0] * 100, name=label, mode="lines",
+                                 line=dict(color=color, width=2), hovertemplate="%{y:.1f}"))
+    if benchmark is not None and not benchmark.dropna().empty:
+        b = benchmark.dropna()
+        fig.add_trace(go.Scatter(x=b.index, y=b / b.iloc[0] * 100, name=benchmark_label, mode="lines",
+                                 line=dict(color=T.MUTED, width=1.5, dash="dot"), hovertemplate="%{y:.1f}"))
+    fig.update_layout(margin=dict(t=30), legend=dict(y=1.02, yanchor="bottom"))
+    return fig

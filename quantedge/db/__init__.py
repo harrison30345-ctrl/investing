@@ -12,7 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterator, Optional
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -36,7 +36,26 @@ def get_engine(url: Optional[str] = None) -> Engine:
             cur.execute("PRAGMA foreign_keys=ON")
             cur.close()
     Base.metadata.create_all(engine)
+    _add_missing_columns(engine)
     return engine
+
+
+def _add_missing_columns(engine: Engine) -> None:
+    """
+    Minimal forward migration: `create_all` never alters existing tables, so new
+    *nullable* columns are added here. Anything more involved (renames, type
+    changes, non-null columns) needs Alembic, planned before cloud deployment.
+    """
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if not insp.has_table(table.name):
+                continue
+            have = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name not in have and col.nullable:
+                    ddl = col.type.compile(dialect=engine.dialect)
+                    conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {col.name} {ddl}'))
 
 
 @contextmanager
