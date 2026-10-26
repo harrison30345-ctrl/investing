@@ -16,6 +16,7 @@ def isolated_db(tmp_path, monkeypatch):
     """Point QuantEdge at a throwaway SQLite file and demo data."""
     monkeypatch.setenv("QE_DATABASE_URL", f"sqlite:///{tmp_path / 'test.db'}")
     monkeypatch.setenv("QE_DATA_PROVIDER", "demo")
+    monkeypatch.setenv("QE_CASH_RATE", "zero")      # tests never fetch rates from the internet
     from quantedge import config
     from quantedge.db import get_engine
     config.get_settings.cache_clear()

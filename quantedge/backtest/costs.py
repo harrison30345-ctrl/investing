@@ -37,5 +37,15 @@ class CostModel:
     def to_dict(self) -> dict:
         return asdict(self)
 
+    def scaled(self, multiple: float) -> "CostModel":
+        """Trading frictions × multiple. Stamp duty is a tax, not a friction, so it stays fixed."""
+        return CostModel(self.spread_bps * multiple, self.slippage_bps * multiple, self.commission_bps * multiple,
+                         self.commission_min * multiple, self.uk_stamp_duty_bps)
+
 
 ZERO_COSTS = CostModel(0, 0, 0, 0, 0)
+
+# Intraday defaults (audit finding F5): 5-minute breakout entries fill into moving prices,
+# so spread and slippage are doubled: 15 bps per side instead of 7.5. Still an assumption;
+# the cost-sensitivity curve on every experiment shows how much it matters.
+INTRADAY_COSTS = CostModel(spread_bps=10.0, slippage_bps=10.0)

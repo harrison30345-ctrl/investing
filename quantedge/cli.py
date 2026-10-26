@@ -6,6 +6,7 @@ QuantEdge command line.
     python3 -m quantedge.cli scan                         # record signal observations
     python3 -m quantedge.cli backtest ema_pullback --universe us_large --period train
     python3 -m quantedge.cli sweep xs_momentum lookback 63,126,252 --universe us_large
+    python3 -m quantedge.cli walkforward ema_pullback fast 10,20,30 --universe us_large
     python3 -m quantedge.cli validate 12                   # same config on the validation period
     python3 -m quantedge.cli report --ids 12,13
     python3 -m quantedge.cli agents estimate                # what the next research cycle would cost
@@ -80,15 +81,13 @@ def cmd_scan(args) -> int:
 
 
 def cmd_backtest(args) -> int:
-    from quantedge.backtest.engine import BacktestConfig
-    from quantedge.backtest.costs import CostModel
     from quantedge.backtest.runner import TestSetLocked, run_experiment
     from quantedge.db import session_scope
     from quantedge.db.models import Experiment
+    from quantedge.backtest.engine import default_config
+    from quantedge.strategies import get_strategy
     params = json.loads(args.params) if args.params else {}
-    cfg = BacktestConfig(initial_capital=args.capital, risk_per_trade=args.risk, max_positions=args.max_positions,
-                         costs=CostModel(spread_bps=args.spread_bps, slippage_bps=args.slippage_bps,
-                                         commission_bps=args.commission_bps))
+    cfg = _config_from_args(args, default_config(get_strategy(args.strategy)))
     try:
         exp_id = run_experiment(args.strategy, params, symbols=_symbols(args) or None, universe=args.universe,
                                 period=args.period, config=cfg, confirm_test=args.confirm_test, source="cli",
@@ -194,6 +193,48 @@ def cmd_agents(args) -> int:
         for p in waiting:
             print(f"  #{p.id} [{p.kind}] {p.title}  (from {p.agent})")
     return 0
+
+
+def _config_from_args(args, base):
+    """Explicit CLI values override the strategy's timeframe defaults (intraday costs are higher)."""
+    from dataclasses import replace
+    from quantedge.backtest.costs import CostModel
+    c = base.costs
+    costs = CostModel(spread_bps=c.spread_bps if args.spread_bps is None else args.spread_bps,
+                      slippage_bps=c.slippage_bps if args.slippage_bps is None else args.slippage_bps,
+                      commission_bps=c.commission_bps if args.commission_bps is None else args.commission_bps,
+                      commission_min=c.commission_min, uk_stamp_duty_bps=c.uk_stamp_duty_bps)
+    return replace(base, initial_capital=args.capital, risk_per_trade=args.risk, max_positions=args.max_positions,
+                   costs=costs, cash_interest=not args.no_cash_interest)
+
+
+def cmd_walkforward(args) -> int:
+    from quantedge.backtest.engine import default_config
+    from quantedge.backtest.walkforward import run_walk_forward
+    from quantedge.db import session_scope
+    from quantedge.db.models import Experiment
+    from quantedge.strategies import get_strategy
+    values = [json.loads(v) for v in args.values.split(",")]
+    try:
+        exp_id = run_walk_forward(args.strategy, args.param, values,
+                                  base_params=json.loads(args.params) if args.params else None,
+                                  symbols=_symbols(args) or None, universe=args.universe,
+                                  train_sessions=args.train, test_sessions=args.test,
+                                  config=_config_from_args(args, default_config(get_strategy(args.strategy))),
+                                  source="cli", notes=args.notes)
+    except (RuntimeError, ValueError) as exc:
+        print(f"Walk-forward failed (recorded where possible): {exc}")
+        return 1
+    with session_scope() as s:
+        m = s.get(Experiment, exp_id).metrics
+    print(f"Walk-forward experiment #{exp_id}: {len(m['folds'])} folds")
+    for f in m["folds"]:
+        print(f"  OOS {f['out_of_sample'][0]} → {f['out_of_sample'][1]}  chose {args.param}={f['chosen']}  "
+              f"net {f['oos_net_return'] * 100:+.1f}%")
+    pct = lambda k: f"{m[k] * 100:+.1f}%" if m.get(k) is not None else "n/a"  # noqa: E731
+    print(f"Stitched out-of-sample: net {pct('net_return')}  ETF {pct('benchmark_return')}  "
+          f"same-stocks B&H {pct('universe_return')}  Sharpe {m.get('sharpe', 0):.2f}")
+    return cmd_report(argparse.Namespace(ids=str(exp_id), sweep=False))
 
 
 def cmd_status(args) -> int:
@@ -305,12 +346,15 @@ def main(argv=None) -> int:
     p.add_argument("--period", default="train", choices=["train", "validation", "test", "full"])
     p.add_argument("--confirm-test", action="store_true", help="allow the locked test period (flagged)")
     p.add_argument("--params", help='JSON, e.g. \'{"fast": 10, "slow": 40}\'')
-    p.add_argument("--capital", type=float, default=100_000)
-    p.add_argument("--risk", type=float, default=0.01, help="fraction of equity risked per trade")
-    p.add_argument("--max-positions", type=int, default=5)
-    p.add_argument("--spread-bps", type=float, default=5.0)
-    p.add_argument("--slippage-bps", type=float, default=5.0)
-    p.add_argument("--commission-bps", type=float, default=0.0)
+    def cost_args(p):
+        p.add_argument("--capital", type=float, default=100_000)
+        p.add_argument("--risk", type=float, default=0.01, help="fraction of equity risked per trade")
+        p.add_argument("--max-positions", type=int, default=5)
+        p.add_argument("--spread-bps", type=float, default=None, help="default 5 daily / 10 intraday")
+        p.add_argument("--slippage-bps", type=float, default=None, help="default 5 daily / 10 intraday")
+        p.add_argument("--commission-bps", type=float, default=None)
+        p.add_argument("--no-cash-interest", action="store_true", help="cash earns 0%% (pre-audit behaviour)")
+    cost_args(p)
     p.add_argument("--notes")
     p.set_defaults(fn=cmd_backtest)
 
@@ -322,6 +366,18 @@ def main(argv=None) -> int:
     p.add_argument("--period", default="train", choices=["train", "validation"])
     p.add_argument("--params", help="JSON of the other parameters")
     p.set_defaults(fn=cmd_sweep)
+
+    p = sub.add_parser("walkforward", help="walk-forward: re-choose one parameter each fold, stitch out-of-sample")
+    p.add_argument("strategy")
+    p.add_argument("param")
+    p.add_argument("values", help="comma-separated candidates, e.g. 10,20,30")
+    sym_args(p)
+    p.add_argument("--params", help="JSON of the other parameters")
+    p.add_argument("--train", type=int, default=756, help="in-sample sessions per fold (~3 years)")
+    p.add_argument("--test", type=int, default=126, help="out-of-sample sessions per fold (~6 months)")
+    p.add_argument("--notes")
+    cost_args(p)
+    p.set_defaults(fn=cmd_walkforward)
 
     p = sub.add_parser("validate", help="re-test an experiment on the validation (or test) period")
     p.add_argument("experiment", type=int)

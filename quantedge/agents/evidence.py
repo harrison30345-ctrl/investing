@@ -30,7 +30,10 @@ METRIC_KEYS = ("net_return", "benchmark_return", "excess_return", "cagr", "sharp
                "expectancy_pct", "avg_win_pct", "avg_loss_pct", "exposure", "turnover", "costs_pct_of_start",
                "longest_losing_streak", "universe_return", "excess_vs_universe", "sharpe_ci_low", "sharpe_ci_high",
                "excess_ann_ci_low", "excess_ann_ci_high", "excess_universe_ann_ci_low", "excess_universe_ann_ci_high",
-               "deflated_sharpe", "trials", "tiebreak_net_min", "tiebreak_net_max", "entries_skipped_capacity")
+               "deflated_sharpe", "trials", "tiebreak_net_min", "tiebreak_net_max", "entries_skipped_capacity",
+               "cost_x0_net_return", "cost_x2_net_return", "cost_x3_net_return", "cost_breakeven_multiple",
+               "avg_cash_rate", "regime_uptrend_ann", "regime_downtrend_ann", "regime_downtrend_days_pct",
+               "regime_highvol_ann", "regime_lowvol_ann")
 MAX_EXPERIMENTS = 40
 
 METHODOLOGY = {
@@ -41,7 +44,11 @@ METHODOLOGY = {
     "sizing": "Trend: fixed-fractional risk per trade capped by max position size. Momentum: equal weight top N.",
     "splits": "Chronological 60% train / 20% validation / 20% test after indicator warm-up. Test is locked; "
               "agents may never run it.",
-    "units": "All returns, drawdowns, rates and exposures are fractions (0.12 means 12%). Sharpe is annualised, rf=0.",
+    "units": "All returns, drawdowns, rates and exposures are fractions (0.12 means 12%). Sharpe is annualised "
+             "and measured above the cash rate (avg_cash_rate); uninvested cash earns that rate.",
+    "cost_assumptions": "Daily defaults 5 bps spread + 5 bps slippage per side; intraday 10 + 10. cost_xN_* "
+                        "re-run the same experiment with frictions ×N (stamp duty fixed).",
+    "walk_forward": "period 'walkforward' = parameter re-chosen each fold on past data, stitched out-of-sample folds.",
     "baselines": "benchmark_return = market ETF (total return); universe_return = equal-weight buy-and-hold of the "
                  "run's own symbols. The universe is today's large caps, so beating the ETF but not the universe "
                  "is not evidence of skill.",

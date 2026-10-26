@@ -37,7 +37,7 @@ from ..strategies.indicators import sma
 from . import metrics as M
 from ..markets import MARKETS
 from .costs import CostModel
-from .portfolio import SignalPortfolio
+from .portfolio import SignalPortfolio, signal_rows
 
 
 @dataclass
@@ -48,6 +48,7 @@ class BacktestConfig:
     max_positions: int = 5
     rebalance_drift: float = 0.25        # momentum: only resize a holding if >25% off target
     tie_break_seed: int = 0              # which of several same-bar signals fills first when slots are short
+    cash_interest: bool = True           # uninvested cash earns the market's short rate (rates.py)
     costs: CostModel = field(default_factory=CostModel)
 
     def to_dict(self) -> dict:
@@ -129,25 +130,67 @@ def universe_curve(bars: Dict[str, pd.DataFrame], index: pd.DatetimeIndex, cfg: 
     return total.rename("universe")
 
 
+def _cash_series(cash_rates: Optional[pd.Series], cfg: "BacktestConfig") -> Optional[pd.Series]:
+    return cash_rates if (cash_rates is not None and getattr(cfg, "cash_interest", True)) else None
+
+
+def _rates_lookup(cash_rates: Optional[pd.Series], cfg: "BacktestConfig"):
+    """date → annual rate (0 when interest is off or no series)."""
+    s = _cash_series(cash_rates, cfg)
+    if s is None or s.empty:
+        return lambda d: 0.0
+    by_day = s[~s.index.duplicated(keep="last")]
+    by_day = by_day.groupby(pd.DatetimeIndex(by_day.index).normalize()).last().to_dict()
+    return lambda d: float(by_day.get(pd.Timestamp(d).normalize(), 0.0))
+
+
+def default_config(strategy) -> "BacktestConfig":
+    """Defaults by timeframe: intraday gets higher spread/slippage (costs.INTRADAY_COSTS)."""
+    from .costs import INTRADAY_COSTS
+    if getattr(strategy, "timeframe", "daily") == "intraday":
+        return BacktestConfig(costs=INTRADAY_COSTS)
+    return BacktestConfig()
+
+
+def _daily_rf(cash_rates: Optional[pd.Series], index: pd.DatetimeIndex) -> Optional[pd.Series]:
+    """Per-day cash return aligned to the equity index (annual rate / 252)."""
+    if cash_rates is None or cash_rates.empty:
+        return None
+    r = cash_rates[~cash_rates.index.duplicated(keep="last")]
+    by_day = r.groupby(pd.DatetimeIndex(r.index).normalize()).last()
+    return (by_day.reindex(pd.DatetimeIndex(index).normalize()).ffill().fillna(0.0) / 252).set_axis(index)
+
+
 def _finish(equity, exposure, trades, benchmark, dates, cfg, costs, notional, universe=None,
-            skipped_capacity: int = 0) -> BacktestResult:
+            skipped_capacity: int = 0, cash_rates: Optional[pd.Series] = None, interest: float = 0.0,
+            regime_benchmark: Optional[pd.Series] = None) -> BacktestResult:
     from . import stats as S
     eq = pd.Series(equity, index=dates[: len(equity)], name="equity")
     ex = pd.Series(exposure, index=eq.index, name="exposure")
     tr = pd.DataFrame(trades, columns=TRADE_COLUMNS)
     bm = _benchmark_curve(benchmark, eq.index, cfg.initial_capital)
-    mets = M.compute(eq, tr, exposure=ex, benchmark=bm, traded_notional=notional, total_costs=costs)
+    rf = _daily_rf(cash_rates, eq.index)
+    mets = M.compute(eq, tr, exposure=ex, benchmark=bm, traded_notional=notional, total_costs=costs, rf=rf)
+    if rf is not None:
+        mets["avg_cash_rate"] = float(rf.mean() * 252)
+        mets["interest_earned_pct"] = interest / cfg.initial_capital
     uni = universe.reindex(eq.index).ffill() if universe is not None else None
     if uni is not None and uni.dropna().size > 1:
         mets["universe_return"] = float(uni.iloc[-1] / uni.iloc[0] - 1)
-        mets["universe_sharpe"] = M.sharpe(uni.pct_change())
+        mets["universe_sharpe"] = M.sharpe(uni.pct_change(), rf)
         mets["universe_max_drawdown"] = M.max_drawdown(uni)
         mets["excess_vs_universe"] = mets["net_return"] - mets["universe_return"]
+    rf_v = rf.values[1:] if rf is not None else 0.0
     daily = eq.pct_change().fillna(0.0).values[1:]
     bdaily = bm.reindex(eq.index).ffill().pct_change().fillna(0.0).values[1:] if bm is not None else None
     udaily = uni.pct_change().fillna(0.0).values[1:] if uni is not None and uni.dropna().size > 1 else None
-    mets.update(S.uncertainty(daily, bdaily, udaily, tr["return_pct"].values if len(tr) else []))
+    # Sharpe-type statistics use returns above cash; excess-over-benchmark intervals use raw differences.
+    mets.update(S.uncertainty(daily - rf_v, bdaily - rf_v if bdaily is not None else None,
+                              udaily - rf_v if udaily is not None else None,
+                              tr["return_pct"].values if len(tr) else []))
     mets["entries_skipped_capacity"] = float(skipped_capacity)
+    from .regimes import regime_breakdown
+    mets.update(regime_breakdown(eq, regime_benchmark, rf))
     return BacktestResult(eq, ex, tr, bm, mets, costs, notional, uni)
 
 
@@ -164,9 +207,11 @@ def session_ends(index: pd.DatetimeIndex, tz: str) -> pd.Series:
 
 def run_signal_backtest(strategy: SignalStrategy, params: Dict[str, Any], bars: Dict[str, pd.DataFrame],
                         market: str, config: Optional[BacktestConfig] = None, start=None, end=None,
-                        benchmark: Optional[pd.Series] = None, intraday: bool = False) -> BacktestResult:
+                        benchmark: Optional[pd.Series] = None, intraday: bool = False,
+                        cash_rates: Optional[pd.Series] = None) -> BacktestResult:
     """
-    Drives SignalPortfolio over history. With intraday=True, positions are closed at
+    Drives SignalPortfolio over history. `cash_rates` (annual, by date) pays interest on cash held
+    overnight, once per session. With intraday=True, positions are closed at
     each session's last bar and metrics use the end-of-day equity curve (so Sharpe
     and drawdown are on the same daily footing as the daily strategies).
     """
@@ -177,18 +222,25 @@ def run_signal_backtest(strategy: SignalStrategy, params: Dict[str, Any], bars: 
     dates = _period_dates(bars, start, end)
     # Plain dict lookups: pandas .loc per symbol per bar dominated run time.
     bar_rows = {s: b[["open", "high", "low", "close"]].to_dict("index") for s, b in bars.items() if not b.empty}
-    sig_rows = {s: g[["entry", "exit", "stop_dist", "target_r", "max_bars", "reason"]].to_dict("index")
-                for s, g in sigs.items()}
+    sig_rows = {s: signal_rows(g) for s, g in sigs.items()}
     ends = session_ends(dates, MARKETS[market].tz) if intraday and len(dates) else None
 
     pf = SignalPortfolio(cfg, market)
+    rates = _rates_lookup(cash_rates, cfg)
     equity_curve: List[float] = []
     exposure_curve: List[float] = []
+    prev = None
     for d in dates:
+        if not intraday and prev is not None:
+            pf.accrue(rates(prev))                       # interest on cash held overnight
         today = {s: rows[d] for s, rows in bar_rows.items() if d in rows}
-        pf.step(d, today, {s: sig_rows[s][d] for s in today}, session_end=bool(ends[d]) if ends is not None else False)
+        end_of_session = bool(ends[d]) if ends is not None else False
+        pf.step(d, today, {s: sig_rows[s][d] for s in today}, session_end=end_of_session)
+        if intraday and end_of_session:
+            pf.accrue(rates(d))
         equity_curve.append(pf.mark())
         exposure_curve.append(pf.exposure())
+        prev = d
 
     # Liquidate whatever is still open at the last close, so P&L includes exit costs.
     if pf.positions and len(dates):
@@ -209,12 +261,19 @@ def run_signal_backtest(strategy: SignalStrategy, params: Dict[str, Any], bars: 
             b = benchmark.reindex(dates).ffill().dropna()
             bday = pd.DatetimeIndex(b.index).tz_localize("UTC").tz_convert(MARKETS[market].tz).normalize().tz_localize(None)
             bm_d = b.groupby(bday).last()
+        bm_full = None
+        if benchmark is not None and not benchmark.dropna().empty:
+            b = benchmark.dropna()
+            bm_full = b.groupby(pd.DatetimeIndex(b.index).tz_localize("UTC").tz_convert(MARKETS[market].tz)
+                                .normalize().tz_localize(None)).last()
         return _finish(list(eq_d.values), list(ex_d.values), pf.trades, bm_d, eq_d.index, cfg,
                        pf.total_costs, pf.notional_traded,
-                       universe_curve(bars, eq_d.index, cfg, market, intraday=True), pf.skipped_capacity)
+                       universe_curve(bars, eq_d.index, cfg, market, intraday=True), pf.skipped_capacity,
+                       _cash_series(cash_rates, cfg), pf.interest_earned, bm_full)
     idx = dates[: len(equity_curve)]
     return _finish(equity_curve, exposure_curve, pf.trades, benchmark, dates, cfg, pf.total_costs,
-                   pf.notional_traded, universe_curve(bars, idx, cfg, market), pf.skipped_capacity)
+                   pf.notional_traded, universe_curve(bars, idx, cfg, market), pf.skipped_capacity,
+                   _cash_series(cash_rates, cfg), pf.interest_earned, benchmark)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -223,9 +282,12 @@ def run_signal_backtest(strategy: SignalStrategy, params: Dict[str, Any], bars: 
 
 def run_rebalance_backtest(strategy: RebalanceStrategy, params: Dict[str, Any], bars: Dict[str, pd.DataFrame],
                            market: str, config: Optional[BacktestConfig] = None, start=None, end=None,
-                           benchmark: Optional[pd.Series] = None) -> BacktestResult:
+                           benchmark: Optional[pd.Series] = None,
+                           cash_rates: Optional[pd.Series] = None) -> BacktestResult:
     cfg = config or BacktestConfig()
     cm = cfg.costs
+    rates = _rates_lookup(cash_rates, cfg)
+    interest_earned = 0.0
     all_dates = _period_dates(bars, None, None)
     closes = pd.DataFrame({s: b["close"] for s, b in bars.items()}).reindex(all_dates)
     opens = pd.DataFrame({s: b["open"] for s, b in bars.items()}).reindex(all_dates)
@@ -294,6 +356,10 @@ def run_rebalance_backtest(strategy: RebalanceStrategy, params: Dict[str, Any], 
 
     for k, d in enumerate(dates):
         t = pos_of[d]
+        if k > 0 and cash > 0:                           # interest on cash held overnight
+            i = cash * rates(dates[k - 1]) / 252
+            cash += i
+            interest_earned += i
         if pending is not None:
             eq = mark(t - 1) if t > 0 else cash
             fee_rate = (cm.uk_stamp_duty_bps if market == "UK" else 0) / 1e4 + cm.commission_bps / 1e4
@@ -339,11 +405,13 @@ def run_rebalance_backtest(strategy: RebalanceStrategy, params: Dict[str, Any], 
         exposure_curve[-1] = 0.0
 
     return _finish(equity_curve, exposure_curve, trades, benchmark, dates, cfg, total_costs, notional_traded,
-                   universe_curve(bars, dates[: len(equity_curve)], cfg, market))
+                   universe_curve(bars, dates[: len(equity_curve)], cfg, market), 0,
+                   _cash_series(cash_rates, cfg), interest_earned, benchmark)
 
 
-def run_backtest(strategy, params, bars, market, config=None, start=None, end=None, benchmark=None) -> BacktestResult:
+def run_backtest(strategy, params, bars, market, config=None, start=None, end=None, benchmark=None,
+                 cash_rates=None) -> BacktestResult:
     if isinstance(strategy, RebalanceStrategy):
-        return run_rebalance_backtest(strategy, params, bars, market, config, start, end, benchmark)
+        return run_rebalance_backtest(strategy, params, bars, market, config, start, end, benchmark, cash_rates)
     return run_signal_backtest(strategy, params, bars, market, config, start, end, benchmark,
-                               intraday=strategy.timeframe == "intraday")
+                               intraday=strategy.timeframe == "intraday", cash_rates=cash_rates)

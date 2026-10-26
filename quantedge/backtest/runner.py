@@ -24,7 +24,7 @@ from ..strategies import get_strategy
 from ..strategies.indicators import adjusted_ohlc
 from ..universe import UNIVERSES
 from ..universe import get as catalogue_get
-from .engine import BacktestConfig, BacktestResult, run_backtest
+from .engine import BacktestConfig, BacktestResult, default_config, run_backtest
 from .splits import PERIODS, chronological_split
 
 log = logging.getLogger(__name__)
@@ -77,7 +77,7 @@ def run_experiment(strategy_key: str, params: Optional[Dict[str, Any]] = None, *
                             "only for a final evaluation; the run will be flagged.")
     strategy = get_strategy(strategy_key)
     p = strategy.resolve(params)
-    cfg = config or BacktestConfig()
+    cfg = config or default_config(strategy)
     pkey = provider or get_settings().data_provider
     syms = [s.upper() for s in (symbols or UNIVERSES.get(universe or "", []))]
     if not syms:
@@ -136,9 +136,15 @@ def run_experiment(strategy_key: str, params: Optional[Dict[str, Any]] = None, *
             split = chronological_split(all_dates[warm:])
             start, end = split.window(period)
 
-        result: BacktestResult = run_backtest(strategy, p, bars, market, cfg, start, end, benchmark)
-        result.metrics.update(tie_break_spread(strategy, p, bars, market, cfg, start, end, benchmark, result))
-        result.metrics.update(_trial_stats(exp_id, strategy.key, market, syms, result))
+        from ..rates import annual_rates
+        cash_rates, cash_source = (annual_rates(market, all_dates) if cfg.cash_interest
+                                   else (None, "none (cash interest off)"))
+        result: BacktestResult = run_backtest(strategy, p, bars, market, cfg, start, end, benchmark, cash_rates)
+        result.metrics["cash_rate_source"] = cash_source
+        result.metrics.update(tie_break_spread(strategy, p, bars, market, cfg, start, end, benchmark, result,
+                                               cash_rates))
+        result.metrics.update(cost_curve(strategy, p, bars, market, cfg, start, end, benchmark, result, cash_rates))
+        result.metrics.update(_trial_stats(exp_id, strategy.key, market, syms, p, result))
         _store(exp_id, result, start, end, split, missing=[x for x in syms if x not in bars], warmup=warm)
         if not source.startswith("agent:") and source != "timing":
             # Event trigger: new human experiments get an independent look at the next research cycle.
@@ -178,7 +184,7 @@ TIE_BREAK_SEEDS = 8
 
 
 def tie_break_spread(strategy, params, bars, market, cfg: BacktestConfig, start, end, benchmark,
-                     result: BacktestResult) -> Dict[str, float]:
+                     result: BacktestResult, cash_rates=None) -> Dict[str, float]:
     """
     How much the result depends on which of several same-bar signals got a free slot. If no entry was
     ever refused for lack of a slot, the order can't matter and no extra runs are needed.
@@ -190,7 +196,7 @@ def tie_break_spread(strategy, params, bars, market, cfg: BacktestConfig, start,
     nets, sharpes = [result.metrics["net_return"]], [result.metrics.get("sharpe") or 0.0]
     for seed in range(1, TIE_BREAK_SEEDS):
         alt = run_backtest(strategy, params, bars, market, replace(cfg, tie_break_seed=cfg.tie_break_seed + seed),
-                           start, end, benchmark)
+                           start, end, benchmark, cash_rates)
         nets.append(alt.metrics["net_return"])
         sharpes.append(alt.metrics.get("sharpe") or 0.0)
     return {"tiebreak_seeds": float(len(nets)), "tiebreak_net_min": float(min(nets)),
@@ -198,21 +204,57 @@ def tie_break_spread(strategy, params, bars, market, cfg: BacktestConfig, start,
             "tiebreak_sharpe_min": float(min(sharpes)), "tiebreak_sharpe_max": float(max(sharpes))}
 
 
-def _trial_stats(exp_id: int, strategy_key: str, market: str, symbols: List[str],
+COST_MULTIPLES = (0.0, 2.0, 3.0)
+
+
+def cost_curve(strategy, params, bars, market, cfg: BacktestConfig, start, end, benchmark,
+               result: BacktestResult, cash_rates=None) -> Dict[str, float]:
+    """
+    Net return and Sharpe with trading frictions (spread, slippage, commission) at 0×, 2× and 3× the
+    configured level; 1× is the main result. Stamp duty stays fixed. `cost_breakeven_multiple` is
+    where net return would cross zero (linear between the tested points), if it does by 3×.
+    """
+    from dataclasses import replace
+    pts = {1.0: (result.metrics["net_return"], result.metrics.get("sharpe") or 0.0)}
+    for k in COST_MULTIPLES:
+        alt = run_backtest(strategy, params, bars, market, replace(cfg, costs=cfg.costs.scaled(k)), start, end,
+                           benchmark, cash_rates)
+        pts[k] = (alt.metrics["net_return"], alt.metrics.get("sharpe") or 0.0)
+    out = {}
+    for k in COST_MULTIPLES:
+        tag = f"x{int(k)}"
+        out[f"cost_{tag}_net_return"], out[f"cost_{tag}_sharpe"] = float(pts[k][0]), float(pts[k][1])
+    xs = sorted(pts)
+    for a, b in zip(xs, xs[1:]):
+        ra, rb = pts[a][0], pts[b][0]
+        if ra > 0 >= rb:
+            out["cost_breakeven_multiple"] = float(a + (b - a) * ra / (ra - rb))
+            break
+    return out
+
+
+def _trial_stats(exp_id: int, strategy_key: str, market: str, symbols: List[str], params: Dict[str, Any],
                  result: BacktestResult) -> Dict[str, float]:
     """
-    Trials = every recorded attempt (any parameters, any period, including failures) of this strategy
-    on this market and symbol set, up to and including this one. The Deflated Sharpe Ratio discounts
-    the result for that many tries.
+    Trials = distinct parameter sets of this strategy recorded on this market and symbol set (any
+    period, including failures), up to and including this one. Re-running an identical configuration
+    (e.g. after an engine fix) isn't a new try, so it doesn't raise the bar. The Deflated Sharpe Ratio
+    discounts the result for that many tries.
     """
     from . import stats as S
     with session_scope() as s:
-        rows = s.query(Experiment.id, Experiment.universe).filter(
+        rows = s.query(Experiment.id, Experiment.universe, Experiment.params).filter(
             Experiment.strategy_key == strategy_key, Experiment.market == market,
             Experiment.source != "timing", Experiment.id <= exp_id).all()
-    n = max(1, sum(1 for _, u in rows if list(u) == list(symbols)))
+    import json
+    distinct = {json.dumps(p, sort_keys=True) for _, u, p in rows if list(u) == list(symbols)}
+    distinct.add(json.dumps(params, sort_keys=True))
+    n = max(1, len(distinct))
+    rf = result.metrics.get("avg_cash_rate")
     daily = result.equity.pct_change().fillna(0.0).values[1:]
     out = {"trials": float(n)}
+    if rf:
+        daily = daily - rf / 252      # above cash, using the window's average rate (close to the daily series)
     dsr = S.deflated_sharpe(daily, n)
     if dsr == dsr:  # not NaN
         out["deflated_sharpe"] = dsr

@@ -22,7 +22,7 @@ import pandas as pd
 from .strategies import REGISTRY
 from .universe import UNIVERSES
 
-PERIOD_ORDER = ("train", "validation", "test", "full")
+PERIOD_ORDER = ("train", "validation", "walkforward", "test", "full")
 MIN_TRADES = 30          # below this, win rate and profit factor are mostly noise
 WEAK_SHARPE = 0.5        # below this, a "robust" result is consistently unimpressive
 LEVELS = ("good", "info", "caution", "warning")
@@ -129,6 +129,32 @@ def _period_findings(e: dict, label: str) -> List[Finding]:
                          f"Across {int(_m(e, 'tiebreak_seeds') or 0)} neutral tie-break orders, net return ranged "
                          f"{pct(tmin)} to {pct(tmax)} (median {pct(_m(e, 'tiebreak_net_median'))})."
                          + (" A wide range means the position cap often decides the result." if wide else "")))
+    x1, x2, x3 = net, _m(e, "cost_x2_net_return"), _m(e, "cost_x3_net_return")
+    if x2 is not None and x1 is not None:
+        be = _m(e, "cost_breakeven_multiple")
+        fragile = x2 <= 0 < x1 or (x1 > 0 and x2 < 0.5 * x1)
+        f.append(Finding("caution" if fragile else "info", "Cost sensitivity",
+                         f"Net return {pct(_m(e, 'cost_x0_net_return'))} with no trading costs, {pct(x1)} as tested, "
+                         f"{pct(x2)} at 2× and {pct(x3)} at 3×."
+                         + (f" Breaks even at about {be:.1f}× the assumed costs." if be is not None else "")
+                         + (" Costs decide whether this makes money." if fragile else "")))
+    up, down = _m(e, "regime_uptrend_ann"), _m(e, "regime_downtrend_ann")
+    if up is not None or down is not None:
+        dpct = _m(e, "regime_downtrend_days_pct") or 0.0
+        txt = []
+        if up is not None:
+            txt.append(f"benchmark uptrend days {pct(up)}/yr (benchmark {pct(_m(e, 'regime_uptrend_bench_ann'))})")
+        if down is not None:
+            txt.append(f"downtrend days {pct(down)}/yr (benchmark {pct(_m(e, 'regime_downtrend_bench_ann'))})")
+        rare = dpct < 0.10
+        f.append(Finding("caution" if rare else "info", "By market regime",
+                         "; ".join(txt) + f". {pct(dpct, 0, signed=False)} of days were in a downtrend."
+                         + (" This window barely tested falling markets." if rare else "")))
+    cash = _m(e, "avg_cash_rate")
+    if cash is not None:
+        f.append(Finding("info", "Cash interest",
+                         f"Uninvested cash earned {pct(_m(e, 'interest_earned_pct'), signed=False)} of capital; Sharpe "
+                         f"ratios are measured above the average cash rate of {pct(cash, signed=False)}."))
     if sharpe is not None and bsharpe is not None:
         better = sharpe > bsharpe
         f.append(Finding("good" if better else "caution", "Risk-adjusted return " + ("higher" if better else "lower")
@@ -195,19 +221,19 @@ def measured(e: Optional[dict]) -> bool:
     return e is not None and _m(e, "universe_return") is not None and _m(e, "sharpe_ci_low") is not None
 
 
-def _verdict(train: Optional[dict], val: Optional[dict]) -> Tuple[str, str]:
+def _verdict(train: Optional[dict], val: Optional[dict], label: str = "validation") -> Tuple[str, str]:
     if val is None:
         if train is None:
             return "No completed runs", "caution"
         return "Not validated: train-period result only", "caution"
     vs, ts = _m(val, "sharpe") or 0.0, _m(train, "sharpe") if train else None
     if (_m(val, "trade_count") or 0) < MIN_TRADES:
-        return "Inconclusive: too few validation trades", "caution"
+        return f"Inconclusive: too few {label} trades", "caution"
     if not measured(val):
         return "Pre-audit run: re-run to measure it against its own universe and with confidence intervals", "caution"
     b = strict_benchmark(val)
     if b["excess"] is not None and b["excess"] < 0 and vs < (b["sharpe"] or 0):
-        return f"Failed validation: lagged {b['label']} out of sample", "warning"
+        return f"Failed {label}: lagged {b['label']} out of sample", "warning"
     if ts is not None and ts > 0 and vs < 0.5 * ts:
         return "Degraded out of sample: possible overfitting", "warning"
     if b["excess"] is not None and b["excess"] < 0:
@@ -220,7 +246,7 @@ def _verdict(train: Optional[dict], val: Optional[dict]) -> Tuple[str, str]:
     dsr = _m(val, "deflated_sharpe")
     if dsr is not None and dsr < DSR_THRESHOLD:
         return "Inconclusive: doesn't survive the haircut for the number of variants tried", "caution"
-    return "Held up on validation (not proof of future returns)", "good"
+    return f"Held up on {label} (not proof of future returns)", "good"
 
 
 def _summary(name: str, uni: str, e: dict, label: str) -> str:
@@ -254,12 +280,16 @@ def build_reports(experiments: List[dict]) -> List[StrategyReport]:
         for r in done:
             periods[r["period"]] = r            # latest run per period wins
         train, val, test = periods.get("train"), periods.get("validation"), periods.get("test")
+        oos_label = "validation"
+        if val is None and periods.get("walkforward") is not None:
+            # Walk-forward folds are out-of-sample by construction, so they can stand in for validation.
+            val, oos_label = periods["walkforward"], "walk-forward"
         head = runs[-1]
         name = REGISTRY[head["strategy_key"]].name if head["strategy_key"] in REGISTRY else head["strategy_key"]
         uni = universe_label(head["universe"])
-        verdict, level = _verdict(train, val)
+        verdict, level = _verdict(train, val, oos_label)
 
-        primary_label = "validation" if val else ("train" if train else None)
+        primary_label = oos_label if val else ("train" if train else None)
         primary = val or train
         findings = _period_findings(primary, primary_label) if primary else []
         if train and val:

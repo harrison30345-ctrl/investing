@@ -99,6 +99,9 @@ class OpeningRangeBreakout(SignalStrategy):
         out["entry"] = first.fillna(False)
         out["exit"] = ((c < out["or_mid"]) & ready).fillna(False) if p["exit_on_failure"] else False
         stop_level = out["or_low"] if p["stop_at"] == "or_low" else out["or_mid"]
+        # The stop sits exactly at the range level, whatever the next bar opens at (audit fix 7).
+        # stop_dist (from the signal close) is kept for reference and the signal log.
+        out["stop_price"] = np.where(out["entry"], stop_level, np.nan)
         out["stop_dist"] = np.where(out["entry"], c - stop_level, np.nan)
         out["target_r"] = p["target_r"] if p["target_r"] > 0 else np.nan
         out["max_bars"] = np.nan

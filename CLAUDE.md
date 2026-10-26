@@ -82,3 +82,5 @@ Separate from the screener above. Launch guide: `docs/quantedge/README.md`; desi
 - Dashboard pages live in `quantedge/app/screens/` (not `pages/`, which Streamlit auto-discovers).
   Streamlit doesn't hot-reload non-page modules: restart the server after editing `quantedge/ui` etc.
 - Local Python is 3.9: keep code 3.9-compatible (`from __future__ import annotations`, `Optional[...]`).
+- Audit (docs/quantedge/AUDIT-2026-10-26.md): compare against the equal-weight universe, not just the ETF;
+  tests must not hit the network (`QE_CASH_RATE=zero` in the `isolated_db` fixture).

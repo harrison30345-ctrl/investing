@@ -95,6 +95,7 @@ class SignalStrategy(Strategy):
             target_r    float  — profit target as a multiple of stop_dist (NaN = none)
             max_bars    float  — time stop in bars (NaN = none)
             reason      str    — plain-English explanation where entry/exit
+            stop_price  float  — optional: an exact stop level; when set it overrides stop_dist
         plus any indicator columns useful as context.
         """
 

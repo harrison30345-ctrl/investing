@@ -26,6 +26,14 @@ import pandas as pd
 from .costs import CostModel
 
 
+SIGNAL_COLUMNS = ("entry", "exit", "stop_dist", "target_r", "max_bars", "reason", "stop_price")
+
+
+def signal_rows(sig: pd.DataFrame) -> dict:
+    """{bar: {column: value}} for the columns the portfolio reads (stop_price is optional)."""
+    return sig[[c for c in SIGNAL_COLUMNS if c in sig.columns]].to_dict("index")
+
+
 def _ts(x) -> pd.Timestamp:
     return pd.Timestamp(x)
 
@@ -45,6 +53,7 @@ class SignalPortfolio:
         self.total_costs = 0.0
         self.notional_traded = 0.0
         self.skipped_capacity = 0             # entry signals that found no free position slot
+        self.interest_earned = 0.0            # on uninvested cash (audit fix 5)
 
     def priority(self, symbol: str, ts) -> int:
         """
@@ -55,6 +64,13 @@ class SignalPortfolio:
         """
         seed = getattr(self.cfg, "tie_break_seed", 0)
         return zlib.crc32(f"{seed}|{symbol}|{pd.Timestamp(ts).isoformat()}".encode())
+
+    def accrue(self, annual_rate: float, periods: int = 252) -> None:
+        """One trading day of interest on cash held overnight. Called once per session by the driver."""
+        if annual_rate and self.cash > 0:
+            interest = self.cash * annual_rate / periods
+            self.cash += interest
+            self.interest_earned += interest
 
     # ── valuation ──────────────────────────────────────────────────────────
     def mark(self) -> float:
@@ -90,7 +106,13 @@ class SignalPortfolio:
         cfg, cm = self.cfg, self.cm
         sym = order["symbol"]
         fill = cm.buy_price(raw)
-        stop_dist = order["stop_dist"]
+        stop_price = order.get("stop_price")
+        if stop_price is not None and np.isfinite(stop_price):
+            # The strategy names an exact stop level (e.g. the opening-range low). Risk is measured
+            # from the actual fill; if the open is already at or below that level there's no trade.
+            stop_dist = fill - stop_price
+        else:
+            stop_dist = order["stop_dist"]
         if not stop_dist or not np.isfinite(stop_dist) or stop_dist <= 0 or fill - stop_dist <= 0:
             return
         shares = equity_at_open * cfg.risk_per_trade / stop_dist
@@ -177,7 +199,8 @@ class SignalPortfolio:
             sig = signals.get(sym) or {}
             if bool(sig.get("entry")) and sym not in self.positions:
                 order = {"symbol": sym, "stop_dist": float(sig["stop_dist"]), "target_r": float(sig["target_r"]),
-                         "max_bars": float(sig["max_bars"]), "reason": sig.get("reason") or ""}
+                         "max_bars": float(sig["max_bars"]), "reason": sig.get("reason") or "",
+                         "stop_price": float(sig.get("stop_price", float("nan")))}
                 self.pending_entries.append(order)
                 self.events.append({"type": "order", "side": "buy", "symbol": sym, "ts": ts,
                                     "reason": order["reason"], "stop_dist": order["stop_dist"]})
@@ -204,7 +227,7 @@ class SignalPortfolio:
         return enc({"cash": self.cash, "positions": self.positions, "pending_entries": self.pending_entries,
                     "pending_exits": self.pending_exits, "last_close": self.last_close,
                     "total_costs": self.total_costs, "notional_traded": self.notional_traded,
-                    "skipped_capacity": self.skipped_capacity})
+                    "skipped_capacity": self.skipped_capacity, "interest_earned": self.interest_earned})
 
     @classmethod
     def from_state(cls, config, market: str, state: Optional[Dict[str, Any]]) -> "SignalPortfolio":
@@ -231,4 +254,5 @@ class SignalPortfolio:
         pf.total_costs = float(st.get("total_costs", 0.0))
         pf.notional_traded = float(st.get("notional_traded", 0.0))
         pf.skipped_capacity = int(st.get("skipped_capacity", 0))
+        pf.interest_earned = float(st.get("interest_earned", 0.0))
         return pf

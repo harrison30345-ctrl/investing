@@ -28,7 +28,7 @@ import pandas as pd
 from sqlalchemy import select
 
 from .backtest.engine import BacktestConfig
-from .backtest.portfolio import SignalPortfolio
+from .backtest.portfolio import SignalPortfolio, signal_rows
 from .backtest.runner import INTRADAY_INTERVAL
 from .data import repository as repo
 from .db import session_scope
@@ -191,14 +191,26 @@ def step_account(account_id: int, now: Optional[pd.Timestamp] = None) -> int:
             ratio = (df["close"] / df["adj_close"]).replace([np.inf, -np.inf], np.nan).fillna(1.0) \
                 if "adj_close" in df else 1.0
             g = g.assign(stop_dist=g["stop_dist"] * ratio)
+            if "stop_price" in g:
+                g = g.assign(stop_price=g["stop_price"] * ratio)
         g = g.assign(stop_dist=g["stop_dist"] * _scale(sym))
-        sigs[sym] = g[["entry", "exit", "stop_dist", "target_r", "max_bars", "reason"]].to_dict("index")
+        if "stop_price" in g:
+            g = g.assign(stop_price=g["stop_price"] * _scale(sym))
+        sigs[sym] = signal_rows(g)
     rows = {sym: df.to_dict("index") for sym, df in raw.items()}
     closes = _session_closes(acct.market, new_ts[0].date() - timedelta(days=1), new_ts[-1].date()) if intraday else {}
     tz = MARKETS[acct.market].tz
 
     cfg = BacktestConfig.from_dict(acct.config)
     pf = SignalPortfolio.from_state(cfg, acct.market, acct.state)
+    # Cash earns the same short rate as in the backtest, once per session (audit fix 5).
+    rate_of = lambda ts: 0.0  # noqa: E731
+    if cfg.cash_interest:
+        from .rates import annual_rates
+        r, _ = annual_rates(acct.market, pd.DatetimeIndex([pd.Timestamp(acct.last_bar_ts)] + list(new_ts)))
+        if r is not None:
+            lookup = dict(zip(r.index, r.values))
+            rate_of = lambda ts: float(lookup.get(pd.Timestamp(ts), 0.0))  # noqa: E731
     with session_scope() as s:
         a = s.get(PaperAccount, account_id)
         prev_ts = pd.Timestamp(a.last_bar_ts)
@@ -215,9 +227,13 @@ def step_account(account_id: int, now: Optional[pd.Timestamp] = None) -> int:
                 session_end = close is not None and ts + pd.Timedelta(minutes=INTRADAY_MINUTES) >= close
             else:
                 session_end = False
+            if not intraday:
+                pf.accrue(rate_of(prev_ts))              # interest on cash held since the previous bar
             today = {sym: r[ts] for sym, r in rows.items() if ts in r}
             pf.step(ts, today, {sym: sigs[sym][ts] for sym in today if ts in sigs.get(sym, {})},
                     session_end=session_end)
+            if intraday and session_end:
+                pf.accrue(rate_of(ts))
             _record(s, a, pf, n_ev, n_tr)
             for ev in pf.events[n_ev:]:
                 if ev["type"] == "order" and ev["side"] == "buy":

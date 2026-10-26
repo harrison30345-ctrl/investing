@@ -6,7 +6,8 @@ Definitions (written out so nothing is ambiguous):
   cagr              compound annual growth, using 252 sessions per year
   benchmark_return  same window, buy-and-hold benchmark (total-return ETF)
   excess_return     net_return - benchmark_return
-  sharpe            mean(daily return) / std(daily return) * sqrt(252), risk-free = 0
+  sharpe            mean(daily return − cash rate) / std(same) * sqrt(252); cash rate from rates.py
+                    (0 when cash interest is off or the rate series is unavailable)
   max_drawdown      worst peak-to-trough fall of the equity curve (negative number)
   win_rate          winning trades / closed trades
   profit_factor     gross profit / gross loss (inf if no losers)
@@ -35,8 +36,11 @@ def drawdown_series(equity: pd.Series) -> pd.Series:
     return equity / equity.cummax() - 1
 
 
-def sharpe(returns: pd.Series) -> float:
+def sharpe(returns: pd.Series, rf: Optional[pd.Series] = None) -> float:
+    """Annualised Sharpe of returns above the cash rate `rf` (per-period, aligned); rf=None means 0."""
     r = returns.dropna()
+    if rf is not None:
+        r = (r - rf.reindex(r.index).fillna(0.0)).dropna()
     if len(r) < 2 or r.std(ddof=1) == 0:
         return 0.0
     return float(r.mean() / r.std(ddof=1) * math.sqrt(PERIODS_PER_YEAR))
@@ -52,7 +56,7 @@ def longest_losing_streak(pnls: List[float]) -> int:
 
 def compute(equity: pd.Series, trades: pd.DataFrame, *, exposure: Optional[pd.Series] = None,
             benchmark: Optional[pd.Series] = None, traded_notional: float = 0.0,
-            total_costs: float = 0.0) -> Dict[str, float]:
+            total_costs: float = 0.0, rf: Optional[pd.Series] = None) -> Dict[str, float]:
     m: Dict[str, float] = {}
     if equity.empty:
         return m
@@ -63,7 +67,7 @@ def compute(equity: pd.Series, trades: pd.DataFrame, *, exposure: Optional[pd.Se
     m["net_return"] = end / start - 1
     m["cagr"] = (end / start) ** (1 / years) - 1 if end > 0 else -1.0
     m["volatility"] = float(rets.std(ddof=1) * math.sqrt(PERIODS_PER_YEAR)) if len(rets) > 2 else 0.0
-    m["sharpe"] = sharpe(rets)
+    m["sharpe"] = sharpe(rets, rf)
     m["max_drawdown"] = max_drawdown(equity)
     m["sessions"] = float(len(equity))
     m["years"] = years
@@ -73,7 +77,7 @@ def compute(equity: pd.Series, trades: pd.DataFrame, *, exposure: Optional[pd.Se
         m["benchmark_return"] = float(b.iloc[-1] / b.iloc[0] - 1)
         m["benchmark_cagr"] = float((b.iloc[-1] / b.iloc[0]) ** (1 / years) - 1)
         m["benchmark_max_drawdown"] = max_drawdown(b)
-        m["benchmark_sharpe"] = sharpe(b.pct_change())
+        m["benchmark_sharpe"] = sharpe(b.pct_change(), rf)
         m["excess_return"] = m["net_return"] - m["benchmark_return"]
 
     n = int(len(trades))

@@ -189,3 +189,7 @@ buy-and-hold baseline of its own symbols (`engine.universe_curve`), a neutral se
 competing entries (`SignalPortfolio.priority`, `BacktestConfig.tie_break_seed`) with a spread across 8 seeds
 when slots were contested, and uncertainty statistics from `backtest/stats.py` (bootstrap CIs, PSR, Deflated
 Sharpe over recorded trials). Verdicts use the stricter baseline and require statistical support.
+Fixes 4–7 add per-experiment cost curves (0×/2×/3×) and intraday cost defaults (`default_config`), cash
+interest from FRED rates (`rates.py`; Sharpe measured above cash), regime breakdowns
+(`backtest/regimes.py`), walk-forward analysis on train+validation only (`backtest/walkforward.py`), and
+exact stop levels for strategies (`stop_price`, used by ORB).

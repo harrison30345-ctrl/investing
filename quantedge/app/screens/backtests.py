@@ -25,7 +25,7 @@ with f1:
     strat = st.multiselect("Strategy", sorted(exps["strategy_key"].unique()), format_func=V.strategy_name,
                            placeholder="All strategies")
 with f2:
-    period = st.multiselect("Period", ["train", "validation", "test", "full"], placeholder="All periods")
+    period = st.multiselect("Period", ["train", "validation", "walkforward", "test", "full"], placeholder="All periods")
 with f3:
     status = st.multiselect("Status", ["completed", "failed", "running"], placeholder="All")
 with f4:

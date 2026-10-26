@@ -51,7 +51,50 @@ def metrics_grid(m: dict, benchmark: str) -> None:
         ("Costs", C.fmt_pct(m.get("costs_pct_of_start"), signed=False, digits=1), ""),
         ("Tie-break range", f"{C.fmt_pct(m['tiebreak_net_min'], digits=0)} … {C.fmt_pct(m['tiebreak_net_max'], digits=0)}"
          if m.get("tiebreak_net_min") is not None else ("no contention" if m.get("tiebreak_seeds") == 1 else "n/a"), ""),
+        ("Net at 0× / 2× / 3× costs", " / ".join(C.fmt_pct(m.get(f"cost_x{k}_net_return"), digits=0) for k in (0, 2, 3))
+         if m.get("cost_x2_net_return") is not None else "n/a", ""),
+        ("Cash rate (avg)", C.fmt_pct(m.get("avg_cash_rate"), signed=False, digits=1)
+         if m.get("avg_cash_rate") is not None else "0% (off)", ""),
     ])
+
+
+def regime_table(m: dict) -> None:
+    rows = []
+    for name, label in (("uptrend", "Benchmark uptrend"), ("downtrend", "Benchmark downtrend"),
+                        ("highvol", "High volatility"), ("lowvol", "Low volatility")):
+        if m.get(f"regime_{name}_days_pct") is None:
+            continue
+        rows.append({"Regime": label, "Share of days": (m.get(f"regime_{name}_days_pct") or 0) * 100,
+                     "Strategy %/yr": (m.get(f"regime_{name}_ann") or float("nan")) * 100,
+                     "Benchmark %/yr": (m.get(f"regime_{name}_bench_ann") or float("nan")) * 100,
+                     "Sharpe above cash": m.get(f"regime_{name}_sharpe")})
+    if not rows:
+        st.caption("No regime breakdown (needs a year of benchmark history before the window).")
+        return
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True,
+                 column_config={"Share of days": st.column_config.NumberColumn(format="%.0f%%"),
+                                "Strategy %/yr": st.column_config.NumberColumn(format="%+.1f"),
+                                "Benchmark %/yr": st.column_config.NumberColumn(format="%+.1f"),
+                                "Sharpe above cash": st.column_config.NumberColumn(format="%.2f")})
+    st.caption("Days are labelled by the benchmark's state at the previous close: above/below its 200-day "
+               "average, and 21-day volatility above/below its trailing 1-year median. Regimes with under 20 "
+               "days show no figures.")
+
+
+def folds_table(m: dict) -> None:
+    folds = m.get("folds") or []
+    if not folds:
+        return
+    st.dataframe(pd.DataFrame([{
+        "In-sample": " → ".join(f["in_sample"]), "Out-of-sample": " → ".join(f["out_of_sample"]),
+        "Chosen": str(f["chosen"]), "OOS net %": f["oos_net_return"] * 100,
+        "OOS ETF %": (f.get("oos_benchmark_return") or float("nan")) * 100,
+        "OOS same-stocks %": (f.get("oos_universe_return") or float("nan")) * 100,
+        "In-sample Sharpe by value": ", ".join(f"{k}: {v:.2f}" for k, v in f["in_sample_sharpe"].items()),
+    } for f in folds]), hide_index=True, use_container_width=True,
+        column_config={"OOS net %": st.column_config.NumberColumn(format="%+.1f"),
+                       "OOS ETF %": st.column_config.NumberColumn(format="%+.1f"),
+                       "OOS same-stocks %": st.column_config.NumberColumn(format="%+.1f")})
 
 
 ADJUSTED_NOTE = "Prices are dividend/split-adjusted, in account currency (UK in pounds)."
@@ -138,10 +181,17 @@ def experiment_detail(e: pd.Series, key: str = "detail") -> None:
         for n in e["bias_notes"] or []:
             st.caption("⚠ " + n)
         retest_buttons(e, key)
-    t1, t2 = st.tabs([f"Trades ({int(m.get('trade_count') or 0)})", "Configuration"])
-    with t1:
+    tabs = [f"Trades ({int(m.get('trade_count') or 0)})", "By regime"] + \
+        (["Walk-forward folds"] if m.get("folds") else []) + ["Configuration"]
+    t = st.tabs(tabs)
+    with t[0]:
         trades_table(D.experiment_trades(int(e["id"])), key)
-    with t2:
+    with t[1]:
+        regime_table(m)
+    if m.get("folds"):
+        with t[2]:
+            folds_table(m)
+    with t[-1]:
         st.json({"params": e["params"], "config": e["config"], "universe": e["universe"],
                  "split": m.get("split"), "missing_symbols": m.get("missing_symbols"),
                  "notes": e.get("notes"), "source": e.get("source")}, expanded=False)

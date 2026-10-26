@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import select
 
-from ..backtest.engine import BacktestConfig
+from ..backtest.engine import default_config
 from ..backtest.runner import rerun_on_period, run_experiment
 from ..config import get_settings
 from ..data import repository as repo
@@ -58,11 +58,12 @@ def _symbols(universe: str) -> Tuple[Optional[str], List[str]]:
 
 
 def _config_key(strategy_key: str, params: dict, symbols: List[str], period: str) -> str:
-    return json.dumps([strategy_key, params, symbols, period, BacktestConfig().to_dict()], sort_keys=True)
+    return json.dumps([strategy_key, params, symbols, period, default_config(REGISTRY[strategy_key]).to_dict()],
+                      sort_keys=True)
 
 
 def _existing(session, strategy_key: str, params: dict, symbols: List[str], period: str) -> Optional[int]:
-    default_cfg = BacktestConfig().to_dict()
+    default_cfg = default_config(REGISTRY[strategy_key]).to_dict()
     for e in session.scalars(select(Experiment).where(Experiment.strategy_key == strategy_key,
                                                       Experiment.period == period,
                                                       Experiment.status == "completed")):
@@ -182,7 +183,8 @@ def execute(proposal_id: int) -> Optional[int]:
             exp_id = rerun_on_period(parent, "validation", source=f"agent:{agent}")
         else:
             exp_id = run_experiment(norm["strategy_key"], norm["params"], symbols=norm["symbols"],
-                                    universe=norm["universe_name"], period="train", config=BacktestConfig(),
+                                    universe=norm["universe_name"], period="train",
+                                    config=default_config(REGISTRY[norm["strategy_key"]]),
                                     source=f"agent:{agent}", notes=f"proposal #{proposal_id}: {hyp}")
         status = "completed"
     except Exception as exc:  # recorded on the experiment row by the runner

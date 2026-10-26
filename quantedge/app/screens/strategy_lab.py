@@ -13,7 +13,8 @@ from quantedge.app import actions
 from quantedge.app import data as D
 from quantedge.app import views as V
 from quantedge.backtest.costs import CostModel
-from quantedge.backtest.engine import BacktestConfig
+from quantedge.backtest.engine import BacktestConfig, default_config
+from quantedge.backtest.walkforward import run_walk_forward
 from quantedge.backtest.runner import TestSetLocked, run_experiment, run_sweep
 from quantedge.markets import MARKETS
 from quantedge.strategies import REGISTRY
@@ -81,16 +82,26 @@ with cfg_col:
                                    help="Trend strategies: equity at risk if the stop is hit") / 100
             max_pos = int(st.number_input("Max positions", 1, 30, 5, 1, key="lab_maxpos"))
             max_pct = st.number_input("Max position size (%)", 5.0, 100.0, 20.0, 5.0, key="lab_maxpct") / 100
-            spread = st.number_input("Spread (bps, full)", 0.0, 100.0, 5.0, 1.0, key="lab_spread")
-            slip = st.number_input("Slippage (bps per side)", 0.0, 100.0, 5.0, 1.0, key="lab_slip")
+            dflt = default_config(strat).costs
+            spread = st.number_input("Spread (bps, full)", 0.0, 100.0, float(dflt.spread_bps), 1.0,
+                                     key=f"lab_spread_{strat.timeframe}",
+                                     help="Defaults: 5 daily, 10 intraday (5-minute entries fill into moving prices)")
+            slip = st.number_input("Slippage (bps per side)", 0.0, 100.0, float(dflt.slippage_bps), 1.0,
+                                   key=f"lab_slip_{strat.timeframe}")
             comm = st.number_input("Commission (bps)", 0.0, 100.0, 0.0, 1.0, key="lab_comm")
             stamp = st.number_input("UK stamp duty on buys (bps)", 0.0, 100.0, 50.0, 5.0, key="lab_stamp",
                                     help="0.5% SDRT on UK share purchases. Not charged on US stocks.")
+            cash_int = st.checkbox("Cash earns the short-term rate", value=True, key="lab_cash",
+                                   help="US 3-month T-bill / UK SONIA from FRED. Sharpe is measured above it.")
         config = BacktestConfig(initial_capital=capital, risk_per_trade=risk, max_positions=max_pos,
-                                max_position_pct=max_pct, costs=CostModel(spread, slip, comm, 0.0, stamp))
+                                max_position_pct=max_pct, costs=CostModel(spread, slip, comm, 0.0, stamp),
+                                cash_interest=cash_int)
 
-        run_mode = st.segmented_control("Run", ["Single", "Sweep one parameter"], default="Single",
-                                        key="lab_runmode") or "Single"
+        modes = ["Single", "Sweep one parameter"] + (["Walk-forward"] if strat.timeframe == "daily" else [])
+        run_mode = st.segmented_control("Run", modes, default="Single", key=f"lab_runmode_{strat.timeframe}") or "Single"
+        if run_mode == "Walk-forward":
+            st.caption("Each fold picks the best value on ~3 years, trades it on the next ~6 months, and rolls on. "
+                       "Only the out-of-sample pieces are reported. Uses train + validation data; never the test period.")
         sweep_param, sweep_values = None, []
         if run_mode != "Single":
             numeric = [p for p in strat.params if p.kind in ("int", "float", "choice")]
@@ -135,13 +146,21 @@ with cfg_col:
 
         can_run = bool(symbols) and (run_mode == "Single" or len(sweep_values) >= 2)
         notes = st.text_input("Note (optional)", key="lab_notes", placeholder="What are you testing?")
-        if st.button("Run backtest" if run_mode == "Single" else f"Run {len(sweep_values)} variants",
+        label = {"Single": "Run backtest", "Walk-forward": f"Run walk-forward over {len(sweep_values)} values"}.get(
+            run_mode, f"Run {len(sweep_values)} variants")
+        if st.button(label,
                      type="primary", icon=":material/play_arrow:", width="stretch", disabled=not can_run):
             try:
                 with st.spinner("Running… (every run is recorded)"):
                     if run_mode == "Single":
                         exp_id = run_experiment(skey, params, symbols=list(symbols), universe=uname, period=period,
                                                 config=config, source="dashboard", notes=notes or None)
+                        st.session_state["lab_result"] = {"ids": [exp_id]}
+                    elif run_mode == "Walk-forward":
+                        base = {k: v for k, v in params.items() if k != sweep_param}
+                        exp_id = run_walk_forward(skey, sweep_param, sweep_values, base_params=base,
+                                                  symbols=list(symbols), universe=uname, config=config,
+                                                  source="dashboard", notes=notes or None)
                         st.session_state["lab_result"] = {"ids": [exp_id]}
                     else:
                         base = {k: v for k, v in params.items() if k != sweep_param}

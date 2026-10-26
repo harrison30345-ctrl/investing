@@ -30,8 +30,9 @@ are synthetic, stored separately from real data, and every page shows a DEMO DAT
    parameters and costs on the next 20% of history, which the run has never seen.
 3. **Read the verdict.** Reports groups runs by configuration and says, in plain English, whether the
    result held up, was mixed, inconclusive, degraded or failed. Each run is compared with the market ETF
-   *and* with simply buying and holding the same stocks, with 95% confidence intervals and a haircut for
-   how many variants were tried.
+   *and* with simply buying and holding the same stocks, with 95% confidence intervals, a haircut for
+   how many variants were tried, a cost-sensitivity curve and a breakdown by market regime.
+   *Walk-forward* (Strategy Lab run mode or CLI) re-picks a parameter every fold on past data only.
 4. **(Optional) Final test.** The last 20% is locked. Unlock it once, at the end; every use is counted.
 5. **Paper trade.** Paper Trading → *Start a paper account* from a validated run, with your approval.
    It trades only bars that arrive from then on, with simulated money.
@@ -58,6 +59,7 @@ fails (details in Settings → System health).
 python3 -m quantedge.cli refresh --core | --universe us_large | --symbols AAPL,SHEL.L | --intraday
 python3 -m quantedge.cli backtest ema_pullback --universe us_large [--period validation] [--params '{"fast": 10}']
 python3 -m quantedge.cli sweep xs_momentum lookback 63,126,252 --universe us_large
+python3 -m quantedge.cli walkforward ema_pullback fast 10,20,30 --universe us_large   # re-chosen each fold, out-of-sample
 python3 -m quantedge.cli validate 12                  # re-test experiment #12 on validation
 python3 -m quantedge.cli report [--ids 12,13]         # plain-English reports (Markdown)
 python3 -m quantedge.cli scan                         # record daily signal observations
@@ -79,6 +81,7 @@ Strategies: `ema_pullback`, `donchian_breakout` (daily trend), `xs_momentum` (da
 | `QE_AGENT_AUTORUN=false` | Every agent-proposed backtest waits for your approval |
 | `QE_ALERT_WEBHOOK_URL` | Alerts are also POSTed to this URL as JSON (`{"text": …}`) |
 | `QE_DATABASE_URL` | Use Postgres instead of the local SQLite file |
+| `QE_CASH_RATE` | `fred` (default: uninvested cash earns the US T-bill / UK SONIA rate), `zero`, or a constant like `0.04` |
 | `QE_TRADING_MODE` | `research` (default) or `paper`. Anything else is refused at start-up |
 
 ## 6. Troubleshooting
