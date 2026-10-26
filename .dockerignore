@@ -1,0 +1,6 @@
+# Build context: only what the image needs.
+*
+!quantedge/
+!requirements.txt
+!requirements-server.txt
+**/__pycache__

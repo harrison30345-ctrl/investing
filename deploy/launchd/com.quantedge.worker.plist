@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OPTIONAL local alternative to the cloud worker: keeps the QuantEdge worker running on this Mac
+  while it's awake. Not installed automatically. To use it:
+    1. Replace /PATH/TO/investing with the project path (two places below).
+    2. cp deploy/launchd/com.quantedge.worker.plist ~/Library/LaunchAgents/
+    3. launchctl load ~/Library/LaunchAgents/com.quantedge.worker.plist
+  Stop: launchctl unload ~/Library/LaunchAgents/com.quantedge.worker.plist
+  The Mac must be on and awake for jobs to run; a cloud server doesn't have that limitation.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.quantedge.worker</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>-m</string>
+    <string>quantedge.worker</string>
+  </array>
+  <key>WorkingDirectory</key><string>/PATH/TO/investing</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/PATH/TO/investing/../.quantedge-worker.log</string>
+  <key>StandardErrorPath</key><string>/PATH/TO/investing/../.quantedge-worker.log</string>
+</dict>
+</plist>

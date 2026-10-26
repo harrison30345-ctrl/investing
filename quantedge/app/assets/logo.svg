@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="150" height="28" viewBox="0 0 150 28">
+  <rect x="1" y="3" width="22" height="22" rx="5" fill="none" stroke="#2bc4c4" stroke-width="1.5"/>
+  <polyline points="5,18 9,13 13,15 19,8" fill="none" stroke="#2bc4c4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="31" y="19.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#e3e9f0" letter-spacing="0.3">QuantEdge</text>
+</svg>

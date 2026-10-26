@@ -2,16 +2,38 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "quantedge",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "quantedge.cli",
+        "dashboard",
+        "--port",
+        "8503"
+      ],
+      "port": 8503
+    },
+    {
       "name": "dashboard",
       "runtimeExecutable": "streamlit",
-      "runtimeArgs": ["run", "dashboard.py", "--server.headless", "true"],
+      "runtimeArgs": [
+        "run",
+        "dashboard.py",
+        "--server.headless",
+        "true"
+      ],
       "port": 8501,
       "autoPort": true
     },
     {
       "name": "arena",
       "runtimeExecutable": "streamlit",
-      "runtimeArgs": ["run", "trading/hub.py", "--server.headless", "true"],
+      "runtimeArgs": [
+        "run",
+        "trading/hub.py",
+        "--server.headless",
+        "true"
+      ],
       "port": 8502,
       "autoPort": true
     },

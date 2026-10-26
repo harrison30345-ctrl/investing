@@ -1,0 +1,8 @@
+# HTTPS (automatic Let's Encrypt certificate) + password in front of the dashboard.
+{$QE_DOMAIN} {
+	basic_auth {
+		{$QE_BASIC_AUTH_USER} {$QE_BASIC_AUTH_HASH}
+	}
+	encode gzip
+	reverse_proxy dashboard:8501
+}

@@ -1,0 +1,75 @@
+# QuantEdge cloud stack: Postgres + dashboard + background worker + Caddy (HTTPS, password).
+#
+#   cp .env.example .env    # fill in POSTGRES_PASSWORD, QE_DOMAIN, QE_BASIC_AUTH_*; see docs/quantedge/DEPLOY.md
+#   docker compose up -d --build
+#
+# Only Caddy publishes ports. The dashboard and database are reachable only inside this network.
+
+x-app: &app
+  build: .
+  env_file: .env
+  environment:
+    QE_DATABASE_URL: postgresql+psycopg://quantedge:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/quantedge
+  depends_on:
+    db:
+      condition: service_healthy
+  restart: unless-stopped
+  volumes:
+    - qe-data:/data
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: quantedge
+      POSTGRES_USER: quantedge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quantedge -d quantedge"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  dashboard:
+    <<: *app
+    command: ["python", "-m", "quantedge.cli", "dashboard", "--port", "8501"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "quantedge.worker"]
+    stop_grace_period: 2m          # lets a running job finish on deploys
+    healthcheck:
+      # Unhealthy only on errors (stale data after the refresh window, provider down, dead worker).
+      test: ["CMD", "python", "-m", "quantedge.cli", "health", "--worker", "--fail-on", "error"]
+      interval: 5m
+      timeout: 60s
+      start_period: 2m
+      retries: 2
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on: [dashboard]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      QE_DOMAIN: ${QE_DOMAIN:?set QE_DOMAIN in .env}
+      QE_BASIC_AUTH_USER: ${QE_BASIC_AUTH_USER:?set QE_BASIC_AUTH_USER in .env}
+      QE_BASIC_AUTH_HASH: ${QE_BASIC_AUTH_HASH:?set QE_BASIC_AUTH_HASH in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    restart: unless-stopped
+
+volumes:
+  pg-data:
+  qe-data:
+  caddy-data:

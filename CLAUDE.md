@@ -63,3 +63,24 @@ Built-in configs are in `screener/configs/`. The user can ask to adjust threshol
 - `screener/scoring.py` — composite 0-100 scoring
 - `screener/universe.py` — index constituent loaders
 - `screener/dashboard.py` — Streamlit web dashboard
+
+
+---
+
+# QuantEdge (research + paper-trading platform, `quantedge/`)
+
+Separate from the screener above. Launch guide: `docs/quantedge/README.md`; design:
+`docs/quantedge/ARCHITECTURE.md`; deployment: `docs/quantedge/DEPLOY.md`.
+
+- Run: `python3 -m quantedge.cli dashboard` (port 8503, launch config "quantedge"),
+  `python3 -m quantedge.worker`, `python3 -m quantedge.cli --help` for everything else.
+- Tests: `python3 -m pytest tests -q` (includes headless page renders; ~3 minutes).
+- Safety rules to keep: no real-money execution or broker code; `QE_TRADING_MODE` only research/paper;
+  never substitute demo data for real data; the backtester is the only source of numbers; paper
+  accounts need a validated run and a human approver; agents can't approve or create anything;
+  every experiment (including failures) is recorded.
+- Dashboard pages live in `quantedge/app/screens/` (not `pages/`, which Streamlit auto-discovers).
+  Streamlit doesn't hot-reload non-page modules: restart the server after editing `quantedge/ui` etc.
+- Local Python is 3.9: keep code 3.9-compatible (`from __future__ import annotations`, `Optional[...]`).
+- Audit (docs/quantedge/AUDIT-2026-10-26.md): compare against the equal-weight universe, not just the ETF;
+  tests must not hit the network (`QE_CASH_RATE=zero` in the `isolated_db` fixture).

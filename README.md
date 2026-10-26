@@ -1,3 +1,6 @@
+> **QuantEdge**, the UK/US quantitative research and paper-trading platform, lives in `quantedge/`.
+> Start with [docs/quantedge/README.md](docs/quantedge/README.md). This README covers the original stock screener.
+
 # Fundamental Stock Screener
 
 A Python-based tool for screening stocks by fundamental metrics. Two modes:
