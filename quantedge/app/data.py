@@ -106,9 +106,10 @@ def experiments(limit: int = 200) -> pd.DataFrame:
 @st.cache_data(ttl=TTL, show_spinner=False)
 def experiment_curve(exp_id: int) -> pd.DataFrame:
     with session_scope() as s:
-        rows = s.execute(select(EquityPoint.ts, EquityPoint.equity, EquityPoint.benchmark, EquityPoint.exposure)
+        rows = s.execute(select(EquityPoint.ts, EquityPoint.equity, EquityPoint.benchmark, EquityPoint.exposure,
+                                EquityPoint.universe)
                          .where(EquityPoint.experiment_id == exp_id).order_by(EquityPoint.ts)).all()
-    return pd.DataFrame(rows, columns=["ts", "equity", "benchmark", "exposure"]).set_index("ts")
+    return pd.DataFrame(rows, columns=["ts", "equity", "benchmark", "exposure", "universe"]).set_index("ts")
 
 
 @st.cache_data(ttl=TTL, show_spinner=False)

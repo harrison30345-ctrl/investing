@@ -47,6 +47,7 @@ class BacktestConfig:
     max_position_pct: float = 0.20
     max_positions: int = 5
     rebalance_drift: float = 0.25        # momentum: only resize a holding if >25% off target
+    tie_break_seed: int = 0              # which of several same-bar signals fills first when slots are short
     costs: CostModel = field(default_factory=CostModel)
 
     def to_dict(self) -> dict:
@@ -70,6 +71,7 @@ class BacktestResult:
     metrics: Dict[str, Any]
     total_costs: float
     traded_notional: float
+    universe: Optional[pd.Series] = None
 
 
 TRADE_COLUMNS = ["symbol", "entry_ts", "entry_price", "exit_ts", "exit_price", "shares", "costs",
@@ -94,13 +96,59 @@ def _benchmark_curve(benchmark: Optional[pd.Series], dates: pd.DatetimeIndex, ca
     return b / b.iloc[0] * capital
 
 
-def _finish(equity, exposure, trades, benchmark, dates, cfg, costs, notional) -> BacktestResult:
+def universe_curve(bars: Dict[str, pd.DataFrame], index: pd.DatetimeIndex, cfg: "BacktestConfig", market: str,
+                   intraday: bool = False) -> Optional[pd.Series]:
+    """
+    Equal-weight buy-and-hold of the experiment's own symbols, bought at the first close of the
+    window and held (not rebalanced), with the same entry and exit costs as the strategy.
+
+    It's the honest baseline for a strategy that trades a hand-picked universe. If simply owning
+    the same stocks did better, the strategy added nothing. When the universe is today's winners,
+    this also shows how much of any "edge" is survivorship.
+    """
+    if not bars or len(index) == 0:
+        return None
+    closes = {}
+    for sym, b in bars.items():
+        c = b["close"].dropna()
+        if intraday:
+            day = pd.DatetimeIndex(c.index).tz_localize("UTC").tz_convert(MARKETS[market].tz).normalize().tz_localize(None)
+            c = c.groupby(day).last()
+        c = c.reindex(index).ffill()
+        if len(c) and pd.notna(c.iloc[0]):
+            closes[sym] = c
+    if not closes:
+        return None
+    cm = cfg.costs
+    per = cfg.initial_capital / len(closes)
+    fee_rate = ((cm.uk_stamp_duty_bps / 1e4) if market == "UK" else 0.0) + cm.commission_bps / 1e4
+    shares = {sym: per / (cm.buy_price(float(c.iloc[0])) * (1 + fee_rate)) for sym, c in closes.items()}
+    total = sum(c * shares[sym] for sym, c in closes.items()).astype(float)
+    # Selling at the end pays the spread and slippage too, as the strategy's final liquidation does.
+    total.iloc[-1] = sum(cm.sell_price(float(c.iloc[-1])) * shares[sym] for sym, c in closes.items())
+    return total.rename("universe")
+
+
+def _finish(equity, exposure, trades, benchmark, dates, cfg, costs, notional, universe=None,
+            skipped_capacity: int = 0) -> BacktestResult:
+    from . import stats as S
     eq = pd.Series(equity, index=dates[: len(equity)], name="equity")
     ex = pd.Series(exposure, index=eq.index, name="exposure")
     tr = pd.DataFrame(trades, columns=TRADE_COLUMNS)
     bm = _benchmark_curve(benchmark, eq.index, cfg.initial_capital)
     mets = M.compute(eq, tr, exposure=ex, benchmark=bm, traded_notional=notional, total_costs=costs)
-    return BacktestResult(eq, ex, tr, bm, mets, costs, notional)
+    uni = universe.reindex(eq.index).ffill() if universe is not None else None
+    if uni is not None and uni.dropna().size > 1:
+        mets["universe_return"] = float(uni.iloc[-1] / uni.iloc[0] - 1)
+        mets["universe_sharpe"] = M.sharpe(uni.pct_change())
+        mets["universe_max_drawdown"] = M.max_drawdown(uni)
+        mets["excess_vs_universe"] = mets["net_return"] - mets["universe_return"]
+    daily = eq.pct_change().fillna(0.0).values[1:]
+    bdaily = bm.reindex(eq.index).ffill().pct_change().fillna(0.0).values[1:] if bm is not None else None
+    udaily = uni.pct_change().fillna(0.0).values[1:] if uni is not None and uni.dropna().size > 1 else None
+    mets.update(S.uncertainty(daily, bdaily, udaily, tr["return_pct"].values if len(tr) else []))
+    mets["entries_skipped_capacity"] = float(skipped_capacity)
+    return BacktestResult(eq, ex, tr, bm, mets, costs, notional, uni)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -162,9 +210,11 @@ def run_signal_backtest(strategy: SignalStrategy, params: Dict[str, Any], bars: 
             bday = pd.DatetimeIndex(b.index).tz_localize("UTC").tz_convert(MARKETS[market].tz).normalize().tz_localize(None)
             bm_d = b.groupby(bday).last()
         return _finish(list(eq_d.values), list(ex_d.values), pf.trades, bm_d, eq_d.index, cfg,
-                       pf.total_costs, pf.notional_traded)
+                       pf.total_costs, pf.notional_traded,
+                       universe_curve(bars, eq_d.index, cfg, market, intraday=True), pf.skipped_capacity)
+    idx = dates[: len(equity_curve)]
     return _finish(equity_curve, exposure_curve, pf.trades, benchmark, dates, cfg, pf.total_costs,
-                   pf.notional_traded)
+                   pf.notional_traded, universe_curve(bars, idx, cfg, market), pf.skipped_capacity)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -288,7 +338,8 @@ def run_rebalance_backtest(strategy: RebalanceStrategy, params: Dict[str, Any], 
         equity_curve[-1] = cash
         exposure_curve[-1] = 0.0
 
-    return _finish(equity_curve, exposure_curve, trades, benchmark, dates, cfg, total_costs, notional_traded)
+    return _finish(equity_curve, exposure_curve, trades, benchmark, dates, cfg, total_costs, notional_traded,
+                   universe_curve(bars, dates[: len(equity_curve)], cfg, market))
 
 
 def run_backtest(strategy, params, bars, market, config=None, start=None, end=None, benchmark=None) -> BacktestResult:

@@ -73,7 +73,8 @@ def candles(df: pd.DataFrame, name: str, overlays: Optional[dict] = None, height
 
 
 def equity_vs_benchmark(eq: pd.Series, bm: Optional[pd.Series], height: int = 260,
-                        strategy_label: str = "Strategy", benchmark_label: str = "Benchmark") -> go.Figure:
+                        strategy_label: str = "Strategy", benchmark_label: str = "Benchmark",
+                        universe: Optional[pd.Series] = None) -> go.Figure:
     """Both rebased to 100 so they share one axis honestly."""
     fig = _fig(height)
     if eq.empty:
@@ -84,6 +85,11 @@ def equity_vs_benchmark(eq: pd.Series, bm: Optional[pd.Series], height: int = 26
         b = bm.dropna()
         fig.add_trace(go.Scatter(x=b.index, y=b / b.iloc[0] * 100, name=benchmark_label, mode="lines",
                                  line=dict(color=T.SERIES_2, width=2), hovertemplate="%{y:.1f}"))
+    if universe is not None and not universe.dropna().empty:
+        u = universe.dropna()
+        fig.add_trace(go.Scatter(x=u.index, y=u / u.iloc[0] * 100, name="Same stocks, equal-weight buy & hold",
+                                 mode="lines", line=dict(color=T.COMPARE[2], width=1.5, dash="dot"),
+                                 hovertemplate="%{y:.1f}"))
     fig.update_layout(margin=dict(t=26), legend=dict(y=1.02, yanchor="bottom"))
     return fig
 

@@ -147,6 +147,7 @@ class EquityPoint(Base):
     equity: Mapped[float] = mapped_column(Float)
     benchmark: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     exposure: Mapped[float] = mapped_column(Float, default=0.0)
+    universe: Mapped[Optional[float]] = mapped_column(Float, nullable=True)   # equal-weight B&H of the symbols
 
 
 class Signal(Base):

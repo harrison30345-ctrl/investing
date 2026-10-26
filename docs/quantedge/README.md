@@ -29,7 +29,9 @@ are synthetic, stored separately from real data, and every page shows a DEMO DAT
 2. **Check on validation.** Backtests → select the run → *Re-test on validation period*. Same rules,
    parameters and costs on the next 20% of history, which the run has never seen.
 3. **Read the verdict.** Reports groups runs by configuration and says, in plain English, whether the
-   result held up, was mixed, degraded or failed, and what might be flattering it.
+   result held up, was mixed, inconclusive, degraded or failed. Each run is compared with the market ETF
+   *and* with simply buying and holding the same stocks, with 95% confidence intervals and a haircut for
+   how many variants were tried.
 4. **(Optional) Final test.** The last 20% is locked. Unlock it once, at the end; every use is counted.
 5. **Paper trade.** Paper Trading → *Start a paper account* from a validated run, with your approval.
    It trades only bars that arrive from then on, with simulated money.
@@ -112,7 +114,9 @@ Data lives in `~/.quantedge/quantedge.db` (SQLite). Deleting it resets everythin
 * Yahoo data is unofficial, delayed, personal-use only, and not point-in-time.
 * Intraday history is ~60 days, so intraday results are small samples.
 * Paper fills use actual prices and don't credit dividends.
-* Report verdicts are rules of thumb, not statistical tests. No walk-forward optimiser yet.
+* Verdicts require the edge over the stricter baseline (ETF or the same stocks bought and held) to have a 95%
+  interval above zero and a Deflated Sharpe ≥ 0.95; the thresholds are conventions, not guarantees. No
+  walk-forward optimiser yet. See [AUDIT-2026-10-26.md](AUDIT-2026-10-26.md).
 * Agent spend is estimated at list prices; the Anthropic console is the invoice.
 * Local Python is 3.9 (end of life); the Docker image uses 3.11. The Anthropic SDK is pinned below 1.0.
 * Schema changes use a minimal add-missing-columns step; adopt Alembic before changing column types.

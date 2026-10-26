@@ -97,6 +97,38 @@ def _period_findings(e: dict, label: str) -> List[Finding]:
         else:
             f.append(Finding("warning", f"Lagged {bm} on {label}",
                              f"{pct(net)} vs {pct(bench)}. Simply holding the benchmark would have done better."))
+    uni, ex_u = _m(e, "universe_return"), _m(e, "excess_vs_universe")
+    if ex_u is not None:
+        if ex_u >= 0:
+            f.append(Finding("good", f"Beat buy-and-hold of its own symbols on {label}",
+                             f"{pct(net)} vs {pct(uni)} for holding the same stocks equally weighted."))
+        else:
+            f.append(Finding("warning", f"Lagged buy-and-hold of its own symbols on {label}",
+                             f"{pct(net)} vs {pct(uni)}. Owning the same stocks and doing nothing did better. "
+                             "Any gain over the index may come from the stock list, not the rules."))
+    lo, hi = _m(e, "sharpe_ci_low"), _m(e, "sharpe_ci_high")
+    if lo is not None:
+        f.append(Finding("info" if lo > 0 else "caution", "Sharpe 95% confidence interval",
+                         f"{lo:.2f} to {hi:.2f} (block bootstrap)."
+                         + ("" if lo > 0 else " It includes zero: the risk-adjusted return could be luck.")))
+    sb = strict_benchmark(e)
+    if sb and sb["ci"][0] is not None:
+        clo, chi = sb["ci"]
+        f.append(Finding("good" if clo > 0 else "caution", f"Excess return over {sb['label']}",
+                         f"95% interval {pct(clo)} to {pct(chi)} a year."
+                         + (" Entirely above zero." if clo > 0 else " Includes zero: not a demonstrated edge.")))
+    dsr, trials = _m(e, "deflated_sharpe"), _m(e, "trials")
+    if dsr is not None:
+        f.append(Finding("info" if dsr >= DSR_THRESHOLD else "caution", "Multiple-testing haircut",
+                         f"Deflated Sharpe {dsr:.2f} after {int(trials or 1)} tries of this strategy on these symbols "
+                         f"(≥ {DSR_THRESHOLD} needed to rule out 'best of many lucky variants')."))
+    tmin, tmax = _m(e, "tiebreak_net_min"), _m(e, "tiebreak_net_max")
+    if tmin is not None and tmax is not None:
+        wide = (tmax - tmin) > max(0.10, 0.25 * abs(_m(e, "tiebreak_net_median") or 0))
+        f.append(Finding("caution" if wide else "info", "Depends on which signals got a slot",
+                         f"Across {int(_m(e, 'tiebreak_seeds') or 0)} neutral tie-break orders, net return ranged "
+                         f"{pct(tmin)} to {pct(tmax)} (median {pct(_m(e, 'tiebreak_net_median'))})."
+                         + (" A wide range means the position cap often decides the result." if wide else "")))
     if sharpe is not None and bsharpe is not None:
         better = sharpe > bsharpe
         f.append(Finding("good" if better else "caution", "Risk-adjusted return " + ("higher" if better else "lower")
@@ -138,23 +170,56 @@ def _period_findings(e: dict, label: str) -> List[Finding]:
     return f
 
 
+DSR_THRESHOLD = 0.95      # Deflated Sharpe below this: could plausibly be the luckiest of the variants tried
+
+
+def strict_benchmark(e: dict) -> Optional[dict]:
+    """
+    The harder of the two baselines for this run: the market ETF, or an equal-weight buy-and-hold of
+    the run's own symbols, whichever returned more. Beating only the easier one isn't an edge.
+    """
+    cands = []
+    if _m(e, "benchmark_return") is not None:
+        cands.append({"label": e.get("benchmark") or "the benchmark", "ret": _m(e, "benchmark_return"),
+                      "excess": _m(e, "excess_return"), "sharpe": _m(e, "benchmark_sharpe"),
+                      "ci": (_m(e, "excess_ann_ci_low"), _m(e, "excess_ann_ci_high"))})
+    if _m(e, "universe_return") is not None:
+        cands.append({"label": "the equal-weight universe", "ret": _m(e, "universe_return"),
+                      "excess": _m(e, "excess_vs_universe"), "sharpe": _m(e, "universe_sharpe"),
+                      "ci": (_m(e, "excess_universe_ann_ci_low"), _m(e, "excess_universe_ann_ci_high"))})
+    return max(cands, key=lambda c: c["ret"]) if cands else None
+
+
+def measured(e: Optional[dict]) -> bool:
+    """Runs from before the audit fixes have no universe baseline or confidence intervals."""
+    return e is not None and _m(e, "universe_return") is not None and _m(e, "sharpe_ci_low") is not None
+
+
 def _verdict(train: Optional[dict], val: Optional[dict]) -> Tuple[str, str]:
     if val is None:
         if train is None:
             return "No completed runs", "caution"
         return "Not validated: train-period result only", "caution"
     vs, ts = _m(val, "sharpe") or 0.0, _m(train, "sharpe") if train else None
-    v_ex = _m(val, "excess_return")
     if (_m(val, "trade_count") or 0) < MIN_TRADES:
         return "Inconclusive: too few validation trades", "caution"
-    if v_ex is not None and v_ex < 0 and vs < (_m(val, "benchmark_sharpe") or 0):
-        return "Failed validation: lagged the benchmark out of sample", "warning"
+    if not measured(val):
+        return "Pre-audit run: re-run to measure it against its own universe and with confidence intervals", "caution"
+    b = strict_benchmark(val)
+    if b["excess"] is not None and b["excess"] < 0 and vs < (b["sharpe"] or 0):
+        return f"Failed validation: lagged {b['label']} out of sample", "warning"
     if ts is not None and ts > 0 and vs < 0.5 * ts:
         return "Degraded out of sample: possible overfitting", "warning"
-    if v_ex is not None and v_ex < 0:
-        return "Mixed: better risk-adjusted, but lower return than benchmark", "caution"
-    if vs < (_m(val, "benchmark_sharpe") or 0):
-        return "Mixed: beat the benchmark's return, not its risk-adjusted return", "caution"
+    if b["excess"] is not None and b["excess"] < 0:
+        return f"Mixed: better risk-adjusted, but lower return than {b['label']}", "caution"
+    if vs < (b["sharpe"] or 0):
+        return f"Mixed: beat {b['label']}'s return, not its risk-adjusted return", "caution"
+    lo = b["ci"][0]
+    if lo is None or lo <= 0:
+        return f"Inconclusive: the edge over {b['label']} isn't statistically distinguishable from zero", "caution"
+    dsr = _m(val, "deflated_sharpe")
+    if dsr is not None and dsr < DSR_THRESHOLD:
+        return "Inconclusive: doesn't survive the haircut for the number of variants tried", "caution"
     return "Held up on validation (not proof of future returns)", "good"
 
 
@@ -164,7 +229,10 @@ def _summary(name: str, uni: str, e: dict, label: str) -> str:
     pf = _m(e, "profit_factor")
     return (f"On the {label} period ({start} to {end}), {name} on {uni} ({e['market']}) returned "
             f"{pct(_m(e, 'net_return'))} after costs, against {pct(_m(e, 'benchmark_return'))} for "
-            f"{e.get('benchmark') or 'the benchmark'}. The worst peak-to-trough fall was "
+            f"{e.get('benchmark') or 'the benchmark'}"
+            + (f" and {pct(_m(e, 'universe_return'))} for simply holding the same stocks equally weighted"
+               if _m(e, 'universe_return') is not None else "")
+            + f". The worst peak-to-trough fall was "
             f"{pct(_m(e, 'max_drawdown'))} (benchmark {pct(_m(e, 'benchmark_max_drawdown'))}). It made "
             f"{int(_m(e, 'trade_count') or 0)} trades with a {pct(_m(e, 'win_rate'), 0, signed=False)} win rate and a "
             f"profit factor of {'n/a' if pf is None else f'{pf:.2f}'}. Sharpe ratio {(_m(e, 'sharpe') or 0):.2f}.")
@@ -260,11 +328,13 @@ def sweep_summary(runs: List[dict]) -> Optional[SweepSummary]:
 def compare_rows(experiments: List[dict]) -> pd.DataFrame:
     """Metrics for several experiments side by side (one column per experiment)."""
     keys = [("Strategy", None), ("Period", None), ("Window", None), ("Net return", "net_return"),
-            ("Benchmark", "benchmark_return"), ("Excess", "excess_return"), ("CAGR", "cagr"),
+            ("Benchmark", "benchmark_return"), ("Excess", "excess_return"),
+            ("EW universe", "universe_return"), ("Excess vs universe", "excess_vs_universe"), ("CAGR", "cagr"),
             ("Sharpe", "sharpe"), ("Max drawdown", "max_drawdown"), ("Volatility", "volatility"),
             ("Trades", "trade_count"), ("Win rate", "win_rate"), ("Profit factor", "profit_factor"),
             ("Expectancy / trade", "expectancy_pct"), ("Exposure", "exposure"), ("Turnover / yr", "turnover"),
-            ("Costs (% capital)", "costs_pct_of_start"), ("Parameters", None)]
+            ("Costs (% capital)", "costs_pct_of_start"), ("Sharpe 95% CI", None), ("Deflated Sharpe", "deflated_sharpe"),
+            ("Tie-break range", None), ("Parameters", None)]
     cols = {}
     for e in experiments:
         m = e.get("metrics") or {}
@@ -277,13 +347,20 @@ def compare_rows(experiments: List[dict]) -> pd.DataFrame:
             elif label == "Window":
                 col[label] = (f"{pd.Timestamp(e['start_date']):%Y-%m} → {pd.Timestamp(e['end_date']):%Y-%m}"
                               if e.get("start_date") is not None else "")
+            elif label == "Sharpe 95% CI":
+                col[label] = (f"{m['sharpe_ci_low']:.2f} to {m['sharpe_ci_high']:.2f}"
+                              if m.get("sharpe_ci_low") is not None else "n/a")
+            elif label == "Tie-break range":
+                col[label] = (f"{pct(m['tiebreak_net_min'])} to {pct(m['tiebreak_net_max'])}"
+                              if m.get("tiebreak_net_min") is not None else
+                              ("no slot contention" if m.get("tiebreak_seeds") == 1 else "n/a"))
             elif label == "Parameters":
                 col[label] = ", ".join(f"{a}={b}" for a, b in (e["params"] or {}).items())
             else:
                 v = m.get(k)
                 if v is None:
                     col[label] = "n/a"
-                elif k in ("sharpe", "profit_factor"):
+                elif k in ("sharpe", "profit_factor", "deflated_sharpe"):
                     col[label] = f"{v:.2f}"
                 elif k == "trade_count":
                     col[label] = f"{int(v)}"

@@ -179,12 +179,14 @@ else:
         with C.panel("perf", "Strategy vs benchmark", meta):
             st.plotly_chart(charts.equity_vs_benchmark(curve["equity"], curve["benchmark"], height=230,
                                                        strategy_label=strat_name,
-                                                       benchmark_label=f"{e['benchmark']} (total return)"),
+                                                       benchmark_label=f"{e['benchmark']} (total return)",
+                                                       universe=curve["universe"]),
                             config=charts.CONFIG, use_container_width=True)
             C.metric_grid([
                 ("Net return", C.fmt_pct(m.get("net_return"), digits=1), C.tone(m.get("net_return"))),
                 ("Benchmark", C.fmt_pct(m.get("benchmark_return"), digits=1), C.tone(m.get("benchmark_return"))),
                 ("Excess", C.fmt_pct(m.get("excess_return"), digits=1), C.tone(m.get("excess_return"))),
+                ("Same stocks B&H", C.fmt_pct(m.get("universe_return"), digits=1), C.tone(m.get("universe_return"))),
                 ("Sharpe", f"{m.get('sharpe', 0):.2f}", ""),
                 ("Trades", f"{int(m.get('trade_count', 0))}", ""),
                 ("Win rate", C.fmt_pct(m.get("win_rate"), signed=False, digits=0), ""),

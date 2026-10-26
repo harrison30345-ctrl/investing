@@ -181,3 +181,11 @@ information. The adapter is the only module that knows the vendor.
 * `health.py` + `alerts.py`: checks open and resolve alerts; webhook notification is optional.
 * Deployment: `Dockerfile`, `docker-compose.yml` (Postgres, dashboard, worker, Caddy) and
   [DEPLOY.md](DEPLOY.md).
+
+## 11. Audit fixes (26 Oct 2026)
+
+See [AUDIT-2026-10-26.md](AUDIT-2026-10-26.md). Every experiment now carries an equal-weight
+buy-and-hold baseline of its own symbols (`engine.universe_curve`), a neutral seeded tie-break for
+competing entries (`SignalPortfolio.priority`, `BacktestConfig.tie_break_seed`) with a spread across 8 seeds
+when slots were contested, and uncertainty statistics from `backtest/stats.py` (bootstrap CIs, PSR, Deflated
+Sharpe over recorded trials). Verdicts use the stricter baseline and require statistical support.

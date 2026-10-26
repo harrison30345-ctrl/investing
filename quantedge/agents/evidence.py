@@ -28,7 +28,9 @@ from ..strategies import REGISTRY
 METRIC_KEYS = ("net_return", "benchmark_return", "excess_return", "cagr", "sharpe", "benchmark_sharpe",
                "max_drawdown", "benchmark_max_drawdown", "volatility", "trade_count", "win_rate", "profit_factor",
                "expectancy_pct", "avg_win_pct", "avg_loss_pct", "exposure", "turnover", "costs_pct_of_start",
-               "longest_losing_streak")
+               "longest_losing_streak", "universe_return", "excess_vs_universe", "sharpe_ci_low", "sharpe_ci_high",
+               "excess_ann_ci_low", "excess_ann_ci_high", "excess_universe_ann_ci_low", "excess_universe_ann_ci_high",
+               "deflated_sharpe", "trials", "tiebreak_net_min", "tiebreak_net_max", "entries_skipped_capacity")
 MAX_EXPERIMENTS = 40
 
 METHODOLOGY = {
@@ -40,6 +42,11 @@ METHODOLOGY = {
     "splits": "Chronological 60% train / 20% validation / 20% test after indicator warm-up. Test is locked; "
               "agents may never run it.",
     "units": "All returns, drawdowns, rates and exposures are fractions (0.12 means 12%). Sharpe is annualised, rf=0.",
+    "baselines": "benchmark_return = market ETF (total return); universe_return = equal-weight buy-and-hold of the "
+                 "run's own symbols. The universe is today's large caps, so beating the ETF but not the universe "
+                 "is not evidence of skill.",
+    "uncertainty": "*_ci_low/high are 95% block-bootstrap intervals; deflated_sharpe is the probability the Sharpe "
+                   "is real after `trials` attempts on the same strategy and symbols (>= 0.95 needed).",
     "known_biases": ["Universes are today's large caps (survivorship bias).",
                      "Yahoo data is not point-in-time; adjusted history is revised after dividends/splits."],
 }

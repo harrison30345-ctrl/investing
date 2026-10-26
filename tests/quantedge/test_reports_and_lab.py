@@ -9,7 +9,8 @@ from quantedge.reports import build_reports, compare_rows, report_markdown, swee
 
 
 def exp(id, period="train", net=0.2, bench=0.1, sharpe=1.0, bsharpe=0.8, dd=-0.1, bdd=-0.2, trades=100,
-        pf=1.5, costs=0.02, params=None, status="completed", used_test=False, batch=None, notes=None):
+        pf=1.5, costs=0.02, params=None, status="completed", used_test=False, batch=None, notes=None,
+        uni=0.05, usharpe=0.5, ci=(0.02, 0.10), dsr=0.99, measured=True):
     return {"id": id, "strategy_key": "ema_pullback", "market": "US", "universe": ["AAPL", "MSFT"],
             "params": params or {"fast": 20}, "config": {"initial_capital": 100000}, "period": period,
             "status": status, "used_test_set": used_test, "benchmark": "SPY", "start_date": "2020-01-01",
@@ -18,7 +19,12 @@ def exp(id, period="train", net=0.2, bench=0.1, sharpe=1.0, bsharpe=0.8, dd=-0.1
             "metrics": {"net_return": net, "benchmark_return": bench, "excess_return": net - bench, "sharpe": sharpe,
                         "benchmark_sharpe": bsharpe, "max_drawdown": dd, "benchmark_max_drawdown": bdd,
                         "trade_count": trades, "profit_factor": pf, "costs_pct_of_start": costs, "win_rate": 0.5,
-                        "longest_losing_streak": 4, "exposure": 0.7}}
+                        "longest_losing_streak": 4, "exposure": 0.7,
+                        **({"universe_return": uni, "universe_sharpe": usharpe, "excess_vs_universe": net - uni,
+                            "sharpe_ci_low": 0.3, "sharpe_ci_high": 1.7, "excess_ann_ci_low": ci[0],
+                            "excess_ann_ci_high": ci[1], "excess_universe_ann_ci_low": ci[0],
+                            "excess_universe_ann_ci_high": ci[1], "deflated_sharpe": dsr, "trials": 3.0}
+                           if measured else {})}}
 
 
 def verdict(*runs):
@@ -141,3 +147,28 @@ def test_new_nullable_columns_added_to_existing_database(tmp_path, monkeypatch):
     cols = {r[1] for r in sqlite3.connect(path).execute("PRAGMA table_info(experiments)")}
     assert {"batch", "parent_id", "notes"} <= cols
     get_engine.cache_clear()
+
+
+
+# ── audit fixes: strict benchmark, uncertainty, pre-audit runs ─────────────
+
+def test_beating_etf_but_not_own_universe_fails():
+    r = verdict(exp(1), exp(2, "validation", net=0.40, bench=0.30, uni=1.20, sharpe=1.4, bsharpe=1.0, usharpe=1.6))
+    assert r.verdict_level == "warning" and "equal-weight universe" in r.verdict
+    assert any(f.title.startswith("Lagged buy-and-hold of its own symbols") for f in r.findings)
+
+
+def test_edge_with_ci_including_zero_is_inconclusive():
+    r = verdict(exp(1), exp(2, "validation", net=0.15, bench=0.1, sharpe=1.1, bsharpe=0.7, ci=(-0.03, 0.12)))
+    assert r.verdict_level == "caution" and "statistically" in r.verdict
+
+
+def test_low_deflated_sharpe_is_inconclusive():
+    r = verdict(exp(1), exp(2, "validation", net=0.15, bench=0.1, sharpe=1.1, bsharpe=0.7, dsr=0.6))
+    assert r.verdict_level == "caution" and "variants" in r.verdict
+
+
+def test_pre_audit_runs_never_get_held_up():
+    r = verdict(exp(1, measured=False), exp(2, "validation", net=0.15, bench=0.1, sharpe=1.1, bsharpe=0.7,
+                                            measured=False))
+    assert r.verdict_level == "caution" and "Pre-audit" in r.verdict

@@ -17,6 +17,7 @@ Per bar (see engine.py for the reasoning):
 from __future__ import annotations
 
 import math
+import zlib
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -43,6 +44,17 @@ class SignalPortfolio:
         self.events: List[dict] = []          # fills and queued orders, for audit (paper trading)
         self.total_costs = 0.0
         self.notional_traded = 0.0
+        self.skipped_capacity = 0             # entry signals that found no free position slot
+
+    def priority(self, symbol: str, ts) -> int:
+        """
+        Fill order when several entries compete for free slots. A seeded hash of (seed, symbol, bar):
+        deterministic and reproducible, but unrelated to the symbol's name. Sorting alphabetically
+        favoured AAPL/AMZN/AVGO and inflated results (audit F2). Change `tie_break_seed` to see how much
+        the outcome depends on this arbitrary choice.
+        """
+        seed = getattr(self.cfg, "tie_break_seed", 0)
+        return zlib.crc32(f"{seed}|{symbol}|{pd.Timestamp(ts).isoformat()}".encode())
 
     # ── valuation ──────────────────────────────────────────────────────────
     def mark(self) -> float:
@@ -114,9 +126,12 @@ class SignalPortfolio:
             elif sym not in self.positions:
                 self.pending_exits.pop(sym)
         equity_at_open = self.mark()
-        for order in sorted(self.pending_entries, key=lambda o: o["symbol"]):
+        for order in sorted(self.pending_entries, key=lambda o: self.priority(o["symbol"], ts)):
             sym = order["symbol"]
-            if sym in self.positions or sym not in today or len(self.positions) >= self.cfg.max_positions:
+            if sym in self.positions or sym not in today:
+                continue
+            if len(self.positions) >= self.cfg.max_positions:
+                self.skipped_capacity += 1
                 continue
             self._open(order, float(today[sym]["open"]), ts, equity_at_open)
         self.pending_entries = []
@@ -188,7 +203,8 @@ class SignalPortfolio:
             return v
         return enc({"cash": self.cash, "positions": self.positions, "pending_entries": self.pending_entries,
                     "pending_exits": self.pending_exits, "last_close": self.last_close,
-                    "total_costs": self.total_costs, "notional_traded": self.notional_traded})
+                    "total_costs": self.total_costs, "notional_traded": self.notional_traded,
+                    "skipped_capacity": self.skipped_capacity})
 
     @classmethod
     def from_state(cls, config, market: str, state: Optional[Dict[str, Any]]) -> "SignalPortfolio":
@@ -214,4 +230,5 @@ class SignalPortfolio:
         pf.last_close = st["last_close"]
         pf.total_costs = float(st.get("total_costs", 0.0))
         pf.notional_traded = float(st.get("notional_traded", 0.0))
+        pf.skipped_capacity = int(st.get("skipped_capacity", 0))
         return pf

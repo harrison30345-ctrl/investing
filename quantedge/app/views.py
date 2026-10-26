@@ -33,7 +33,13 @@ def metrics_grid(m: dict, benchmark: str) -> None:
         ("CAGR", C.fmt_pct(m.get("cagr"), digits=1), C.tone(m.get("cagr"))),
         (benchmark, C.fmt_pct(m.get("benchmark_return"), digits=1), C.tone(m.get("benchmark_return"))),
         ("Excess", C.fmt_pct(m.get("excess_return"), digits=1), C.tone(m.get("excess_return"))),
+        ("EW universe B&H", C.fmt_pct(m.get("universe_return"), digits=1), C.tone(m.get("universe_return"))),
+        ("Excess vs universe", C.fmt_pct(m.get("excess_vs_universe"), digits=1), C.tone(m.get("excess_vs_universe"))),
         ("Sharpe", f"{m.get('sharpe') or 0:.2f}", ""),
+        ("Sharpe 95% CI", f"{m['sharpe_ci_low']:.2f} – {m['sharpe_ci_high']:.2f}"
+         if m.get("sharpe_ci_low") is not None else "n/a", ""),
+        ("Deflated Sharpe", f"{m['deflated_sharpe']:.2f} ({int(m.get('trials') or 1)} tries)"
+         if m.get("deflated_sharpe") is not None else "n/a", ""),
         ("Max drawdown", C.fmt_pct(m.get("max_drawdown"), digits=1), "qe-neg"),
         ("Trades", f"{int(m.get('trade_count') or 0)}", ""),
         ("Win rate", C.fmt_pct(m.get("win_rate"), signed=False, digits=0), ""),
@@ -43,6 +49,8 @@ def metrics_grid(m: dict, benchmark: str) -> None:
         ("Exposure", C.fmt_pct(m.get("exposure"), signed=False, digits=0), ""),
         ("Turnover / yr", f"{m.get('turnover') or 0:.1f}×", ""),
         ("Costs", C.fmt_pct(m.get("costs_pct_of_start"), signed=False, digits=1), ""),
+        ("Tie-break range", f"{C.fmt_pct(m['tiebreak_net_min'], digits=0)} … {C.fmt_pct(m['tiebreak_net_max'], digits=0)}"
+         if m.get("tiebreak_net_min") is not None else ("no contention" if m.get("tiebreak_seeds") == 1 else "n/a"), ""),
     ])
 
 
@@ -122,7 +130,8 @@ def experiment_detail(e: pd.Series, key: str = "detail") -> None:
     with C.panel(f"{key}_main", f"#{int(e['id'])} · {name} · {e['market']}", meta):
         metrics_grid(m, e["benchmark"] or "Benchmark")
         st.plotly_chart(charts.equity_vs_benchmark(curve["equity"], curve["benchmark"], height=270, strategy_label=name,
-                                                   benchmark_label=f"{e['benchmark']} (total return)"),
+                                                   benchmark_label=f"{e['benchmark']} (total return)",
+                                                   universe=curve["universe"]),
                         config=charts.CONFIG, use_container_width=True, key=f"{key}_eq")
         st.plotly_chart(charts.drawdown(curve["equity"], height=140, bm=curve["benchmark"]), config=charts.CONFIG,
                         use_container_width=True, key=f"{key}_dd")

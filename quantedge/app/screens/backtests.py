@@ -46,6 +46,7 @@ table = pd.DataFrame({
     "ID": view["id"], "Created": pd.to_datetime(view["created_at"]), "Strategy": view["strategy_key"].map(V.strategy_name),
     "Mkt": view["market"], "Period": view["period"], "Status": view["status"],
     "Net %": met("net_return") * 100, "Bench %": met("benchmark_return") * 100,
+    "Univ %": met("universe_return") * 100,
     "Sharpe": met("sharpe"), "Max DD %": met("max_drawdown") * 100, "Trades": met("trade_count"),
     "Notes": view["notes"].fillna(""), "Test set": view["used_test_set"].map({True: "used", False: ""}),
     "Source": view["source"],
@@ -56,6 +57,8 @@ with C.panel("bt_log", "Experiments", f"{len(view)} of {len(exps)} runs · selec
                        column_config={"Created": st.column_config.DatetimeColumn(format="DD MMM HH:mm"),
                                       "Net %": st.column_config.NumberColumn(format="%+.1f"),
                                       "Bench %": st.column_config.NumberColumn(format="%+.1f"),
+                                      "Univ %": st.column_config.NumberColumn(
+                                          format="%+.1f", help="Equal-weight buy-and-hold of the same symbols"),
                                       "Sharpe": st.column_config.NumberColumn(format="%.2f"),
                                       "Max DD %": st.column_config.NumberColumn(format="%.1f"),
                                       "Trades": st.column_config.NumberColumn(format="%d")})

@@ -137,6 +137,8 @@ def run_experiment(strategy_key: str, params: Optional[Dict[str, Any]] = None, *
             start, end = split.window(period)
 
         result: BacktestResult = run_backtest(strategy, p, bars, market, cfg, start, end, benchmark)
+        result.metrics.update(tie_break_spread(strategy, p, bars, market, cfg, start, end, benchmark, result))
+        result.metrics.update(_trial_stats(exp_id, strategy.key, market, syms, result))
         _store(exp_id, result, start, end, split, missing=[x for x in syms if x not in bars], warmup=warm)
         if not source.startswith("agent:") and source != "timing":
             # Event trigger: new human experiments get an independent look at the next research cycle.
@@ -165,10 +167,56 @@ def _store(exp_id: int, r: BacktestResult, start, end, split, missing: List[str]
                         return_pct=t.return_pct, bars_held=int(t.bars_held), entry_reason=t.entry_reason,
                         exit_reason=t.exit_reason))
         bm = r.benchmark.reindex(r.equity.index) if r.benchmark is not None else None
-        s.add_all([EquityPoint(experiment_id=exp_id, ts=ts.to_pydatetime(), equity=float(v),
-                               benchmark=None if bm is None or pd.isna(bm.loc[ts]) else float(bm.loc[ts]),
-                               exposure=float(r.exposure.loc[ts]))
+        uni = r.universe.reindex(r.equity.index) if r.universe is not None else None
+        val = lambda series, ts: None if series is None or pd.isna(series.loc[ts]) else float(series.loc[ts])  # noqa: E731
+        s.add_all([EquityPoint(experiment_id=exp_id, ts=ts.to_pydatetime(), equity=float(v), benchmark=val(bm, ts),
+                               universe=val(uni, ts), exposure=float(r.exposure.loc[ts]))
                    for ts, v in r.equity.items()])
+
+
+TIE_BREAK_SEEDS = 8
+
+
+def tie_break_spread(strategy, params, bars, market, cfg: BacktestConfig, start, end, benchmark,
+                     result: BacktestResult) -> Dict[str, float]:
+    """
+    How much the result depends on which of several same-bar signals got a free slot. If no entry was
+    ever refused for lack of a slot, the order can't matter and no extra runs are needed.
+    """
+    from dataclasses import replace
+    from ..strategies.base import SignalStrategy
+    if not isinstance(strategy, SignalStrategy) or not result.metrics.get("entries_skipped_capacity"):
+        return {"tiebreak_seeds": 1.0}
+    nets, sharpes = [result.metrics["net_return"]], [result.metrics.get("sharpe") or 0.0]
+    for seed in range(1, TIE_BREAK_SEEDS):
+        alt = run_backtest(strategy, params, bars, market, replace(cfg, tie_break_seed=cfg.tie_break_seed + seed),
+                           start, end, benchmark)
+        nets.append(alt.metrics["net_return"])
+        sharpes.append(alt.metrics.get("sharpe") or 0.0)
+    return {"tiebreak_seeds": float(len(nets)), "tiebreak_net_min": float(min(nets)),
+            "tiebreak_net_median": float(pd.Series(nets).median()), "tiebreak_net_max": float(max(nets)),
+            "tiebreak_sharpe_min": float(min(sharpes)), "tiebreak_sharpe_max": float(max(sharpes))}
+
+
+def _trial_stats(exp_id: int, strategy_key: str, market: str, symbols: List[str],
+                 result: BacktestResult) -> Dict[str, float]:
+    """
+    Trials = every recorded attempt (any parameters, any period, including failures) of this strategy
+    on this market and symbol set, up to and including this one. The Deflated Sharpe Ratio discounts
+    the result for that many tries.
+    """
+    from . import stats as S
+    with session_scope() as s:
+        rows = s.query(Experiment.id, Experiment.universe).filter(
+            Experiment.strategy_key == strategy_key, Experiment.market == market,
+            Experiment.source != "timing", Experiment.id <= exp_id).all()
+    n = max(1, sum(1 for _, u in rows if list(u) == list(symbols)))
+    daily = result.equity.pct_change().fillna(0.0).values[1:]
+    out = {"trials": float(n)}
+    dsr = S.deflated_sharpe(daily, n)
+    if dsr == dsr:  # not NaN
+        out["deflated_sharpe"] = dsr
+    return out
 
 
 def run_sweep(strategy_key: str, param: str, values: List[Any], base_params: Optional[Dict[str, Any]] = None,
