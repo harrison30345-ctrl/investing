@@ -7,7 +7,7 @@ Call `clear()` after anything writes new data.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 import pandas as pd

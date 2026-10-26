@@ -134,8 +134,8 @@ code {{ font-family:var(--qe-mono); font-size:12px; background:var(--qe-surface-
 .qe-banner {{ border:1px solid var(--qe-warn); background:repeating-linear-gradient(135deg,#1d1709 0 10px,#191407 10px 20px);
   color:#f0d9a6; border-radius:4px; padding:8px 12px; font-size:12.5px; }}
 .qe-banner b {{ color:var(--qe-warn); letter-spacing:.06em; }}
-.qe-page-head {{ display:flex; align-items:baseline; gap:12px; margin:4px 0 2px 0; }}
-.qe-page-head h1 {{ font-size:19px; font-weight:600; margin:0; padding:0; }}
+.qe-page-head {{ display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 12px; margin:4px 0 2px 0; }}
+.qe-page-head h1 {{ font-size:19px; font-weight:600; margin:0; padding:0; white-space:nowrap; }}
 .qe-page-head span {{ font-size:12px; color:var(--qe-muted); }}
 .qe-panel-head {{ display:flex; justify-content:space-between; align-items:baseline; margin:-2px 0 6px 0; gap:8px; }}
 .qe-panel-head h3 {{ font-size:12px; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--qe-text-2); margin:0; padding:0; }}
@@ -147,7 +147,8 @@ code {{ font-family:var(--qe-mono); font-size:12px; background:var(--qe-surface-
 .qe-tile .chg {{ font-family:var(--qe-mono); font-size:12px; margin-top:1px; }}
 .qe-tile svg {{ display:block; width:100%; height:30px; margin-top:6px; }}
 .qe-tile.off .val {{ color:var(--qe-muted); font-size:14px; font-family:inherit; }}
-.qe-kv {{ display:grid; grid-template-columns:auto 1fr; gap:5px 14px; margin:0; }}
+.qe-kv {{ display:grid; grid-template-columns:auto minmax(0, 1fr); gap:5px 14px; margin:0; }}
+.qe-kv dd {{ overflow-wrap:anywhere; min-width:0; }}
 .qe-kv dt, .qe-kv dd {{ font-size:12.5px !important; line-height:1.45 !important; }}
 .qe-kv dt {{ color:var(--qe-muted); }} .qe-kv dd {{ margin:0; font-family:var(--qe-mono); color:var(--qe-text); text-align:right; }}
 .qe-list {{ list-style:none; margin:0; padding:0; font-size:12.5px; }}
@@ -165,7 +166,8 @@ code {{ font-family:var(--qe-mono); font-size:12px; background:var(--qe-surface-
 .qe-metrics div b {{ display:block; font-family:var(--qe-mono); font-size:15px; font-weight:500; margin-top:2px; }}
 .qe-sidefoot {{ font-size:11px; color:var(--qe-muted); border-top:1px solid var(--qe-border); padding-top:10px; margin-top:8px; line-height:1.55; }}
 @media (max-width: 900px) {{
-  .block-container {{ padding:0.6rem 0.8rem 2rem 0.8rem !important; }}
+  /* The collapsed sidebar's logo sits in the header; keep the top bar clear of it. */
+  .block-container {{ padding:3.2rem 0.8rem 2rem 0.8rem !important; }}
   .qe-topbar-status {{ justify-content:flex-start; }}
   .qe-tiles {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
 }}

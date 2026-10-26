@@ -6,13 +6,12 @@ from __future__ import annotations
 
 import html
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Iterable, Optional
 
 import pandas as pd
 import streamlit as st
 
-from . import theme as T
 from .charts import sparkline_svg
 
 DISPLAY_TZ = "Europe/London"

@@ -7,7 +7,6 @@ recorded in the experiment log whatever happens.
 """
 from __future__ import annotations
 
-import pandas as pd
 import streamlit as st
 
 from quantedge.app import actions

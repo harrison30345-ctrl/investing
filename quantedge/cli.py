@@ -371,7 +371,15 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    return args.fn(args)
+    from quantedge.config import ConfigError
+    from quantedge.paper import PaperError
+    try:
+        return args.fn(args)
+    except (PaperError, ConfigError, KeyError, ValueError) as exc:
+        # Expected refusals (unapproved promotion, unknown id, bad parameter): a message, not a traceback.
+        msg = exc.args[0] if isinstance(exc, KeyError) and exc.args else exc
+        print(f"Refused: {msg}")
+        return 2
 
 
 if __name__ == "__main__":

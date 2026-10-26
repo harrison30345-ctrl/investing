@@ -1,7 +1,7 @@
 """Home: market summary, watchlist, chart, signals, strategy vs benchmark, risk, data health, system status."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
@@ -11,7 +11,6 @@ from quantedge.app import chrome
 from quantedge.app import data as D
 from quantedge.config import get_settings
 from quantedge.data.providers import provider_info
-from quantedge.markets import MARKETS
 from quantedge.agents.roster import ALL as AGENTS
 from quantedge.agents.roster import SPECIALIST_ORDER
 from quantedge.scheduler import upcoming

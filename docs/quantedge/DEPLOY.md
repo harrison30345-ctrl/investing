@@ -1,8 +1,10 @@
 # Deploying QuantEdge (always-on)
 
 > **Status:** the Docker files in this repository have **not been run yet**. Docker isn't installed on
-> the development Mac, so the first deployment is also the first test. Expect to fix small things
-> on the way. QuantEdge is **not** running 24/7 anywhere until you complete the steps below and the
+> the development Mac, so the first deployment is also the first test. What *has* been checked
+> offline: the compose file parses and every variable it requires is in `.env.example`; every table
+> and the price upsert compile for Postgres; stored JSON is strictly valid for Postgres. Expect small
+> fixes on the first run. QuantEdge is **not** running 24/7 anywhere until you complete the steps below and the
 > checks in "Verify" pass.
 
 ## What has to run, and when
@@ -45,6 +47,14 @@ Monthly running cost estimate:
 | Market data | $0 (Yahoo, personal use) | $29.99 (EODHD EOD+intraday) |
 | AI agents | $0 (disabled) | your cap, e.g. $10 (`QE_LLM_MONTHLY_BUDGET_USD`) |
 | Domain (optional) | ~$1 | ~$1 |
+
+## Pre-flight checklist (on your Mac, before deploying)
+
+* `python3 -m pytest tests -q` passes.
+* `python3 -m quantedge.cli health` returns 0 with real data.
+* You've decided whether the server uses Yahoo (personal use, keep it password-protected) or EODHD.
+* You have: a server with SSH key access, a domain name, and a password for the dashboard.
+* If enabling AI: an Anthropic API key and the monthly cap you're comfortable with.
 
 ## Steps
 
@@ -90,6 +100,26 @@ Monthly running cost estimate:
   `0 3 * * * docker compose -f /path/docker-compose.yml exec -T db pg_dump -U quantedge quantedge | gzip > /backups/qe-$(date +\%F).sql.gz`
   and copy `/backups` somewhere else (object storage). Test a restore once.
 * **Paper accounts** keep stepping as long as the worker runs; pause or close them from the dashboard.
+
+## Rollback
+
+* **Bad code update:** `git checkout <previous-commit> && docker compose up -d --build`.
+* **Bad data or a broken migration:** stop the app containers (`docker compose stop dashboard worker`),
+  restore the latest dump (`gunzip -c qe-DATE.sql.gz | docker compose exec -T db psql -U quantedge quantedge`
+  into a fresh database), then start them again.
+* **Turn off AI immediately:** set `QE_LLM_PROVIDER=none` in `.env` and
+  `docker compose up -d worker dashboard`. No further calls are made.
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| Browser shows a certificate error | DNS must point at the server *before* first start; `docker compose logs caddy` |
+| Password prompt rejects you | Every `$` in `QE_BASIC_AUTH_HASH` must be written `$$` in `.env` |
+| Worker restarts repeatedly | `docker compose logs worker`; usually the database password or a missing `.env` value |
+| Worker "unhealthy" | `docker compose exec worker python -m quantedge.cli health --worker` lists the failing check |
+| Data stale after the close | Yahoo can lag; check Settings → System health → Recent job runs for the refresh status |
+| "Another worker is running" | Two worker containers or a local worker pointing at the same database; run only one |
 
 ## Security notes
 

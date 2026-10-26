@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from conftest import make_bars, random_walk
+from conftest import make_bars
 from quantedge.backtest import metrics as M
 from quantedge.backtest.splits import chronological_split, walk_forward_windows
 from quantedge.data.validation import validate_daily

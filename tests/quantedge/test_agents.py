@@ -27,7 +27,6 @@ def exp_prop(period="train", params=(("fast", "10"),), strategy="ema_pullback", 
 
 
 def director_selecting_all(system, user):
-    import json
     import re
     ids = [int(x) for x in re.findall(r'"proposal_id":(\d+)', user)]
     return {"summary": "director", "selected_proposals": [{"proposal_id": i, "reason": "test"} for i in ids],
@@ -271,7 +270,6 @@ def test_human_experiment_enqueues_one_validation_task(ai_env):
 # ── Anthropic adapter wire format (mock HTTP, no network, no cost) ─────────
 
 def _mock_provider(response_json, status=200, capture=None):
-    import json as _json
     import httpx
     from quantedge.agents.llm import AnthropicProvider
 

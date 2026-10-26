@@ -51,7 +51,7 @@ class YahooProvider(MarketDataProvider):
     )
 
     def __init__(self):
-        import yfinance  # noqa: F401  (fail early with a clear ImportError)
+        import yfinance  # noqa: F401  (imported only to fail early with a clear ImportError)
         warnings.filterwarnings("ignore", module="yfinance")
 
     def fetch_daily(self, symbol: str, start: date, end: date) -> pd.DataFrame:

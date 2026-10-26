@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 from quantedge.scheduler import JOBS, is_due, prev_run
 
 JOB = {j.key: j for j in JOBS}

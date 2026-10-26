@@ -1,85 +1,119 @@
-# QuantEdge: running it and build status
+# QuantEdge: launch guide
 
-Research and paper-trading platform for UK and US equities. **No real-money
-execution exists in this code.** See [ARCHITECTURE.md](ARCHITECTURE.md) for the
-design, data-vendor comparison and cost estimates.
+QuantEdge is a research and paper-trading platform for UK and US equities. **There is no real-money
+execution anywhere in this code**, and no broker connection. Design and decisions:
+[ARCHITECTURE.md](ARCHITECTURE.md). Running it always-on in the cloud: [DEPLOY.md](DEPLOY.md).
 
-## Run locally
+## 1. First run (about 5 minutes)
 
 ```bash
 cd ~/investing
 pip3 install --user -r requirements.txt
-cp .env.example .env                                   # optional; defaults work without it
-python3 -m quantedge.cli refresh --core                # indices, benchmarks, watchlist (~10 s)
-python3 -m quantedge.cli refresh --universe us_large   # 20 US large caps, 10 years
+python3 -m quantedge.cli refresh --core                # indices, benchmark ETFs, watchlist
+python3 -m quantedge.cli refresh --universe us_large   # 20 US large caps, 10 years of daily bars
 python3 -m quantedge.cli refresh --universe uk_large   # 20 UK large caps
-python3 -m quantedge.cli dashboard                     # http://localhost:8503
+python3 -m quantedge.cli refresh --intraday            # US 5-minute bars (Yahoo keeps ~60 days)
+python3 -m quantedge.cli dashboard                     # open http://localhost:8503
 ```
 
-Other commands:
+No account or key is needed: the default data source is Yahoo Finance (free, **delayed**, personal use
+only). A `.env` file is optional; copy `.env.example` to `.env` only to change settings.
+
+To try it without the internet: put `QE_DATA_PROVIDER=demo` in `.env` (or the environment). Demo prices
+are synthetic, stored separately from real data, and every page shows a DEMO DATA banner.
+
+## 2. The research loop
+
+1. **Explore on train.** Strategy Lab → pick a strategy and universe → *Run backtest*, or *Sweep one
+   parameter* to see how sensitive the result is. Only the first 60% of history is used.
+2. **Check on validation.** Backtests → select the run → *Re-test on validation period*. Same rules,
+   parameters and costs on the next 20% of history, which the run has never seen.
+3. **Read the verdict.** Reports groups runs by configuration and says, in plain English, whether the
+   result held up, was mixed, degraded or failed, and what might be flattering it.
+4. **(Optional) Final test.** The last 20% is locked. Unlock it once, at the end; every use is counted.
+5. **Paper trade.** Paper Trading → *Start a paper account* from a validated run, with your approval.
+   It trades only bars that arrive from then on, with simulated money.
+6. **(Optional) AI review.** AI Research → *Run research cycle*. Agents critique the evidence and
+   propose experiments; every number they cite is checked against the database.
+
+A good backtest is a hypothesis that survived one test, not evidence it will make money.
+
+## 3. Keeping it running
+
+| What | Command | Notes |
+|---|---|---|
+| Background worker | `python3 -m quantedge.worker` | Refreshes data after each close, polls 5-minute bars in the US session, steps paper accounts, runs health checks (and the AI cycle if enabled). Ctrl-C to stop. |
+| One job now | `python3 -m quantedge.cli worker --run us_eod_refresh` | Also `uk_eod_refresh`, `us_intraday_poll`, `health_check`, `research_cycle` |
+| Health | `python3 -m quantedge.cli health` | Exit code 0 ok, 1 warnings, 2 errors |
+| Always on | see [DEPLOY.md](DEPLOY.md) | Cloud server (recommended) or the launchd template for this Mac |
+
+The top bar shows **Worker online** while the worker is running, plus an **Alerts** count when a check
+fails (details in Settings → System health).
+
+## 4. Command reference
 
 ```bash
-python3 -m quantedge.cli backtest ema_pullback --universe us_large --period train
-python3 -m quantedge.cli backtest xs_momentum --universe uk_large --params '{"lookback": 126}'
-python3 -m quantedge.cli backtest donchian_breakout --symbols AAPL,MSFT --period validation
+python3 -m quantedge.cli refresh --core | --universe us_large | --symbols AAPL,SHEL.L | --intraday
+python3 -m quantedge.cli backtest ema_pullback --universe us_large [--period validation] [--params '{"fast": 10}']
 python3 -m quantedge.cli sweep xs_momentum lookback 63,126,252 --universe us_large
-python3 -m quantedge.cli validate 2   # re-test experiment #2 on the validation period
-python3 -m quantedge.cli report       # plain-English reports for every configuration
-python3 -m quantedge.cli agents estimate   # cost of the next AI research cycle (no calls made)
-python3 -m quantedge.cli agents run        # run one cycle (needs the AI settings below)
-python3 -m quantedge.cli agents status     # recent agent tasks and proposals awaiting you
-python3 -m quantedge.cli refresh --intraday  # US 5-minute bars (~60 days)
-python3 -m quantedge.worker                  # background scheduler (Ctrl-C to stop)
-python3 -m quantedge.cli paper list          # paper accounts
-python3 -m quantedge.cli health              # exit 0 ok / 1 warnings / 2 errors
-python3 -m quantedge.cli status       # what is stored, how fresh
-python3 -m quantedge.cli health       # can we reach the provider?
-python3 -m pytest tests/quantedge -q  # QuantEdge tests
+python3 -m quantedge.cli validate 12                  # re-test experiment #12 on validation
+python3 -m quantedge.cli report [--ids 12,13]         # plain-English reports (Markdown)
+python3 -m quantedge.cli scan                         # record daily signal observations
+python3 -m quantedge.cli paper list | step | create --experiment 13 --approve | pause 1 | resume 1 | close 1
+python3 -m quantedge.cli agents estimate | run | status | approve 7 --note "…" | decline 7
+python3 -m quantedge.cli status                       # what's stored and how fresh
+python3 -m pytest tests -q                            # full test suite (~3 minutes)
 ```
 
-Offline / demo mode: `QE_DATA_PROVIDER=demo python3 -m quantedge.cli refresh --core`.
-Demo rows are stored separately and the dashboard shows a DEMO DATA banner.
+Strategies: `ema_pullback`, `donchian_breakout` (daily trend), `xs_momentum` (daily momentum),
+`orb`, `vwap_continuation` (US intraday). Universes: `us_large`, `uk_large`, `us_intraday`.
 
-## Where things live
+## 5. Optional settings (`.env`)
 
-| Path | What |
+| Variable | Effect |
 |---|---|
-| `~/.quantedge/quantedge.db` | SQLite database (prices, signals, experiments, logs) |
-| `quantedge/data/` | providers (yahoo, eodhd, demo), validation, storage, refresh |
-| `quantedge/strategies/` | deterministic rules: `ema_pullback`, `donchian_breakout`, `xs_momentum` |
-| `quantedge/backtest/` | engine, costs (incl. UK stamp duty), metrics, splits, experiment runner |
-| `quantedge/app/` | Streamlit dashboard; `quantedge/ui/` is the design system |
+| `QE_DATA_PROVIDER=eodhd` + `EODHD_API_KEY` | Licensed UK+US data ($29.99/month plan for intraday). Adapter written but **not yet tested with a real key**; check with `cli health` first |
+| `QE_LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY` | AI agents on Claude Opus 5.5. A cycle is ≈ $0.70 typical, ~$2 worst case; hard caps `QE_LLM_MONTHLY_BUDGET_USD` (default $10) and `QE_LLM_CYCLE_BUDGET_USD` ($2.50) |
+| `QE_AGENT_AUTORUN=false` | Every agent-proposed backtest waits for your approval |
+| `QE_ALERT_WEBHOOK_URL` | Alerts are also POSTed to this URL as JSON (`{"text": …}`) |
+| `QE_DATABASE_URL` | Use Postgres instead of the local SQLite file |
+| `QE_TRADING_MODE` | `research` (default) or `paper`. Anything else is refused at start-up |
 
-## Credentials you may supply (none required)
+## 6. Troubleshooting
 
-| Variable | When |
+| Symptom | Fix |
 |---|---|
-| `EODHD_API_KEY` + `QE_DATA_PROVIDER=eodhd` | licensed UK+US data ($29.99/mo plan for intraday) |
-| `ANTHROPIC_API_KEY` + `QE_LLM_PROVIDER=anthropic` | AI agents. A full cycle is ≈ $0.70 typical / $2 worst case on Claude Opus 5.5; capped by `QE_LLM_MONTHLY_BUDGET_USD` (default $10) and `QE_LLM_CYCLE_BUDGET_USD` (default $2.50) |
-| `QE_DATABASE_URL` | Postgres in the cloud |
+| "No stored … price data" | Run the matching `refresh` (daily, or `--intraday` for intraday strategies) |
+| Top bar shows UK/US bars in red or stale | Refresh, or start the worker; Yahoo sometimes lags by an hour after the close |
+| A symbol is "not found" | Yahoo uses `.L` for London (e.g. `TSCO.L`); indices start with `^` |
+| Worker says another worker is running | Only one may run. If the other crashed, wait 3 minutes for its heartbeat to expire |
+| Dashboard port in use | `python3 -m quantedge.cli dashboard --port 8510` |
+| Quality warnings on Markets | The vendor sent inconsistent bars (e.g. high below close). They're flagged, not altered |
+| "Refused: …" from the CLI | A safety rule or bad input (e.g. promoting a train-only run); the message says which |
 
-## Build status
+Data lives in `~/.quantedge/quantedge.db` (SQLite). Deleting it resets everything; there's no undo.
+
+## 7. Build status
 
 | Phase | Status |
 |---|---|
-| 1. Inspect, architecture, vendors, costs | Done ([ARCHITECTURE.md](ARCHITECTURE.md)) |
-| 2. Design system + Home | Done. Agent and intraday panels show honest "not built" states |
-| 3. Data providers, storage, quality checks | Done for daily bars. Yahoo verified live; EODHD adapter **not yet tested with a key**; intraday fetch exists but is not stored or scheduled |
-| 4. Backtester + daily strategies | Done: signal and rebalance engines, costs, metrics, splits, experiment log, 41 tests. Walk-forward windows exist but no optimiser uses them yet |
-| 5. Strategy Lab / Backtests / Reports | Done: configure and run backtests or one-parameter sweeps from the Lab (all variants share one date window), re-test on validation with the test period behind confirmation, compare up to 6 runs, deterministic plain-English reports with verdicts and Markdown export. Walk-forward optimisation not built yet |
-| 6. AI agents | Done, **not yet run against the live API** (no key configured). Six agents (Trend, Momentum, Intraday, Risk Manager, Independent Validation, Research Director) on Claude Opus 5.5 via one adapter; structured JSON outputs; cited numbers checked against the database; monthly + per-cycle budget caps checked before every call; bounded retries; skip when evidence unchanged; no overlapping cycles; full task/call/proposal log; agents can only launch train/validation backtests within a per-cycle cap; strategy, risk-limit and paper-trading changes need your approval. Cycles run on demand (dashboard or CLI); scheduling comes with the worker in Phase 7 |
-| 7. Intraday, paper trading, worker, health, deploy config | Done locally: US 5-minute data + ORB/VWAP strategies (flat by the close); forward-only paper accounts that need a validated run and your approval; worker with exchange-aware schedule, catch-up, heartbeats, crash recovery; health checks + alerts (+ optional webhook); Dockerfile + compose (Postgres, worker, dashboard, Caddy). **Docker stack not yet run; not deployed.** Momentum isn't supported in paper trading yet |
-| 8. Final tests + launch/deploy docs | Partly done ([DEPLOY.md](DEPLOY.md)); first real deployment and verification outstanding. Nothing is running 24/7 |
+| 1. Architecture, vendors, costs | Done ([ARCHITECTURE.md](ARCHITECTURE.md)) |
+| 2. Design system + Home | Done; checked at desktop and phone widths |
+| 3. Data, storage, quality checks | Done: daily + 5-minute bars, exchange calendars, validation, corporate-action re-sync. Yahoo verified live; EODHD untested without a key |
+| 4. Backtester + daily strategies | Done: next-open fills, stops/targets, costs incl. UK stamp duty, chronological splits, experiment log |
+| 5. Strategy Lab, Backtests, Reports | Done: runs, sweeps, validation re-tests, comparison, plain-English reports |
+| 6. AI agents | Done with budgets, citation checks and approvals; **never run against the live API** (no key yet) |
+| 7. Intraday, paper trading, worker, health | Done locally; worker verified with a real tick. Momentum isn't supported in paper trading |
+| 8. Tests + launch docs | Done: unit, end-to-end CLI and headless page-render tests; this guide and DEPLOY.md. **Not deployed: nothing is running 24/7 yet** |
 
-## Known limitations
+## 8. Known limitations
 
-* Universes are today's large caps: **survivorship bias** inflates backtest returns,
-  especially for momentum. Every experiment records this.
+* Universes are today's large caps: **survivorship bias** inflates backtests, especially momentum.
 * Yahoo data is unofficial, delayed, personal-use only, and not point-in-time.
-* Local Python is 3.9 (end of life). Code stays 3.9-compatible; deploy on 3.11+.
-* Schema is created with `create_all` plus a small add-missing-nullable-columns step; Alembic is needed before cloud deploy.
-* Intraday history on Yahoo is ~60 days: intraday results are small samples.
-* Paper fills use actual (unadjusted) prices and don't credit dividends.
-* Agent spend is estimated from token usage at list prices; the Anthropic console is the invoice.
-* Agents only see summaries of stored backtests (evidence packs). They cannot fetch data, read code or run the test period.
-* Report verdicts are rules of thumb (e.g. validation Sharpe below half of train = "degraded"), not statistical tests.
+* Intraday history is ~60 days, so intraday results are small samples.
+* Paper fills use actual prices and don't credit dividends.
+* Report verdicts are rules of thumb, not statistical tests. No walk-forward optimiser yet.
+* Agent spend is estimated at list prices; the Anthropic console is the invoice.
+* Local Python is 3.9 (end of life); the Docker image uses 3.11. The Anthropic SDK is pinned below 1.0.
+* Schema changes use a minimal add-missing-columns step; adopt Alembic before changing column types.
+* The Docker deployment has not been run yet.

@@ -1,8 +1,6 @@
 """Experiment views shared by the Strategy Lab and Backtests pages."""
 from __future__ import annotations
 
-from typing import List
-
 import pandas as pd
 import streamlit as st
 
