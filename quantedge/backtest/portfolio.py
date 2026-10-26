@@ -34,6 +34,11 @@ def signal_rows(sig: pd.DataFrame) -> dict:
     return sig[[c for c in SIGNAL_COLUMNS if c in sig.columns]].to_dict("index")
 
 
+def tie_break_priority(seed: int, symbol: str, ts) -> int:
+    """Seeded, name-independent ordering key shared by the signal and rebalance engines."""
+    return zlib.crc32(f"{seed}|{symbol}|{pd.Timestamp(ts).isoformat()}".encode())
+
+
 def _ts(x) -> pd.Timestamp:
     return pd.Timestamp(x)
 
@@ -62,8 +67,7 @@ class SignalPortfolio:
         favoured AAPL/AMZN/AVGO and inflated results (audit F2). Change `tie_break_seed` to see how much
         the outcome depends on this arbitrary choice.
         """
-        seed = getattr(self.cfg, "tie_break_seed", 0)
-        return zlib.crc32(f"{seed}|{symbol}|{pd.Timestamp(ts).isoformat()}".encode())
+        return tie_break_priority(getattr(self.cfg, "tie_break_seed", 0), symbol, ts)
 
     def accrue(self, annual_rate: float, periods: int = 252) -> None:
         """One trading day of interest on cash held overnight. Called once per session by the driver."""

@@ -15,7 +15,7 @@ forward, then stitch the out-of-sample pieces together.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -27,6 +27,7 @@ class Split:
     train: Tuple[pd.Timestamp, pd.Timestamp]
     validation: Tuple[pd.Timestamp, pd.Timestamp]
     test: Tuple[pd.Timestamp, pd.Timestamp]
+    holdout_start: Optional[str] = None      # set when 'test' is a fixed calendar holdout
 
     def window(self, period: str) -> Tuple[pd.Timestamp, pd.Timestamp]:
         if period == "full":
@@ -34,8 +35,11 @@ class Split:
         return getattr(self, period)
 
     def to_dict(self) -> Dict[str, List[str]]:
-        return {k: [getattr(self, k)[0].strftime("%Y-%m-%d"), getattr(self, k)[1].strftime("%Y-%m-%d")]
-                for k in ("train", "validation", "test")}
+        out = {k: [getattr(self, k)[0].strftime("%Y-%m-%d"), getattr(self, k)[1].strftime("%Y-%m-%d")]
+               for k in ("train", "validation", "test")}
+        if self.holdout_start:
+            out["holdout_start"] = self.holdout_start
+        return out
 
 
 def chronological_split(dates: pd.DatetimeIndex, train: float = 0.6, validation: float = 0.2) -> Split:

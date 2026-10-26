@@ -6,10 +6,12 @@ from typing import Dict
 from .base import Param, RebalanceStrategy, SignalStrategy, Strategy
 from .intraday import OpeningRangeBreakout, VwapContinuation
 from .momentum import CrossSectionalMomentum
+from .reversal import CrossSectionalReversal
 from .trend import DonchianBreakout, EmaPullback
 
 REGISTRY: Dict[str, Strategy] = {s.key: s for s in (EmaPullback(), DonchianBreakout(), CrossSectionalMomentum(),
-                                                    OpeningRangeBreakout(), VwapContinuation())}
+                                                    OpeningRangeBreakout(), VwapContinuation(),
+                                                    CrossSectionalReversal())}
 
 
 def get_strategy(key: str) -> Strategy:

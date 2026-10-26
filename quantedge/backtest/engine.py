@@ -37,7 +37,7 @@ from ..strategies.indicators import sma
 from . import metrics as M
 from ..markets import MARKETS
 from .costs import CostModel
-from .portfolio import SignalPortfolio, signal_rows
+from .portfolio import SignalPortfolio, signal_rows, tie_break_priority
 
 
 @dataclass
@@ -174,6 +174,9 @@ def _finish(equity, exposure, trades, benchmark, dates, cfg, costs, notional, un
     if rf is not None:
         mets["avg_cash_rate"] = float(rf.mean() * 252)
         mets["interest_earned_pct"] = interest / cfg.initial_capital
+        # Cash benchmark: 100% in cash at the short rate over the same window (Phase Two, benchmark 3).
+        mets["cash_return"] = float((1 + rf.iloc[1:]).prod() - 1)
+        mets["excess_vs_cash"] = mets["net_return"] - mets["cash_return"]
     uni = universe.reindex(eq.index).ffill() if universe is not None else None
     if uni is not None and uni.dropna().size > 1:
         mets["universe_return"] = float(uni.iloc[-1] / uni.iloc[0] - 1)
@@ -374,7 +377,9 @@ def run_rebalance_backtest(strategy: RebalanceStrategy, params: Dict[str, Any], 
                     cur = holdings[sym]["shares"]
                     if target < cur and (cur - target) > cfg.rebalance_drift * target:
                         sell(sym, cur - target, float(o), d, "rebalance_trim")
-            for sym, w in sorted(pending.items()):           # then buys
+            # Then buys, in seeded-hash order (Phase Two): when cash runs short, which name gets the
+            # remainder must not depend on the alphabet.
+            for sym, w in sorted(pending.items(), key=lambda kv: tie_break_priority(cfg.tie_break_seed, kv[0], d)):
                 o = opens.iloc[t].get(sym)
                 if pd.isna(o):
                     continue

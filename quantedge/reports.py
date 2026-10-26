@@ -72,7 +72,10 @@ def universe_label(symbols: Iterable[str]) -> str:
 
 
 def config_key(e: dict) -> str:
-    return json.dumps([e["strategy_key"], e["market"], list(e["universe"]), e["params"], e["config"]],
+    # Runs with a fixed calendar holdout (Phase Two) use different train/validation windows, so they
+    # form their own configuration group.
+    hold = (e.get("metrics") or {}).get("holdout_start")
+    return json.dumps([e["strategy_key"], e["market"], list(e["universe"]), e["params"], e["config"], hold],
                       sort_keys=True, default=str)
 
 

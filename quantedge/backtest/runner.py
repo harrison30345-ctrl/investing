@@ -31,6 +31,23 @@ log = logging.getLogger(__name__)
 
 
 INTRADAY_INTERVAL = "5m"
+DEV_TRAIN_FRACTION = 0.75
+
+
+def holdout_split(all_dates: pd.DatetimeIndex, warm: int, holdout_start: str):
+    """
+    Calendar holdout (Phase Two): everything from `holdout_start` on is the locked 'test' period.
+    Development data before it is split chronologically 75% train / 25% validation after warm-up.
+    Fixing the holdout by date (not by fraction) means every strategy shares the same untouched window.
+    """
+    from .splits import Split
+    cut = pd.Timestamp(holdout_start)
+    dev = all_dates[warm:][all_dates[warm:] < cut]
+    hold = all_dates[all_dates >= cut]
+    if len(dev) < 60 or len(hold) == 0:
+        raise RuntimeError(f"Holdout {holdout_start} leaves {len(dev)} development and {len(hold)} holdout sessions")
+    i = int(len(dev) * DEV_TRAIN_FRACTION)
+    return Split((dev[0], dev[i - 1]), (dev[i], dev[-1]), (hold[0], hold[-1]), cut.strftime("%Y-%m-%d"))
 
 
 class TestSetLocked(PermissionError):
@@ -68,7 +85,8 @@ def run_experiment(strategy_key: str, params: Optional[Dict[str, Any]] = None, *
                    period: str = "train", config: Optional[BacktestConfig] = None,
                    provider: Optional[str] = None, confirm_test: bool = False,
                    source: str = "cli", notes: Optional[str] = None, batch: Optional[str] = None,
-                   parent_id: Optional[int] = None, min_warmup: int = 0) -> int:
+                   parent_id: Optional[int] = None, min_warmup: int = 0,
+                   holdout_start: Optional[str] = None) -> int:
     """Returns the experiment id. Failures are recorded and re-raised."""
     if period not in PERIODS:
         raise ValueError(f"period must be one of {PERIODS}")
@@ -133,7 +151,8 @@ def run_experiment(strategy_key: str, params: Optional[Dict[str, Any]] = None, *
             warm = max(strategy.warmup_bars(p), int(min_warmup))
             if len(all_dates) <= warm + 30:
                 raise RuntimeError(f"Only {len(all_dates)} sessions stored; strategy needs {warm} warm-up + 30.")
-            split = chronological_split(all_dates[warm:])
+            split = holdout_split(all_dates, warm, holdout_start) if holdout_start else \
+                chronological_split(all_dates[warm:])
             start, end = split.window(period)
 
         from ..rates import annual_rates
@@ -166,6 +185,8 @@ def _store(exp_id: int, r: BacktestResult, start, end, split, missing: List[str]
         exp.status, exp.finished_at = "completed", utcnow()
         exp.start_date, exp.end_date = pd.Timestamp(start).to_pydatetime(), pd.Timestamp(end).to_pydatetime()
         exp.metrics = {**r.metrics, "split": split.to_dict(), "missing_symbols": missing, "warmup_bars": warmup}
+        if getattr(split, "holdout_start", None):
+            exp.metrics["holdout_start"] = split.holdout_start
         for t in r.trades.itertuples(index=False):
             s.add(Trade(experiment_id=exp_id, symbol=t.symbol, entry_ts=pd.Timestamp(t.entry_ts).to_pydatetime(),
                         entry_price=t.entry_price, exit_ts=pd.Timestamp(t.exit_ts).to_pydatetime(),
@@ -300,7 +321,8 @@ def rerun_on_period(exp_id: int, period: str, confirm_test: bool = False, source
             raise KeyError(f"No experiment #{exp_id}")
         spec = dict(strategy_key=e.strategy_key, params=e.params, symbols=list(e.universe),
                     config=BacktestConfig.from_dict(e.config), provider=e.data_provider,
-                    min_warmup=int((e.metrics or {}).get("warmup_bars") or 0))
+                    min_warmup=int((e.metrics or {}).get("warmup_bars") or 0),
+                    holdout_start=(e.metrics or {}).get("holdout_start"))
         universe_name = next((k for k, v in UNIVERSES.items() if v == list(e.universe)), None)
     return run_experiment(spec.pop("strategy_key"), spec.pop("params"), universe=universe_name, period=period,
                           confirm_test=confirm_test, source=source, parent_id=exp_id,

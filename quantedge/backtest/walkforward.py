@@ -45,7 +45,7 @@ def run_walk_forward(strategy_key: str, param: str, values: List[Any], *, base_p
                      symbols: Optional[List[str]] = None, universe: Optional[str] = None,
                      train_sessions: int = TRAIN_SESSIONS, test_sessions: int = TEST_SESSIONS,
                      config: Optional[BacktestConfig] = None, provider: Optional[str] = None,
-                     source: str = "cli", notes: Optional[str] = None) -> int:
+                     source: str = "cli", notes: Optional[str] = None, holdout_start: Optional[str] = None) -> int:
     from .runner import _prepare, _store, _trial_stats, bias_notes
     strategy = get_strategy(strategy_key)
     if strategy.timeframe != "daily":
@@ -91,7 +91,12 @@ def run_walk_forward(strategy_key: str, param: str, values: List[Any], *, base_p
         benchmark = _prepare(bench_raw, bench_sym)["close"] if not bench_raw.empty else None
         all_dates = pd.DatetimeIndex(sorted(set().union(*[set(b.index) for b in bars.values()])))
         warm = max(strategy.warmup_bars(p) for p in candidates.values())
-        split = chronological_split(all_dates[warm:])
+        if holdout_start:
+            # Fixed calendar holdout: walk forward over all development data before it.
+            from .runner import holdout_split
+            split = holdout_split(all_dates, warm, holdout_start)
+        else:
+            split = chronological_split(all_dates[warm:])
         usable = all_dates[(all_dates >= split.train[0]) & (all_dates <= split.validation[1])]   # never the test set
         windows = walk_forward_windows(usable, train_sessions, test_sessions)
         if not windows:
@@ -126,7 +131,8 @@ def run_walk_forward(strategy_key: str, param: str, values: List[Any], *, base_p
         result.metrics["trials"] = float(max(result.metrics.get("trials", 1), len(values)))
         shim = SimpleNamespace(to_dict=lambda: {"walk_forward_window": [f"{usable[0]:%Y-%m-%d}",
                                                                         f"{usable[-1]:%Y-%m-%d}"],
-                                                "test_locked_from": f"{split.test[0]:%Y-%m-%d}"})
+                                                "test_locked_from": f"{split.test[0]:%Y-%m-%d}"},
+                               holdout_start=holdout_start)
         _store(exp_id, result, windows[0][1][0], windows[-1][1][1], shim,
                missing=[x for x in syms if x not in bars], warmup=warm)
         return exp_id
