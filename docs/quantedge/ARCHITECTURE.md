@@ -168,3 +168,16 @@ backtest runner (source="agent:<name>") ─▶ normal experiment log
 Agents are single structured calls rather than open-ended tool loops: the evidence they need
 is small and known in advance, so a loop would add cost and failure modes without adding
 information. The adapter is the only module that knows the vendor.
+
+## 10. Paper trading, worker and health (Phase 7)
+
+* `backtest/portfolio.py`: `SignalPortfolio` holds the trading rules bar by bar. The backtester drives
+  it over history; paper accounts drive it over new bars and persist its state, so both follow
+  identical rules (a test checks they produce identical trades).
+* `paper.py`: forward-only accounts. Creation requires a completed validation/test experiment and a
+  `human …` approver; agents have no code path to it.
+* `scheduler.py` decides *when* (exchange calendars, catch-up windows); `worker.py` decides *what*
+  (job handlers, JobRun records, heartbeats, single-instance guard, crash recovery).
+* `health.py` + `alerts.py`: checks open and resolve alerts; webhook notification is optional.
+* Deployment: `Dockerfile`, `docker-compose.yml` (Postgres, dashboard, worker, Caddy) and
+  [DEPLOY.md](DEPLOY.md).

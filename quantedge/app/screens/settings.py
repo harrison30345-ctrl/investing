@@ -29,7 +29,8 @@ with a:
         C.list_rows([("Real-money execution", "Not implemented; any other trading mode is refused at start-up",
                       C.pill("", "disabled", "off")),
                      ("Broker connection", "None configured", C.pill("", "none", "off")),
-                     ("Paper trading", "Phase 7; promotion requires your recorded approval", C.pill("", "not built", "off"))])
+                     ("Paper trading", "Simulated only; each account needs a validated run and your recorded approval",
+                      C.pill("", "simulated", "ok"))])
 with b:
     with C.panel("set_provider", "Data provider", C.tag("demo", "demo") if info.is_demo else C.tag("real", "accent")):
         C.kv([("Name", C.esc(info.name)), ("Latency", C.esc(info.latency)),
@@ -58,6 +59,7 @@ from quantedge.scheduler import JOBS, next_run  # noqa: E402
 
 st.write("")
 C.page_header("System health", "Background worker, schedule, alerts and checks")
+runs = D.job_history(300)
 h1, h2 = st.columns([1, 1.3], gap="small")
 with h1:
     with C.panel("set_worker", "Worker"):
@@ -85,21 +87,6 @@ with h1:
         st.caption("Alerts open when a check fails and resolve when it passes. Set QE_ALERT_WEBHOOK_URL to also "
                    "receive them by webhook.")
 with h2:
-    with C.panel("set_sched", "Schedule"):
-        runs = D.job_history(300)
-        rows = []
-        for j in JOBS:
-            mine = runs[runs["job"] == j.key] if not runs.empty else runs
-            last = mine.iloc[0] if not mine.empty else None
-            cadence = {"trading_days": f"trading days {j.at} {j.market}", "weekdays": f"weekdays {j.at} UK",
-                       "interval": f"every {j.every_minutes} min",
-                       "session_interval": f"every {j.every_minutes} min in {j.market} session"}[j.cadence]
-            rows.append({"Job": j.name, "When": cadence + (" · needs AI" if j.needs_llm else ""),
-                         "Last run": pd.Timestamp(last["started_at"]) if last is not None else None,
-                         "Status": last["status"] if last is not None else "never",
-                         "Next (UK)": C.fmt_time(next_run(j), "%a %d %b %H:%M")})
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True,
-                     column_config={"Last run": st.column_config.DatetimeColumn(format="DD MMM HH:mm")})
     with C.panel("set_runs", "Recent job runs"):
         if runs.empty:
             st.caption("No job runs yet.")
@@ -109,3 +96,18 @@ with h2:
                                        "Detail": runs["detail"].fillna("")}).head(60),
                          hide_index=True, use_container_width=True, height=280,
                          column_config={"Started": st.column_config.DatetimeColumn(format="DD MMM HH:mm")})
+
+with C.panel("set_sched", "Schedule"):
+    rows = []
+    for j in JOBS:
+        mine = runs[runs["job"] == j.key] if not runs.empty else runs
+        last = mine.iloc[0] if not mine.empty else None
+        cadence = {"trading_days": f"trading days {j.at} {j.market}", "weekdays": f"weekdays {j.at} UK",
+                   "interval": f"every {j.every_minutes} min",
+                   "session_interval": f"every {j.every_minutes} min in {j.market} session"}[j.cadence]
+        rows.append({"Job": j.name, "When": cadence + (" · needs AI" if j.needs_llm else ""),
+                     "Last run": pd.Timestamp(last["started_at"]) if last is not None else None,
+                     "Status": last["status"] if last is not None else "never",
+                     "Next (UK)": C.fmt_time(next_run(j), "%a %d %b %H:%M")})
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True,
+                 column_config={"Last run": st.column_config.DatetimeColumn(format="DD MMM HH:mm")})

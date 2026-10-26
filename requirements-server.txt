@@ -1,0 +1,2 @@
+# Extra packages for the cloud deployment only (Postgres driver).
+psycopg[binary]>=3.1,<4

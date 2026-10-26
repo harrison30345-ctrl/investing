@@ -221,9 +221,11 @@ def cmd_health(args) -> int:
     else:
         for c in checks:
             print(f"{'OK  ' if c.ok else ('ERR ' if c.level == 'error' else 'WARN')} {c.key:22s} {c.message}")
-    if any(not c.ok and c.level == "error" for c in checks):
-        return 2
-    return 1 if any(not c.ok for c in checks) else 0
+    errors = any(not c.ok and c.level == "error" for c in checks)
+    warnings = any(not c.ok for c in checks)
+    if args.fail_on == "error":           # container health checks: only errors make it unhealthy
+        return 2 if errors else 0
+    return 2 if errors else (1 if warnings else 0)
 
 
 def cmd_worker(args) -> int:
@@ -343,6 +345,8 @@ def main(argv=None) -> int:
     p = sub.add_parser("health", help="run health checks (exit 0 ok, 1 warnings, 2 errors)")
     p.add_argument("--json", action="store_true")
     p.add_argument("--worker", action="store_true", help="also require a live worker heartbeat")
+    p.add_argument("--fail-on", choices=["warning", "error"], default="warning",
+                   help="non-zero exit on warnings (default) or only on errors")
     p.set_defaults(fn=cmd_health)
 
     p = sub.add_parser("worker", help="run the background worker (scheduled jobs)")

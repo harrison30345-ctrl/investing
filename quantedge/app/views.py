@@ -48,7 +48,10 @@ def metrics_grid(m: dict, benchmark: str) -> None:
     ])
 
 
-def trades_table(trades: pd.DataFrame, key: str) -> None:
+ADJUSTED_NOTE = "Prices are dividend/split-adjusted, in account currency (UK in pounds)."
+
+
+def trades_table(trades: pd.DataFrame, key: str, price_note: str = ADJUSTED_NOTE) -> None:
     if trades.empty:
         C.empty_state("No trades", "The rules never fired in this window.")
         return
@@ -73,11 +76,10 @@ def trades_table(trades: pd.DataFrame, key: str) -> None:
                        "Exit": st.column_config.DateColumn(format="DD MMM YY"),
                        "Entry px": st.column_config.NumberColumn(format="%.2f"),
                        "Exit px": st.column_config.NumberColumn(format="%.2f"),
-                       "Net P&L": st.column_config.NumberColumn(format="%+,.0f"),
+                       "Net P&L": st.column_config.NumberColumn(format="%+.0f"),
                        "Return %": st.column_config.NumberColumn(format="%+.2f"),
                        "Costs": st.column_config.NumberColumn(format="%.0f")})
-    st.caption(f"{len(t)} of {len(trades)} trades. Prices are dividend/split-adjusted, in account currency "
-               "(UK in pounds). Click a header to sort.")
+    st.caption(f"{len(t)} of {len(trades)} trades. {price_note} Click a header to sort.")
 
 
 def retest_buttons(e: pd.Series, key: str) -> None:

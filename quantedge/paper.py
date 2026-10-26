@@ -164,10 +164,13 @@ def step_account(account_id: int, now: Optional[pd.Timestamp] = None) -> int:
     strat = REGISTRY[acct.strategy_key]
     intraday = acct.timeframe == "intraday"
     interval = INTRADAY_INTERVAL if intraday else "1d"
-    lookback = timedelta(days=20) if intraday else timedelta(days=int(strat.warmup_bars(acct.params) * 2.2) + 30)
+    # Daily: full stored history, exactly like the backtest. Exponential averages depend on where they
+    # start, so a shorter window could shift a borderline signal. Intraday indicators reset each session
+    # (VWAP) or converge within a day (5-minute ATR), so 20 days is plenty.
+    start = acct.last_bar_ts - timedelta(days=20) if intraday else None
     raw, sig_in = {}, {}
     for sym in acct.universe:
-        df = repo.load_bars(acct.data_provider, sym, interval, start=acct.last_bar_ts - lookback)
+        df = repo.load_bars(acct.data_provider, sym, interval, start=start)
         df = _completed(df.dropna(subset=["open", "high", "low", "close"]), acct.market, acct.timeframe, now)
         if df.empty:
             continue

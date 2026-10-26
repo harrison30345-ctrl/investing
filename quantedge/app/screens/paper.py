@@ -93,7 +93,7 @@ with tab_accts:
                      "Last bar": pd.Timestamp(a.last_bar_ts), "Approved by": a.approved_by})
     sel = st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True, on_select="rerun",
                        selection_mode="single-row", key="pp_tbl",
-                       column_config={"Equity": st.column_config.NumberColumn(format="%,.0f"),
+                       column_config={"Equity": st.column_config.NumberColumn(format="localized"),
                                       "Return %": st.column_config.NumberColumn(format="%+.2f"),
                                       "Last bar": st.column_config.DatetimeColumn(format="DD MMM HH:mm")})
     c1, c2, _ = st.columns([1, 1, 4])
@@ -169,7 +169,7 @@ with tab_accts:
                 hide_index=True, use_container_width=True,
                 column_config={"Entry": st.column_config.NumberColumn(format="%.2f"),
                                "Last": st.column_config.NumberColumn(format="%.2f"),
-                               "Unrealised": st.column_config.NumberColumn(format="%+,.0f"),
+                               "Unrealised": st.column_config.NumberColumn(format="%+.0f"),
                                "Stop": st.column_config.NumberColumn(format="%.2f"),
                                "Target": st.column_config.NumberColumn(format="%.2f")})
         if sm["pending_entries"] or sm["pending_exits"]:
@@ -180,7 +180,7 @@ with tab_accts:
         if trades.empty:
             C.empty_state("No closed paper trades yet", "Trades appear once a position is exited.")
         else:
-            V.trades_table(trades, "pp_tr")
+            V.trades_table(trades, "pp_tr", "Actual (unadjusted) traded prices, in account currency (UK in pounds).")
     with t3:
         if not events.empty:
             st.dataframe(pd.DataFrame({"Bar": pd.to_datetime(events["ts"]), "Type": events["type"],
