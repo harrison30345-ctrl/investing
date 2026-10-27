@@ -24,6 +24,7 @@ from screener.data_fetcher import YFinanceFetcher
 from screener.metrics import calculate_all_metrics
 from screener.filters import apply_filters, format_dry_run, load_config, screen_batch
 from screener.scoring import score_batch
+from screener.theses import DEFAULT_THESES_DIR, evaluate_all, format_thesis_report, load_theses
 from screener.universe import get_universe, load_tickers_from_file
 
 # Resolve paths — configs are bundled inside the package, output goes to user's home
@@ -86,8 +87,13 @@ def resolve_tickers(args) -> list[str]:
         else:
             tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
 
+    # --theses: always include every ticker you have a written thesis for
+    if getattr(args, "theses", False):
+        tickers = list(tickers) + [t["ticker"] for t in load_theses(args.theses_dir)]
+
     if not tickers:
-        logging.error("No tickers specified. Use --universe or --tickers.")
+        logging.error("No tickers specified. Use --universe or --tickers "
+                      "(or --theses with at least one file in theses/).")
         sys.exit(1)
 
     seen = set()
@@ -233,6 +239,15 @@ def run_screen(args) -> list[dict]:
         print("No stocks passed all screening filters.")
         print("Try loosening your config thresholds or running with --dry-run to see why.")
 
+    if getattr(args, "theses", False):
+        # Check theses against ALL fetched metrics, not just stocks that passed the
+        # filters: a holding failing the screen is exactly the news you want to see.
+        by_ticker = {m["ticker"]: dict(m) for m in all_metrics}
+        for r in results:
+            by_ticker.setdefault(r["ticker"], {}).update(r)
+        print()
+        print(format_thesis_report(evaluate_all(load_theses(args.theses_dir), by_ticker)))
+
     print()
     return results
 
@@ -247,6 +262,7 @@ Examples:
   screener -c swing -t AAPL,MSFT,GOOG,META
   screener -c longterm -t my_watchlist.csv
   screener -c longterm -u nasdaq100 --dry-run
+  screener -c longterm --theses          # check your written theses
   screener --dashboard
         """,
     )
@@ -280,6 +296,15 @@ Examples:
         help="Ignore cache and fetch fresh data",
     )
     parser.add_argument(
+        "--theses", action="store_true",
+        help="Also screen every ticker in theses/ and check each written thesis "
+             "(pillars, exit triggers, catalysts, reviews due)",
+    )
+    parser.add_argument(
+        "--theses-dir", type=Path, default=DEFAULT_THESES_DIR,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
         "--dashboard", action="store_true",
         help="Launch the interactive web dashboard",
     )
@@ -294,8 +319,8 @@ Examples:
     if not args.config:
         parser.error("--config is required (use 'longterm', 'swing', or a YAML path)")
 
-    if not args.tickers and not args.universe:
-        parser.error("specify --tickers or --universe")
+    if not args.tickers and not args.universe and not args.theses:
+        parser.error("specify --tickers, --universe or --theses")
 
     run_screen(args)
 

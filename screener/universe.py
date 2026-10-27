@@ -221,7 +221,7 @@ def get_growth_50() -> list[str]:
 
 def get_broad_market() -> list[str]:
     """
-    Broad cross-sector US stock universe (~300 tickers).
+    Broad cross-sector US stock universe (~700 tickers).
     Combines all curated thematic lists with expanded coverage across
     healthcare, financials, consumer, industrials, energy, and emerging growth.
     """
@@ -327,11 +327,68 @@ def get_broad_market() -> list[str]:
     ]
 
     seen: set[str] = set()
+
+    # ── Expanded coverage ──────────────────────────────────────────────
+    # Added to widen the scan beyond the original thematic lists. These are
+    # large and mid-cap US names with reliable data coverage; the screen is
+    # only as broad as the universe fed into it.
+    more_tech = [
+        "IBM", "ACN", "INFY", "CTSH", "GLW", "APH", "TEL", "KEYS", "ANSS",
+        "CDNS", "SNPS", "ADSK", "INTU", "ROP", "FICO", "TYL", "PTC", "SSNC",
+        "GEN", "AKAM", "JNPR", "NTAP", "WDC", "STX", "HPQ", "HPE", "DELL",
+        "SMAR", "PCOR", "TEAM", "ZM", "DOCU", "BOX", "DBX", "FSLY", "ESTC",
+    ]
+    more_health = [
+        "ABT", "TMO", "DHR", "SYK", "BSX", "MDT", "ZBH", "BDX", "BAX", "EW",
+        "ISRG", "DXCM", "RMD", "ALGN", "IDXX", "WST", "STE", "HOLX", "PODD",
+        "CI", "ELV", "HUM", "CNC", "MCK", "COR", "CAH", "ZTS", "IQV", "A",
+    ]
+    more_financial = [
+        "V", "MA", "AXP", "PYPL", "FIS", "FISV", "GPN", "DFS", "SYF", "COF",
+        "USB", "PNC", "TFC", "MTB", "FITB", "HBAN", "RF", "CFG", "KEY", "ZION",
+        "BLK", "BX", "KKR", "APO", "ARES", "TROW", "BEN", "IVZ", "STT", "NTRS",
+        "CB", "TRV", "ALL", "PGR", "AIG", "MET", "PRU", "AFL", "HIG", "CINF",
+        "ICE", "CME", "NDAQ", "CBOE", "MCO", "SPGI", "MSCI", "FDS",
+    ]
+    more_consumer = [
+        "HD", "LOW", "TJX", "ROST", "BURL", "DG", "DLTR", "TGT", "BBY", "ULTA",
+        "ORLY", "AZO", "AAP", "GPC", "TSCO", "WSM", "RH", "DKS", "FND",
+        "MCD", "SBUX", "CMG", "YUM", "QSR", "DPZ", "WING", "TXRH", "DRI",
+        "MAR", "HLT", "H", "WH", "CCL", "RCL", "NCLH", "ABNB", "BKNG", "EXPE",
+        "NKE", "LULU", "DECK", "ONON", "SKX", "CROX", "VFC", "RL", "PVH", "TPR",
+    ]
+    more_industrial = [
+        "GE", "HON", "MMM", "CAT", "DE", "EMR", "ETN", "PH", "ROK", "DOV",
+        "ITW", "CMI", "PCAR", "URI", "FAST", "GWW", "SWK", "IR", "XYL", "AME",
+        "UNP", "CSX", "NSC", "ODFL", "JBHT", "CHRW", "EXPD", "UPS", "FDX",
+        "DAL", "UAL", "LUV", "AAL", "ALK", "WM", "RSG", "VRSK", "CTAS",
+    ]
+    more_energy_utils = [
+        "XOM", "CVX", "COP", "EOG", "PXD", "DVN", "FANG", "OXY", "HES", "MRO",
+        "SLB", "HAL", "BKR", "OKE", "KMI", "WMB", "TRGP", "LNG", "PSX", "VLO", "MPC",
+        "NEE", "DUK", "SO", "D", "AEP", "EXC", "XEL", "ED", "WEC", "ES",
+        "PEG", "SRE", "PCG", "EIX", "AEE", "CMS", "DTE", "FE", "PPL", "CNP",
+    ]
+    more_staples_materials = [
+        "PG", "KO", "PEP", "COST", "WMT", "MDLZ", "KHC", "GIS", "K", "HSY",
+        "STZ", "KDP", "MNST", "CL", "KMB", "CHD", "CLX", "EL", "SYY", "KR",
+        "LIN", "APD", "SHW", "ECL", "DD", "DOW", "LYB", "PPG", "NUE", "STLD",
+        "FCX", "NEM", "VMC", "MLM", "ALB", "CE", "IFF", "AVY", "PKG", "IP",
+    ]
+    more_comms_media = [
+        "DIS", "CMCSA", "NFLX", "WBD", "PARA", "FOX", "FOXA", "LYV", "EA", "TTWO",
+        "RBLX", "U", "SPOT", "PINS", "SNAP", "MTCH", "BMBL", "YELP", "TRIP",
+        "T", "VZ", "TMUS", "CHTR", "LUMN", "OMC", "IPG", "NYT",
+    ]
+
     result: list[str] = []
     for group in [
         mega, semis, software, ai_pure, internet, fintech, banks,
         health, biotech, consumer, staples, energy, industrials,
         space_def, comms, realestate, materials, emerging,
+        more_tech, more_health, more_financial, more_consumer,
+        more_industrial, more_energy_utils, more_staples_materials,
+        more_comms_media,
     ]:
         for t in group:
             if t not in seen:
