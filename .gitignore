@@ -54,3 +54,7 @@ crypto_dd.py
 acbuy_raw.json
 acbuylinks*.xlsx
 backtest_results.csv
+
+# Trading 212 credentials (never commit)
+t212_credentials
+.screener/

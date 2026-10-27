@@ -62,6 +62,9 @@ from services.momentum import assess_momentum
 from services.narrative import rank_reason, situation
 from services.score_history import ScoreHistory, describe_change
 from services.screening import apply_preset, screen
+from services.trading212 import (
+    T212Credentials, T212Error, Trading212, load_credentials, save_credentials,
+)
 from services.watchlist import Watchlist
 
 try:
@@ -101,7 +104,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Page config ──────────────────────────────────────────────
 st.set_page_config(
-    page_title="The Investor Square",
+    page_title="Barry's Investor Square",
     page_icon="♜",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -311,7 +314,7 @@ def _company_directory(bucket: int) -> dict:
     silently disappeared from search -- AMAT among them.
     """
     try:
-        infos = _batch_info(tuple(get_universe("all_curated")))
+        infos = _batch_info(tuple(get_universe("broad")))
     except Exception:  # noqa: BLE001 - the picker degrades to tickers only
         return {}
     return {t: (info or {}).get("shortName") or ""
@@ -616,7 +619,7 @@ def metric_card(label, value, col, hot=False):
 st.sidebar.markdown("""
 <div style="padding:0.2rem 0.55rem 1.1rem 0.55rem;">
     <div style="font-size:0.95rem; font-weight:620; color:#e8eaef; letter-spacing:-0.01em;">
-        The Investor Square</div>
+        Barry's Investor Square</div>
     <div style="font-size:0.62rem; font-weight:500; letter-spacing:0.16em;
                 text-transform:uppercase; color:#7b8394; margin-top:0.2rem;">Equity research</div>
 </div>
@@ -624,7 +627,7 @@ st.sidebar.markdown("""
 
 nav = st.sidebar.radio(
     "Navigate",
-    ["Overview", "Hedge Fund", "Discover", "Screener", "Watchlist", "UK Investor"],
+    ["Overview", "Hedge Fund", "Discover", "Screener", "Watchlist", "Portfolio"],
     index=0,
     label_visibility="collapsed",
 )
@@ -738,7 +741,7 @@ if page == "Overview":
     @st.cache_data(persist="disk", show_spinner=False)
     def _overview_picks(bucket: int) -> dict:
         """A short list per theme, scored with the standard engine."""
-        tickers = get_universe("all_curated")[:110]
+        tickers = get_universe("broad")[:180]
         prices = _batch_prices(tuple(tickers), period="3mo", interval="1d")
         valid = tuple(t for t in tickers if t in prices and not prices[t].empty) or tuple(tickers)
         infos = _batch_info(valid)
@@ -1285,7 +1288,7 @@ elif page == "Hedge Fund":
         ["broad", "all_curated", "tech", "ai", "growth", "nasdaq100", "t212"],
         format_func=lambda x: {
             "broad":       "Broad Market (~300)",
-            "all_curated": "All Curated (~130)",
+            "all_curated": "Curated (~145)",
             "tech":        "Tech & Mega Caps (~60)",
             "ai":          "AI & Machine Learning (~55)",
             "growth":      "High Growth (~50)",
@@ -1301,7 +1304,7 @@ elif page == "Hedge Fund":
     risk_profile = st.sidebar.radio(
         "My risk appetite",
         ["Conservative", "Balanced", "Aggressive"],
-        index=1,
+        index=0,
     )
     portfolio_size = st.sidebar.number_input(
         "Portfolio size (£/$)",
@@ -2674,11 +2677,11 @@ elif page == "Discover":
         "Universe",
         ["broad", "all_curated", "tech", "ai", "growth"],
         format_func=lambda x: {
-            "broad": "Broad market (~360)", "all_curated": "Curated (~145)",
+            "broad": "Broad market (~540)", "all_curated": "Curated (~145)",
             "tech": "Technology", "ai": "AI and machine learning",
             "growth": "High growth",
         }[x],
-        index=1,
+        index=0,
     )
     d_refresh = st.sidebar.button("Refresh", key="_disc_refresh")
     d_key = f"discover_{d_universe}"
@@ -2945,9 +2948,9 @@ elif page == "Screener":
             "Universe",
             ["broad", "all_curated", "tech", "ai", "growth", "nasdaq100"],
             format_func=lambda x: {
-                "broad": "Broad Market (~300)", "tech": "Tech & Mega Caps",
+                "broad": "Broad market (~540)", "tech": "Tech & Mega Caps",
                 "ai": "AI & ML", "growth": "High Growth (~50)",
-                "all_curated": "All Curated (~130)", "nasdaq100": "NASDAQ 100",
+                "all_curated": "Curated (~145)", "nasdaq100": "NASDAQ 100",
             }[x],
             index=0,
         )
@@ -2955,7 +2958,7 @@ elif page == "Screener":
             "Preset",
             ["custom"] + [p.key for p in PRESETS],
             format_func=lambda k: "Custom thresholds" if k == "custom" else PRESETS_BY_KEY[k].label,
-            index=1,
+            index=0,
         )
 
         custom_limits = {}
@@ -3105,7 +3108,7 @@ elif page == "Screener":
             "ai":          "AI & Machine Learning (~55)",
             "space":       "Space & Defence (~50)",
             "growth":      "High Growth (~50)",
-            "all_curated": "All Curated (~130)",
+            "all_curated": "Curated (~145)",
             "nasdaq100":   "NASDAQ 100",
             "sp500":       "S&P 500",
             "ftse100":     "FTSE 100",
@@ -3347,158 +3350,196 @@ elif page == "Screener":
 # ════════════════════════════════════════════════════════════
 # PAGE 5 — T212 ISA
 # ════════════════════════════════════════════════════════════
-elif page == "UK Investor":
+
+
+# ════════════════════════════════════════════════════════════
+# PAGE — PORTFOLIO  (Trading 212)
+# ════════════════════════════════════════════════════════════
+elif page == "Portfolio":
 
     theme.page_header(
-        "UK Investor",
-        "What a UK investor needs to know that a US-focused tool will not tell you.",
+        "Portfolio",
+        "Your Trading 212 holdings, scored on the same methodology as everything else.",
     )
 
-    tab_isa, tab_costs, tab_shares = st.tabs(
-        ["Stocks and Shares ISA", "Costs and currency", "UK-listed companies"]
-    )
+    creds = load_credentials()
 
-    # ── ISA ──────────────────────────────────────────────────
-    with tab_isa:
-        st.markdown("""A Stocks and Shares ISA is a **wrapper**, not an investment. You choose what goes
-inside it; the wrapper decides how it is taxed.
-
-Inside one, gains and dividends are free of UK capital gains tax and dividend tax,
-and there is nothing to declare. Outside one, both can be taxable once you pass
-the annual allowances.
-
-There is a yearly limit on how much you can pay in, set by the government and
-occasionally changed. Unused allowance does not roll over.
-
-**What this does not tell you.** An ISA offers no protection from losses — the
-investments inside can fall like any others. The tax advantage only matters if
-there are gains to shelter, and it does not make an unsuitable investment
-suitable.
-
-Tax rules change and depend on your circumstances. This is general information,
-not tax advice.
-""")
-
-        theme.section("The allowance, in short")
-        theme.metric_table([
-            ("Annual ISA allowance", "£20,000", "The most you can pay into ISAs in a tax year, across all types."),
-            ("Tax year runs", "6 April – 5 April", "Allowances reset on 6 April and unused allowance does not carry over."),
-            ("Capital gains tax inside", "None", "Gains on investments held in an ISA are not taxed."),
-            ("Dividend tax inside", "None", "Dividends received inside an ISA are not taxed."),
-            ("Declared on a tax return", "No", "ISA holdings do not need to be reported to HMRC."),
-        ], columns=1)
-        st.caption(
-            "Allowances and rules are set by the government and change from time to time. "
-            "This is general information, not tax advice, and your own circumstances matter."
+    if creds is None:
+        st.markdown(
+            "Connect a Trading 212 **Invest** or **Stocks & Shares ISA** account to see "
+            "your holdings here. The connection is read-only: this app can fetch "
+            "positions and cash, and has no ability to place, change or cancel an order."
         )
-
-    # ── Costs and currency ───────────────────────────────────
-    with tab_costs:
-        st.markdown("""UK-listed shares usually carry a `.L` suffix and trade in pounds, often quoted in
-pence rather than pounds — a price of 250 frequently means £2.50, which catches
-people out.
-
-US shares trade in dollars, so a UK investor takes on **currency risk**: if the
-pound strengthens against the dollar, your US holdings are worth less in pounds
-even if the share price has not moved. That works both ways.
-
-Brokers typically charge an FX fee to convert, and it is often a larger cost than
-the trading commission. It is worth knowing what yours charges before assuming a
-small position is cheap to hold.
-
-**Stamp duty** of 0.5% applies to most UK share purchases and not to US ones.
-
-**What this does not tell you.** None of this says which market is a better place
-to invest. It is a description of the friction, not the opportunity.
-""")
-
-        theme.section("Costs worth checking with your provider")
-        theme.metric_table([
-            ("Stamp duty on UK shares", "0.5%",
-             "Charged on most UK share purchases. Not charged on US shares."),
-            ("FX fee on overseas shares", "Typically 0.15%–1.5%",
-             "Charged when converting currency. Often larger than the dealing commission."),
-            ("Dealing commission", "Varies",
-             "Some providers charge per trade, others include it in a platform fee."),
-            ("Platform or custody fee", "Varies",
-             "An annual charge for holding the account, sometimes a percentage of the value."),
-            ("Fractional shares", "Provider dependent",
-             "Lets you buy part of a share. Not every provider offers them, and not on every stock."),
-        ], columns=1)
-        st.caption(
-            "Figures are typical ranges, not quotes. Check the current charges published by "
-            "whichever provider you use — this platform is independent and not affiliated "
-            "with any broker."
+        theme.section("Getting a key")
+        st.markdown(
+            "1. In the Trading 212 app, go to **Settings → API (Beta)**\n"
+            "2. **Generate API key**, give it a name, and restrict it by IP if you can\n"
+            "3. Copy the key and secret — the secret is shown **once** and never again"
         )
-
-    # ── UK-listed companies ──────────────────────────────────
-    with tab_shares:
+        with st.form("_t212_connect"):
+            k = st.text_input("API key", type="password")
+            sec = st.text_input("API secret", type="password",
+                                help="Leave blank if your key predates secrets.")
+            demo = st.checkbox("This is a practice (demo) account")
+            remember = st.checkbox(
+                "Remember on this device", value=True,
+                help="Saved to ~/.screener/t212_credentials, readable only by you "
+                     "and excluded from git.",
+            )
+            if st.form_submit_button("Connect"):
+                if not k.strip():
+                    st.error("Enter your API key.")
+                else:
+                    trial = Trading212(T212Credentials(k.strip(), sec.strip(), demo))
+                    try:
+                        trial.check()
+                    except T212Error as exc:
+                        st.error(str(exc))
+                    else:
+                        if remember:
+                            save_credentials(k, sec, demo)
+                        else:
+                            st.session_state["_t212"] = T212Credentials(k.strip(), sec.strip(), demo)
+                        st.rerun()
         st.caption(
-            "Companies listed in London, scored on the same methodology as everything else. "
-            "Availability depends on your provider, and inclusion here is not a recommendation."
+            "Your key is sent only to Trading 212 and is never logged or shared. "
+            "Trading 212 treats the secret like a password — if it is ever exposed, "
+            "delete the key pair in the app."
         )
-        uk_refresh = st.sidebar.button("Refresh UK list", key="_uk_refresh")
-        uk_key = "uk_listed"
-        if uk_refresh or uk_key not in st.session_state:
-            st.session_state[uk_key] = None
+        st.stop()
 
-        if _scan_gate(uk_key, "Load UK-listed companies", forced=uk_refresh,
-                      note="Scores the London-listed companies in our universe."):
+    client = Trading212(creds)
+
+    @st.cache_data(ttl=120, show_spinner=False)
+    def _t212_snapshot(_client, nonce: int) -> dict:
+        """Positions and cash. Short TTL and raises on failure, so a rate limit
+        is retried rather than cached — T212 allows about one account-summary
+        request every five seconds."""
+        return {"positions": _client.positions(), "cash": _client.cash()}
+
+    if st.sidebar.button("Refresh from Trading 212", key="_t212_refresh"):
+        st.session_state["_t212_nonce"] = st.session_state.get("_t212_nonce", 0) + 1
+
+    try:
+        with st.spinner(""):
+            snap = _t212_snapshot(client, st.session_state.get("_t212_nonce", 0))
+    except T212Error as exc:
+        st.error(str(exc))
+        if st.button("Disconnect this account"):
+            from services.trading212 import CREDENTIALS_PATH
+            CREDENTIALS_PATH.unlink(missing_ok=True)
+            st.rerun()
+        st.stop()
+
+    positions, cash = snap["positions"], snap["cash"]
+    cur = {"GBP": "£", "USD": "$", "EUR": "€"}.get(cash.currency or "", "")
+
+    # ── Account summary ──────────────────────────────────────
+    c1, c2, c3, c4 = st.columns(4)
+    metric_card("Holdings", str(len(positions)), c1)
+    metric_card("Invested",
+                f"{cur}{cash.invested:,.0f}" if cash.invested is not None else "—", c2)
+    metric_card("Free cash",
+                f"{cur}{cash.free:,.0f}" if cash.free is not None else "—", c3)
+    if cash.ppl is not None:
+        sign = "+" if cash.ppl >= 0 else ""
+        metric_card("Open profit/loss", f"{sign}{cur}{cash.ppl:,.0f}", c4)
+    else:
+        metric_card("Open profit/loss", "—", c4)
+
+    if not positions:
+        st.info("No open positions in this account.")
+        st.stop()
+
+    # ── Holdings, scored ─────────────────────────────────────
+    score_them = st.sidebar.checkbox("Score my holdings", value=True)
+    rows = []
+    scored_lookup = {}
+    if score_them:
+        symbols = tuple(sorted({p.symbol for p in positions}))
+        with st.spinner(""):
+            prices = _batch_prices(symbols, period="3mo", interval="1d")
+            infos = _batch_info(symbols)
+        for sym in symbols:
+            info = infos.get(sym) or {}
+            if not info.get("shortName"):
+                continue
+            sc = score_company(sym, _fundamentals_from_info(info, prices.get(sym)),
+                               info.get("sector"))
+            scored_lookup[sym] = (sc, info.get("shortName", sym))
             try:
-                pool = [t for t in get_universe("t212") if t.endswith(".L")]
+                _score_history().record(sc)
             except Exception:  # noqa: BLE001
-                pool = []
-            if not pool:
-                st.session_state[uk_key] = []
-            else:
-                with st.spinner(""):
-                    prices = _batch_prices(tuple(pool), period="3mo", interval="1d")
-                    infos = _batch_info(tuple(pool))
-                    built = []
-                    for t in pool:
-                        info = infos.get(t) or {}
-                        if not info.get("shortName"):
-                            continue
-                        sc = score_company(t, _fundamentals_from_info(info, prices.get(t)),
-                                           info.get("sector"))
-                        built.append({
-                            "Company": info.get("shortName", t)[:34], "Ticker": t,
-                            "Score": sc.overall,
-                            "Quality": sc.categories["quality"].score,
-                            "Growth": sc.categories["growth"].score,
-                            "Valuation": sc.categories["valuation"].score,
-                            "Sector": info.get("sector") or "—",
-                        })
-                st.session_state[uk_key] = built
+                pass
 
-        built = st.session_state.get(uk_key)
-        if built is None:
-            st.stop()
-        if not built:
-            st.info(
-                "No London-listed companies were available from the data provider just now. "
-                "UK coverage from this source is thinner than US coverage."
-            )
-        else:
-            st.dataframe(
-                pd.DataFrame(built).sort_values("Score", ascending=False, na_position="last"),
-                hide_index=True, width="stretch", height=min(520, 36 * len(built) + 40),
-                column_config={
-                    "Score": st.column_config.NumberColumn(format="%d", width="small"),
-                    "Quality": st.column_config.NumberColumn(format="%d", width="small"),
-                    "Growth": st.column_config.NumberColumn(format="%d", width="small"),
-                    "Valuation": st.column_config.NumberColumn(format="%d", width="small"),
-                    "Ticker": st.column_config.TextColumn(width="small"),
-                },
-            )
-            st.caption(
-                "London tickers end in .L and are usually quoted in pence, so a price of 250 "
-                "generally means £2.50."
-            )
+    for p in positions:
+        sc, name = scored_lookup.get(p.symbol, (None, None))
+        rows.append({
+            "Company": name or p.symbol,
+            "Ticker": p.symbol,
+            "Qty": round(p.quantity, 4),
+            "Avg price": round(p.average_price, 2),
+            "Price": round(p.current_price, 2),
+            "Value": round(p.value, 2),
+            "P/L": round(p.ppl, 2),
+            "Return %": round(p.return_pct, 1) if p.return_pct is not None else None,
+            "Score": sc.overall if sc else None,
+            "Quality": sc.categories["quality"].score if sc else None,
+            "Valuation": sc.categories["valuation"].score if sc else None,
+        })
+
+    df = pd.DataFrame(rows).sort_values("Value", ascending=False, na_position="last")
+    st.dataframe(
+        df, hide_index=True, width="stretch", height=min(620, 36 * len(df) + 40),
+        column_config={
+            "Value": st.column_config.NumberColumn(format="%.2f"),
+            "P/L": st.column_config.NumberColumn(format="%+.2f"),
+            "Return %": st.column_config.NumberColumn(format="%+.1f%%"),
+            "Score": st.column_config.NumberColumn(format="%d", width="small"),
+            "Quality": st.column_config.NumberColumn(format="%d", width="small"),
+            "Valuation": st.column_config.NumberColumn(format="%d", width="small"),
+            "Ticker": st.column_config.TextColumn(width="small"),
+        },
+    )
+    unmatched = [r["Ticker"] for r in rows if r["Score"] is None]
+    if unmatched and score_them:
+        st.caption(
+            f"No score for {', '.join(unmatched[:8])}"
+            + (f" and {len(unmatched)-8} more" if len(unmatched) > 8 else "")
+            + " — the data provider had nothing under that symbol. Trading 212 uses its "
+              "own instrument codes, so some holdings will not match."
+        )
+
+    # ── Concentration ────────────────────────────────────────
+    total_value = sum(p.value for p in positions)
+    if total_value > 0:
+        theme.section("Concentration")
+        top = df.head(8)
+        fig_c = go.Figure(go.Bar(
+            x=top["Value"] / total_value * 100, y=top["Ticker"],
+            orientation="h", marker_color=theme.BRASS,
+            hovertemplate="%{x:.1f}% of portfolio<extra></extra>",
+        ))
+        fig_c.update_layout(**theme.chart_layout_quiet(
+            height=max(180, 28 * len(top)), xaxis_title="% of portfolio value",
+            yaxis=dict(autorange="reversed", showgrid=False),
+        ))
+        st.plotly_chart(fig_c, width="stretch", config={"displayModeBar": False})
+        largest = df.iloc[0]
+        st.caption(
+            f"Largest holding is {largest['Ticker']} at "
+            f"{largest['Value']/total_value*100:.1f}% of portfolio value."
+        )
 
     theme.hairline()
     st.caption(
-        "Research and education only. Not financial advice, not tax advice, and not a "
-        "recommendation to buy or sell. This platform is independent and has no "
-        "affiliation with any broker or provider."
+        f"Live from Trading 212 at {client.fetched_at():%H:%M} UTC. Read-only access: "
+        f"this app cannot place, change or cancel orders. Scores use methodology "
+        f"v{SCORING_VERSION} and market data from {PROVIDER_NAME}, which may differ "
+        f"slightly from Trading 212's own prices."
     )
+    if st.sidebar.button("Disconnect account", key="_t212_disconnect"):
+        from services.trading212 import CREDENTIALS_PATH
+        CREDENTIALS_PATH.unlink(missing_ok=True)
+        st.session_state.pop("_t212", None)
+        st.rerun()
