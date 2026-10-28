@@ -59,6 +59,9 @@ from services.hidden_gems import (
 from config.screener_presets import FILTERABLE, PRESETS, PRESETS_BY_KEY
 from services.comparison import MAX_COMPANIES, MIN_MEANINGFUL_GAP, compare
 from services.momentum import assess_momentum
+from services import news as news_service
+from services import sensitivity as sensitivity_service
+from services.market_context import fetch_context
 from services.narrative import rank_reason, situation
 from services.score_history import ScoreHistory, describe_change
 from services.screening import apply_preset, screen
@@ -627,7 +630,7 @@ st.sidebar.markdown("""
 
 nav = st.sidebar.radio(
     "Navigate",
-    ["Overview", "Hedge Fund", "Discover", "Screener", "Watchlist", "Portfolio"],
+    ["Overview", "Research", "Hedge Fund", "Discover", "Screener", "Watchlist", "Portfolio"],
     index=0,
     label_visibility="collapsed",
 )
@@ -3355,6 +3358,417 @@ elif page == "Screener":
 # ════════════════════════════════════════════════════════════
 # PAGE — PORTFOLIO  (Trading 212)
 # ════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════
+# PAGE — RESEARCH
+# The conditions around a holding rather than its own accounts: the market
+# backdrop, headlines that actually name it, and what its shares have measurably
+# moved with. Everything here is current data or measured history -- no view of
+# what happens next is offered, because none can be supported.
+# ════════════════════════════════════════════════════════════
+elif page == "Research":
+
+    theme.page_header(
+        "Research",
+        "What is going on around your companies — the market backdrop, the "
+        "headlines naming them, and what their shares have actually moved with.",
+    )
+
+    NEWS_TTL = 1800          # headlines go stale in minutes, not hours
+    MAX_FOLLOWED = 14        # each company costs an HTTP request
+
+    def _news_bucket() -> int:
+        return int(time.time() // NEWS_TTL)
+
+    _nonce = st.session_state.get("_research_nonce", 0)
+
+    # ── Which companies this page is about ───────────────────
+
+    @st.cache_data(ttl=300, show_spinner=False)
+    def _holding_symbols(nonce: int) -> list:
+        """Tickers held at Trading 212, if an account is linked.
+
+        Cached for five minutes: Trading 212 allows roughly one account request
+        every five seconds, and this page would otherwise hit it on every rerun.
+        A failure returns nothing rather than raising -- an unreachable broker
+        should cost this section, not the page.
+        """
+        creds = load_credentials() or st.session_state.get("_t212")
+        if creds is None:
+            return []
+        try:
+            return [p.symbol for p in Trading212(creds).positions() if p.quantity]
+        except T212Error:
+            return []
+
+    def _followed() -> tuple:
+        """Holdings first, then watchlist, then recently viewed.
+
+        Holdings lead because news about something owned matters more than news
+        about something browsed once.
+        """
+        ordered, seen = [], set()
+
+        def add(ticker) -> None:
+            t = str(ticker or "").strip().upper()
+            if t and t not in seen:
+                seen.add(t)
+                ordered.append(t)
+
+        for symbol in _holding_symbols(_nonce):
+            add(symbol)
+        try:
+            wl = _watchlist()
+            for entry in wl.all():
+                add(entry.ticker)
+            for entry in wl.recent(limit=12):
+                add(entry.ticker)
+        except Exception:  # noqa: BLE001 - an empty store is not an error here
+            pass
+        return tuple(ordered[:MAX_FOLLOWED])
+
+    followed = _followed()
+
+    if st.sidebar.button("Refresh research", key="_research_refresh"):
+        st.session_state["_research_nonce"] = _nonce + 1
+        st.rerun()
+
+    # ── Market backdrop ──────────────────────────────────────
+    theme.section("Market backdrop")
+
+    # Every cached fetch below takes `nonce` as well as the time bucket, so the
+    # Refresh button genuinely refetches. Without it the button would bump a
+    # counter that no cache key reads, and quietly do nothing.
+    @st.cache_data(persist="disk", show_spinner=False)
+    def _backdrop(bucket: int, nonce: int):
+        return fetch_context()
+
+    context = _backdrop(_news_bucket(), _nonce)
+
+    if not context.ok:
+        st.warning(context.error or "The market backdrop could not be read.")
+    else:
+        st.markdown(f"<div class='bs-sub' style='margin-bottom:0.9rem;'>"
+                    f"{context.summary}</div>", unsafe_allow_html=True)
+
+        TILT_WORDS = {
+            "supportive": ("Historically supportive", theme.POSITIVE),
+            "restrictive": ("Historically restrictive", theme.NEGATIVE),
+            "neutral": ("Unremarkable", theme.MUTED),
+            "unknown": ("No data", theme.FAINT),
+        }
+
+        rows = []
+        for reading in context.readings:
+            word, colour = TILT_WORDS.get(reading.tilt, TILT_WORDS["unknown"])
+            month = ("—" if reading.chg_1m is None
+                     else f"{reading.chg_1m:+.2f}{'pp' if reading.key in ('ten_year', 'curve') else '%'}")
+            rows.append(
+                f'<div class="bs-mrow" title="{reading.meaning}">'
+                f'<span class="bs-mk">{reading.label}</span>'
+                f'<span class="bs-mv">{reading.display}'
+                f'<span style="color:{theme.FAINT};font-weight:400;'
+                f'margin-left:0.5rem;font-size:0.78rem;">{month} 1m</span></span>'
+                f'</div>'
+                f'<div style="grid-column:1/-1;margin:-0.45rem 0 0.55rem 0;'
+                f'font-size:0.76rem;color:{theme.MUTED};">'
+                f'<span style="color:{colour};font-weight:600;">{word}.</span> '
+                f'{reading.note}</div>'
+            )
+        st.markdown(f'<div class="bs-mtable" style="--cols:1;">{"".join(rows)}</div>',
+                    unsafe_allow_html=True)
+
+        with st.expander("What each indicator is, and why it moves share prices"):
+            for reading in context.readings:
+                st.markdown(f"**{reading.label}** — {reading.meaning}")
+            st.caption(
+                "“Historically supportive” and “historically restrictive” describe the "
+                "conditions equities have risen or fallen alongside in the past. They "
+                "are associations, not causes, and not forecasts. The thresholds are "
+                "conventional rules of thumb, written down in "
+                "`services/market_context.py` so they can be argued with — they have "
+                "not been fitted to or validated against future returns."
+            )
+
+    theme.hairline()
+
+    if not followed:
+        theme.section("Nothing followed yet")
+        st.markdown(
+            "This page is built around the companies you hold or watch. Link a "
+            "Trading 212 account on the **Portfolio** page, or search for a company "
+            "above and add it to your watchlist, and the sections below will fill in: "
+            "headlines that name it, how its shares have moved, and which market "
+            "forces it has tracked."
+        )
+        st.caption(
+            f"Market data and headlines from {PROVIDER_NAME}. Nothing on this page "
+            f"is financial advice or a recommendation to buy or sell anything."
+        )
+        st.stop()
+
+    directory = _company_directory(_bucket())
+    names = {t: directory.get(t, "") for t in followed}
+
+    # ── What moved ───────────────────────────────────────────
+    theme.section("What moved")
+
+    @st.cache_data(persist="disk", show_spinner=False)
+    def _closes(tickers: tuple, bucket: int, nonce: int):
+        frames = _batch_prices(tickers, period="1y")
+        columns = {t: df["Close"].dropna() for t, df in frames.items()
+                   if "Close" in getattr(df, "columns", [])}
+        return pd.DataFrame(columns) if columns else pd.DataFrame()
+
+    closes = _closes(followed, _news_bucket(), _nonce)
+
+    moves = []
+    for ticker in followed:
+        if ticker not in getattr(closes, "columns", []):
+            continue
+        series = closes[ticker].dropna()
+        if len(series) < 6:
+            continue
+        day = (series.iloc[-1] / series.iloc[-2] - 1) * 100 if series.iloc[-2] else None
+        week = (series.iloc[-1] / series.iloc[-6] - 1) * 100 if series.iloc[-6] else None
+        moves.append((ticker, day, week))
+
+    if not moves:
+        st.caption("No recent price history came back for the companies you follow.")
+    else:
+        moves.sort(key=lambda m: (m[1] is None, -abs(m[1] or 0)))
+        cells = []
+        for ticker, day, week in moves[:8]:
+            colour = theme.POSITIVE if (day or 0) >= 0 else theme.NEGATIVE
+            label = names.get(ticker) or ticker
+            cells.append(
+                f'<a class="bs-link" href="?company={ticker}" target="_self" '
+                f'style="display:block;padding:0.4rem 0;border-bottom:1px solid {theme.RULE};">'
+                f'<span style="font-weight:620;color:{theme.INK};">{ticker}</span>'
+                f'<span style="color:{theme.FAINT};font-size:0.78rem;margin-left:0.45rem;">'
+                f'{label[:34]}</span>'
+                f'<span style="float:right;font-variant-numeric:tabular-nums;'
+                f'color:{colour};font-weight:600;">{day:+.2f}%</span>'
+                f'<span style="float:right;font-variant-numeric:tabular-nums;'
+                f'color:{theme.FAINT};font-size:0.78rem;margin-right:1rem;">'
+                f'{"" if week is None else f"{week:+.1f}% 1w"}</span></a>'
+            )
+        st.markdown('<div class="bs-rowset">' + "".join(cells) + '</div>',
+                    unsafe_allow_html=True)
+        st.caption("Largest daily moves among the companies you follow. "
+                   "A move is what happened, not a reason — the headlines below "
+                   "may or may not explain it.")
+
+    theme.hairline()
+
+    # ── Headlines naming your companies ──────────────────────
+    theme.section("Headlines on your companies")
+
+    @st.cache_data(persist="disk", show_spinner=False)
+    def _company_news(tickers: tuple, names_tuple: tuple, bucket: int, nonce: int) -> list:
+        return news_service.for_tickers(list(tickers), per_ticker=8,
+                                        names=dict(names_tuple))
+
+    with st.spinner(""):
+        headlines = _company_news(followed, tuple(sorted(names.items())),
+                                  _news_bucket(), _nonce)
+
+    def _headline_rows(items: list, show_tickers: bool = True) -> None:
+        html = []
+        for h in items:
+            chips = ""
+            if show_tickers and h.tickers:
+                chips = "".join(
+                    f'<span style="font-size:0.66rem;font-weight:600;letter-spacing:0.04em;'
+                    f'color:{theme.BRASS};margin-right:0.4rem;">{t}</span>'
+                    for t in h.tickers[:3]
+                )
+            html.append(
+                f'<a href="{h.url}" target="_blank" rel="noopener noreferrer" '
+                f'style="display:block;padding:0.5rem 0;border-bottom:1px solid {theme.RULE};'
+                f'text-decoration:none;">'
+                f'<span style="display:block;color:{theme.INK};font-size:0.88rem;'
+                f'line-height:1.35;">{h.title}</span>'
+                f'<span style="display:block;margin-top:0.2rem;font-size:0.72rem;'
+                f'color:{theme.FAINT};">{chips}{h.publisher} · {h.age}</span></a>'
+            )
+        st.markdown('<div class="bs-rowset">' + "".join(html) + '</div>',
+                    unsafe_allow_html=True)
+
+    if not headlines:
+        st.caption(
+            "No recent headlines name the companies you follow. A story is only "
+            "listed here if the company appears in its headline — see the note at "
+            "the foot of this page."
+        )
+    else:
+        _headline_rows(headlines[:20])
+        st.caption(
+            f"{len(headlines)} recent stories name one of your {len(followed)} "
+            f"companies. Headlines are listed, never summarised or scored: a "
+            f"sentiment label on a misread story is worse than no label."
+        )
+
+    theme.hairline()
+
+    # ── Upcoming earnings ────────────────────────────────────
+    theme.section("Reporting next")
+
+    @st.cache_data(persist="disk", show_spinner=False)
+    def _earnings_dates(tickers: tuple, bucket: int, nonce: int) -> tuple:
+        """Next reporting date per company, flagged when it is an estimate.
+
+        Returns (reached_provider, rows). The flag matters: the provider rate
+        limits this endpoint, and a refusal is indistinguishable from "this
+        company has no date" unless the two are tracked apart. Saying "nothing
+        is reporting" when nothing was actually fetched is a false statement
+        about the next six weeks.
+
+        Fetched one at a time rather than through _batch_info: this endpoint
+        refuses even a handful of concurrent requests, and the batch helper
+        reports that refusal as an empty dict. A dozen sequential requests take
+        a couple of seconds and are cached for half an hour.
+        """
+        reached, out = False, []
+        for ticker in tickers:
+            try:
+                info = yf.Ticker(ticker).info or {}
+            except Exception:  # noqa: BLE001 - a refusal for one company is not fatal
+                continue
+            if not info:
+                continue
+            reached = True
+            stamp = info.get("earningsTimestampStart") or info.get("earningsTimestamp")
+            if not stamp:
+                continue
+            try:
+                when = datetime.fromtimestamp(float(stamp))
+            except (TypeError, ValueError, OSError):
+                continue
+            days = (when.date() - date.today()).days
+            if 0 <= days <= 45:
+                out.append((ticker, when, days, bool(info.get("isEarningsDateEstimate"))))
+        return reached, sorted(out, key=lambda r: r[1])
+
+    reached_provider, upcoming = _earnings_dates(followed, _news_bucket(), _nonce)
+
+    if not reached_provider:
+        st.caption(
+            "Reporting dates could not be read just now — the data provider is "
+            "rate limiting. This is not a statement that nothing is due; try the "
+            "**Refresh research** button in a few minutes."
+        )
+    elif not upcoming:
+        st.caption("No reporting dates in the next 45 days for the companies you follow.")
+    else:
+        theme.stat_grid([
+            (f"{ticker}{' (estimated)' if estimated else ''}",
+             f"{when:%a %d %b} · {'today' if days == 0 else f'in {days}d'}")
+            for ticker, when, days, estimated in upcoming
+        ])
+        st.caption(
+            "Results days are when a company's own numbers replace expectations, "
+            "and are usually its most volatile sessions. Dates marked estimated "
+            "are the provider's guess and move."
+        )
+
+    theme.hairline()
+
+    # ── Measured sensitivity ─────────────────────────────────
+    theme.section("What your companies have moved with")
+
+    @st.cache_data(persist="disk", show_spinner=False)
+    def _factor_closes(bucket: int, nonce: int):
+        try:
+            raw = yf.download(list(sensitivity_service.FACTORS), period="1y",
+                              progress=False, auto_adjust=True, threads=True)
+        except Exception:  # noqa: BLE001
+            return pd.DataFrame()
+        if raw is None or raw.empty:
+            return pd.DataFrame()
+        return raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw
+
+    factor_closes = _factor_closes(_bucket(), _nonce)
+    links = sensitivity_service.sensitivities(closes, factor_closes)
+
+    if not links:
+        st.caption("Not enough overlapping price history to measure this yet — it "
+                   "needs about six months of daily data per company.")
+    else:
+        for ticker in followed:
+            rows = links.get(ticker)
+            if not rows:
+                continue
+            measurable = [r for r in rows if r.measurable]
+            label = names.get(ticker) or ticker
+            st.markdown(
+                f"<div style='margin:0.7rem 0 0.15rem;'>"
+                f"<a class='bs-link' href='?company={ticker}' target='_self' "
+                f"style='font-weight:620;color:{theme.INK};'>{ticker}</a>"
+                f"<span style='color:{theme.FAINT};font-size:0.78rem;margin-left:0.45rem;'>"
+                f"{label[:40]}</span></div>", unsafe_allow_html=True)
+            if not measurable:
+                st.markdown(
+                    f"<div style='font-size:0.8rem;color:{theme.MUTED};'>"
+                    f"None of the market forces tracked here explain much of its daily "
+                    f"moves over the past year. Its price has been driven by something "
+                    f"else — most likely its own news.</div>", unsafe_allow_html=True)
+            else:
+                for row in measurable[:3]:
+                    st.markdown(
+                        f"<div style='font-size:0.8rem;color:{theme.MUTED};'>"
+                        f"{sensitivity_service.describe(row)}</div>",
+                        unsafe_allow_html=True)
+
+        with st.expander("How this is measured, and what it cannot tell you"):
+            st.markdown(
+                "Each company's daily returns over the past year are regressed on "
+                "each market force's daily move. The slope is how much the share "
+                "moved per unit of the force; **R²** is the share of its daily "
+                "variation that force explains.\n\n"
+                f"- A relationship explaining less than "
+                f"{sensitivity_service.MIN_R2:.0%} is reported as not measurable, "
+                f"because a slope fitted through noise still returns a number.\n"
+                f"- At least {sensitivity_service.MIN_OBSERVATIONS} overlapping days "
+                f"are required.\n"
+                "- These are associations over one window, not causes. A different "
+                "year gives different numbers, and relationships break.\n"
+                "- The forces overlap — the dollar and oil, yields and the curve — so "
+                "the sensitivities are not independent and must not be added up.\n"
+                "- None of it says what happens next."
+            )
+
+    theme.hairline()
+
+    # ── Economy and market news ──────────────────────────────
+    theme.section("Economy and market")
+
+    @st.cache_data(persist="disk", show_spinner=False)
+    def _market_news(bucket: int, nonce: int) -> list:
+        return news_service.for_queries(per_query=6)
+
+    with st.spinner(""):
+        market_stories = _market_news(_news_bucket(), _nonce)
+
+    if not market_stories:
+        st.caption("No market-wide headlines came back from the provider just now.")
+    else:
+        _headline_rows(market_stories[:12], show_tickers=False)
+        st.caption("Broad stories about the market and the economy. These are not "
+                   "attributed to any company — a story about interest rates is "
+                   "about interest rates.")
+
+    theme.hairline()
+    st.caption(
+        f"Backdrop and headlines from {PROVIDER_NAME}, refreshed at least every "
+        f"30 minutes. A company's story is listed only when its name or ticker "
+        f"appears in the headline itself; the provider's own “related tickers” "
+        f"field is too loose to trust, so some relevant stories will be missed. "
+        f"Headlines are third-party content, shown unaltered and unscored. "
+        f"Nothing on this page is financial advice or a recommendation to buy or "
+        f"sell anything."
+    )
+
+
 elif page == "Portfolio":
 
     theme.page_header(
@@ -3518,17 +3932,17 @@ elif page == "Portfolio":
         fig_c = go.Figure(go.Bar(
             x=top["Value"] / total_value * 100, y=top["Ticker"],
             orientation="h", marker_color=theme.BRASS,
-            hovertemplate="%{x:.1f}% of portfolio<extra></extra>",
+            hovertemplate="%{x:.1f}% of value<extra></extra>",
         ))
         fig_c.update_layout(**theme.chart_layout_quiet(
-            height=max(180, 28 * len(top)), xaxis_title="% of portfolio value",
+            height=max(180, 28 * len(top)), xaxis_title="Share of total value (%)",
             yaxis=dict(autorange="reversed", showgrid=False),
         ))
         st.plotly_chart(fig_c, width="stretch", config={"displayModeBar": False})
         largest = df.iloc[0]
         st.caption(
             f"Largest holding is {largest['Ticker']} at "
-            f"{largest['Value']/total_value*100:.1f}% of portfolio value."
+            f"{largest['Value']/total_value*100:.1f}% of total value."
         )
 
     theme.hairline()
