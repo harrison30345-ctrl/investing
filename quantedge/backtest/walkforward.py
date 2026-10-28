@@ -48,7 +48,8 @@ def run_walk_forward(strategy_key: str, param: str, values: List[Any], *, base_p
                      symbols: Optional[List[str]] = None, universe: Optional[str] = None,
                      train_sessions: int = TRAIN_SESSIONS, test_sessions: int = TEST_SESSIONS,
                      config: Optional[BacktestConfig] = None, provider: Optional[str] = None,
-                     source: str = "cli", notes: Optional[str] = None, holdout_start: Optional[str] = None) -> int:
+                     source: str = "cli", notes: Optional[str] = None, holdout_start: Optional[str] = None,
+                     min_warmup: int = 0) -> int:
     from .runner import _prepare, _store, _trial_stats, bias_notes
     strategy = get_strategy(strategy_key)
     if strategy.timeframe != "daily":
@@ -98,7 +99,8 @@ def run_walk_forward(strategy_key: str, param: str, values: List[Any], *, base_p
         bench_raw = repo.load_bars(pkey, bench_sym)
         benchmark = _prepare(bench_raw, bench_sym)["close"] if not bench_raw.empty else None
         all_dates = pd.DatetimeIndex(sorted(set().union(*[set(b.index) for b in bars.values()])))
-        warm = max(strategy.warmup_bars(p) for p in candidates.values())
+        # min_warmup aligns the window with train/validation runs that used the same value (as in run_experiment).
+        warm = max(max(strategy.warmup_bars(p) for p in candidates.values()), int(min_warmup))
         if holdout_start:
             # Fixed calendar holdout: walk forward over all development data before it.
             from .runner import holdout_split

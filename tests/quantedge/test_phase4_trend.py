@@ -102,3 +102,18 @@ def test_paired_sharpe_difference_interval():
     assert pt == 0 and lo == 0 and hi == 0                           # same days resampled for both
     pt, lo, hi = sharpe_diff_ci(b + 0.0005, b)
     assert pt > 0 and lo > 0
+
+
+def test_walk_forward_min_warmup_aligns_the_window(isolated_db):
+    from quantedge.backtest.walkforward import run_walk_forward
+    from quantedge.data.service import refresh_daily
+    from quantedge.db import session_scope
+    from quantedge.db.models import Experiment
+    refresh_daily(["SPY"], years=8)
+    a = run_walk_forward("trend_sma10m", "sma_months", [10], symbols=["SPY"], train_sessions=400, test_sessions=120)
+    b = run_walk_forward("trend_sma10m", "sma_months", [10], symbols=["SPY"], train_sessions=400, test_sessions=120,
+                         min_warmup=257)
+    with session_scope() as s:
+        ma, mb = s.get(Experiment, a).metrics, s.get(Experiment, b).metrics
+    assert (ma["warmup_bars"], mb["warmup_bars"]) == (230, 257)
+    assert mb["folds"][0]["in_sample"][0] > ma["folds"][0]["in_sample"][0]
