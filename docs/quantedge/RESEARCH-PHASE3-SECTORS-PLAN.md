@@ -1,6 +1,8 @@
 # QuantEdge Phase Three: pre-registered plan for sector-ETF momentum
 
-**Status: DRAFT AWAITING APPROVAL. Nothing has been run.** No sector-ETF prices have been fetched or
+**Status: APPROVED by the user on 28 Oct 2026, as written (only this status line changed after approval).**
+
+_Original status at drafting:_ **DRAFT AWAITING APPROVAL. Nothing has been run.** No sector-ETF prices have been fetched or
 inspected, and no code has been changed for this study. Once approved, the plan is frozen: any
 later deviation is reported in the results document, not edited in here.
 

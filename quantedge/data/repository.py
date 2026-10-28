@@ -78,6 +78,11 @@ def last_bar_ts(session: Session, provider: str, symbol: str, interval: str = "1
         PriceBar.provider == provider, PriceBar.symbol == symbol, PriceBar.interval == interval))
 
 
+def first_bar_ts(session: Session, provider: str, symbol: str, interval: str = "1d") -> Optional[datetime]:
+    return session.scalar(select(func.min(PriceBar.ts)).where(
+        PriceBar.provider == provider, PriceBar.symbol == symbol, PriceBar.interval == interval))
+
+
 def adj_ratio_at(session: Session, provider: str, symbol: str, ts: datetime) -> Optional[float]:
     bar = session.get(PriceBar, (provider, symbol, "1d", ts))
     if bar is None or not bar.adj_close or not bar.close:

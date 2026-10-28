@@ -3,6 +3,7 @@ QuantEdge command line.
 
     python3 -m quantedge.cli refresh --core               # indices, benchmarks, watchlist
     python3 -m quantedge.cli refresh --universe us_large  # plus a strategy universe
+    python3 -m quantedge.cli refresh --symbols SPY --since 1998-12-01  # back-fill long history
     python3 -m quantedge.cli scan                         # record signal observations
     python3 -m quantedge.cli backtest ema_pullback --universe us_large --period train
     python3 -m quantedge.cli sweep xs_momentum lookback 63,126,252 --universe us_large
@@ -28,6 +29,7 @@ import logging
 import os
 import sys
 import warnings
+from datetime import date
 from pathlib import Path
 
 
@@ -60,7 +62,8 @@ def cmd_refresh(args) -> int:
     if not syms:
         print("Nothing to refresh: pass --core, --universe or --symbols")
         return 2
-    res = refresh_daily(list(dict.fromkeys(syms)), years=args.years, trigger="cli")
+    since = date.fromisoformat(args.since) if args.since else None
+    res = refresh_daily(list(dict.fromkeys(syms)), years=args.years, trigger="cli", since=since)
     for r in res:
         flag = "" if r.quality_ok in (True, None) else "  (quality issues; see Markets page)"
         print(f"{r.symbol:10s} {r.status:10s} {r.rows:6d} rows{'  full reload' if r.full_reload else ''}{flag}"
@@ -326,12 +329,13 @@ def main(argv=None) -> int:
 
     def sym_args(p):
         p.add_argument("--core", action="store_true", help="indices, benchmarks and watchlist symbols")
-        p.add_argument("--universe", choices=["us_large", "uk_large"])
+        p.add_argument("--universe", choices=["us_large", "uk_large", "us_sectors"])
         p.add_argument("--symbols", help="comma-separated, e.g. AAPL,SHEL.L")
 
     p = sub.add_parser("refresh", help="fetch daily bars, validate, store, scan signals")
     sym_args(p)
     p.add_argument("--years", type=int, default=None)
+    p.add_argument("--since", help="back-fill from this date (YYYY-MM-DD); must precede the stored history")
     p.add_argument("--intraday", action="store_true", help="5-minute bars (default universe us_intraday)")
     p.set_defaults(fn=cmd_refresh)
 

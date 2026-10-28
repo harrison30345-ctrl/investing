@@ -63,7 +63,14 @@ def _adjustment_changed(session, provider_key: str, symbol: str, df: pd.DataFram
 
 
 def refresh_daily(symbols: Iterable[str], provider: Optional[MarketDataProvider] = None,
-                  years: Optional[int] = None, trigger: str = "manual") -> List[RefreshResult]:
+                  years: Optional[int] = None, trigger: str = "manual",
+                  since: Optional[date] = None) -> List[RefreshResult]:
+    """
+    Fetch and store daily bars. Normally incremental (from the last stored bar). `since` back-fills:
+    every symbol is fetched from that date to today and upserted, which adds older rows and rewrites
+    the stored ones at the vendor's current adjustment basis. Nothing is deleted. `since` must be on or
+    before each symbol's first stored bar, so no stored bar is left on an older adjustment basis.
+    """
     provider = provider or get_provider()
     pkey = provider.info.key
     years = years or get_settings().history_years
@@ -77,7 +84,15 @@ def refresh_daily(symbols: Iterable[str], provider: Optional[MarketDataProvider]
         s.add(job)
         s.flush()
         job_id = job.id
-        starts = {sym: _plan_start(s, pkey, sym, years) for sym in symbols}
+        if since is not None:
+            for sym in symbols:
+                first = repo.first_bar_ts(s, pkey, sym)
+                if first is not None and since > first.date():
+                    raise ValueError(f"since={since} is after {sym}'s first stored bar ({first.date()}); "
+                                     "a back-fill must cover the whole stored history")
+            starts = {sym: since for sym in symbols}
+        else:
+            starts = {sym: _plan_start(s, pkey, sym, years) for sym in symbols}
 
     # Group symbols by start date so batch-capable vendors make few requests.
     by_start: dict = {}
@@ -112,7 +127,7 @@ def refresh_daily(symbols: Iterable[str], provider: Optional[MarketDataProvider]
 
             df = clean_daily(payload)
             full = False
-            if repo.last_bar_ts(s, pkey, sym) is not None and _adjustment_changed(s, pkey, sym, df):
+            if since is None and repo.last_bar_ts(s, pkey, sym) is not None and _adjustment_changed(s, pkey, sym, df):
                 full = True
                 try:
                     df = clean_daily(provider.fetch_daily(

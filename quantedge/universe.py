@@ -5,7 +5,7 @@ Internal symbols follow Yahoo conventions (`SHEL.L` for London, `^FTSE` for
 indices) because that's the default provider. Other providers translate
 from these symbols in their adapters.
 
-These lists are *today's* large caps. Any backtest over them carries
+The equity lists are *today's* large caps. Any backtest over them carries
 survivorship bias: companies that fell out of the index or went bust are
 missing. Experiments record this caveat automatically.
 """
@@ -59,14 +59,26 @@ _UK = [
     ("GLEN.L", "Glencore"), ("VOD.L", "Vodafone"), ("AAL.L", "Anglo American"),
 ]
 
+# The nine original Select Sector SPDRs (all launched Dec 1998, none closed). XLRE (2015) and
+# XLC (2018) are left out so membership is constant over the whole history (Phase Three plan).
+_SECTORS = [
+    ("XLB", "Materials Select Sector SPDR"), ("XLE", "Energy Select Sector SPDR"),
+    ("XLF", "Financial Select Sector SPDR"), ("XLI", "Industrial Select Sector SPDR"),
+    ("XLK", "Technology Select Sector SPDR"), ("XLP", "Consumer Staples Select Sector SPDR"),
+    ("XLU", "Utilities Select Sector SPDR"), ("XLV", "Health Care Select Sector SPDR"),
+    ("XLY", "Consumer Discretionary Select Sector SPDR"),
+]
+SECTOR_ETFS = [Instrument(s, n, "US", "etf", "USD") for s, n in _SECTORS]
+
 EQUITIES = [Instrument(s, n, "US", "equity", "USD") for s, n in _US] + \
            [Instrument(s, n, "UK", "equity", "GBX") for s, n in _UK]
 
-CATALOGUE: Dict[str, Instrument] = {i.symbol: i for i in INDICES + BENCHMARKS + EQUITIES}
+CATALOGUE: Dict[str, Instrument] = {i.symbol: i for i in INDICES + BENCHMARKS + EQUITIES + SECTOR_ETFS}
 
 UNIVERSES: Dict[str, List[str]] = {
     "us_large": [s for s, _ in _US],
     "uk_large": [s for s, _ in _UK],
+    "us_sectors": [s for s, _ in _SECTORS],
     # Liquid US names for 5-minute research; Yahoo keeps ~60 days of 5-minute history.
     "us_intraday": ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "AMZN"],
 }

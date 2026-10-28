@@ -32,7 +32,8 @@ from .config import HOME_DIR
 log = logging.getLogger(__name__)
 
 SERIES = {"US": "DTB3", "UK": "IUDSOIA"}
-URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={id}&cosd=2000-01-01"
+START = "1990-01-01"   # widened from 2000 for the 1998+ sector-ETF history (Phase Three)
+URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={id}&cosd=" + START
 CACHE_DAYS = 7
 PERIODS = 252
 
@@ -42,7 +43,8 @@ def _mode() -> str:
 
 
 def _cache_path(series_id: str):
-    return HOME_DIR / "rates" / f"{series_id}.csv"
+    # The start date is in the file name, so a cache written for a shorter request is never reused.
+    return HOME_DIR / "rates" / f"{series_id}_from{START[:4]}.csv"
 
 
 def _fetch(series_id: str) -> Optional[pd.Series]:
