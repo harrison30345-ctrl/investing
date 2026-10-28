@@ -189,7 +189,9 @@ def test_walk_forward_rejects_intraday_and_bad_parameters(isolated_db):
     with pytest.raises(ValueError):
         run_walk_forward("orb", "or_minutes", [15, 30], symbols=["AAPL"])
     with pytest.raises(ValueError):
-        run_walk_forward("ema_pullback", "fast", [10], symbols=["AAPL"])
+        run_walk_forward("ema_pullback", "fast", [], symbols=["AAPL"])     # one value is a fixed rule (Phase Four)
+    with pytest.raises(ValueError):
+        run_walk_forward("ema_pullback", "no_such_param", [10, 20], symbols=["AAPL"])
 
 
 def test_identical_reruns_are_not_extra_trials(isolated_db):

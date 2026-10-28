@@ -8,10 +8,11 @@ from .intraday import OpeningRangeBreakout, VwapContinuation
 from .momentum import CrossSectionalMomentum
 from .reversal import CrossSectionalReversal
 from .trend import DonchianBreakout, EmaPullback
+from .trend_filter import SmaTrendFilter
 
 REGISTRY: Dict[str, Strategy] = {s.key: s for s in (EmaPullback(), DonchianBreakout(), CrossSectionalMomentum(),
                                                     OpeningRangeBreakout(), VwapContinuation(),
-                                                    CrossSectionalReversal())}
+                                                    CrossSectionalReversal(), SmaTrendFilter())}
 
 
 def get_strategy(key: str) -> Strategy:

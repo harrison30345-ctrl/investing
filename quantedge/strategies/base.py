@@ -102,6 +102,16 @@ class SignalStrategy(Strategy):
 
 class RebalanceStrategy(Strategy):
     rebalance_every: int = 21
+    entry_label: str = ""                       # trade reason for buys ("" → the momentum wording)
+    exit_label: str = "dropped_from_ranking"    # trade reason for sells the rule asks for
+
+    def rebalance_due(self, index: pd.DatetimeIndex, t: int, k: int, every: int) -> bool:
+        """
+        Whether to take a decision at the close of `index[t]` (k = sessions since the window started).
+        Default: every `every` sessions from the window start. A calendar schedule (e.g. month-ends)
+        may use the trading dates in `index`, which are known in advance, but never prices.
+        """
+        return k % every == 0
 
     @abstractmethod
     def target_weights(self, closes: pd.DataFrame, t: int, p: Dict[str, Any],

@@ -56,8 +56,9 @@ def run_walk_forward(strategy_key: str, param: str, values: List[Any], *, base_p
     if param not in {p.name for p in strategy.params}:
         raise ValueError(f"{strategy_key} has no parameter {param!r}")
     values = list(dict.fromkeys(values))
-    if len(values) < 2:
-        raise ValueError("Walk-forward needs at least two candidate values")
+    if not values:
+        raise ValueError("Walk-forward needs at least one candidate value")
+    fixed = len(values) == 1          # a fixed rule: nothing is chosen in-sample; folds give OOS dispersion
     base = {k: v for k, v in (base_params or {}).items() if k != param}
     candidates = {json.dumps(v): strategy.resolve({**base, param: v}) for v in values}   # validates every value
     cfg = config or default_config(strategy)
@@ -69,12 +70,16 @@ def run_walk_forward(strategy_key: str, param: str, values: List[Any], *, base_p
     market = markets.pop()
     bench_sym = MARKETS[market].benchmark
     spec = {"param": param, "values": values, "train_sessions": train_sessions, "test_sessions": test_sessions}
+    if fixed:
+        spec["fixed_rule"] = True
 
     with session_scope() as s:
         exp = Experiment(strategy_key=strategy.key, params={**strategy.resolve(base), "walk_forward": spec},
                          universe=syms, market=market, period="walkforward", used_test_set=False,
                          config=cfg.to_dict(), data_provider=pkey, benchmark=bench_sym, status="running",
                          bias_notes=bias_notes(universe, pkey, symbols=syms) + [
+                             "Walk-forward (fixed rule): nothing is chosen in-sample; results are the stitched "
+                             "out-of-sample folds, each starting and ending flat." if fixed else
                              "Walk-forward: parameters re-chosen every fold on past data only; results are the "
                              "stitched out-of-sample folds."],
                          source=source, notes=notes)

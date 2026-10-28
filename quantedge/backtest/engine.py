@@ -421,7 +421,7 @@ def run_rebalance_backtest(strategy: RebalanceStrategy, params: Dict[str, Any], 
                 if pd.isna(o):
                     continue
                 if sym not in pending:
-                    sell(sym, holdings[sym]["shares"], float(o), d, "dropped_from_ranking")
+                    sell(sym, holdings[sym]["shares"], float(o), d, strategy.exit_label)
                 else:
                     target = math.floor(pending[sym] * eq / cm.buy_price(float(o)))
                     cur = holdings[sym]["shares"]
@@ -440,12 +440,12 @@ def run_rebalance_backtest(strategy: RebalanceStrategy, params: Dict[str, Any], 
                     continue
                 qty = math.floor(min(target - cur, max(cash - cm.commission_min, 0) / (fill * (1 + fee_rate))))
                 if qty >= 1:
-                    buy(sym, qty, float(o), d, f"Top-{params.get('top_n')} momentum rank")
+                    buy(sym, qty, float(o), d, strategy.entry_label or f"Top-{params.get('top_n')} momentum rank")
             pending = None
 
         for h in holdings.values():
             h["bars_held"] += 1
-        if k % every == 0 and t >= strategy.warmup_bars(params):
+        if strategy.rebalance_due(all_dates, t, k, every) and t >= strategy.warmup_bars(params):
             pending = strategy.target_weights(closes, t, params, regime)
 
         eq = mark(t)

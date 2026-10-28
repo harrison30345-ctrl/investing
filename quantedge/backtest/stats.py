@@ -86,6 +86,28 @@ def excess_ci(daily: np.ndarray, bench_daily: np.ndarray) -> Tuple[float, float]
     return bootstrap_ci(np.asarray(daily) - np.asarray(bench_daily), _ann_mean_rows)
 
 
+def sharpe_diff_ci(daily: np.ndarray, bench_daily: np.ndarray, *, block: int = BLOCK, n_boot: int = N_BOOT,
+                   seed: int = SEED, level: float = 0.95) -> Tuple[float, float, float]:
+    """
+    (point, low, high) for Sharpe(strategy) − Sharpe(benchmark), annualised. Paired moving-block
+    bootstrap: each resample takes the same days for both series, so their correlation is kept.
+    """
+    a, b = np.asarray(daily, dtype=float), np.asarray(bench_daily, dtype=float)
+    ok = np.isfinite(a) & np.isfinite(b)
+    a, b = a[ok], b[ok]
+    if len(a) < 10:
+        return float("nan"), float("nan"), float("nan")
+    point = float(_sharpe_rows(a[None, :])[0] - _sharpe_rows(b[None, :])[0])
+    block = max(1, min(block, len(a) // 10))
+    idx = _block_indices(len(a), n_boot, block, np.random.default_rng(seed))
+    vals = _sharpe_rows(a[idx]) - _sharpe_rows(b[idx])
+    vals = vals[np.isfinite(vals)]
+    if len(vals) < n_boot // 2:
+        return point, float("nan"), float("nan")
+    q = (1 - level) / 2 * 100
+    return point, float(np.percentile(vals, q)), float(np.percentile(vals, 100 - q))
+
+
 def trade_stats(trade_returns: np.ndarray) -> Dict[str, float]:
     r = np.asarray(trade_returns, dtype=float)
     r = r[np.isfinite(r)]
@@ -146,6 +168,8 @@ def uncertainty(daily: np.ndarray, bench_daily: Optional[np.ndarray], universe_d
     out["sharpe_ci_low"], out["sharpe_ci_high"] = sharpe_ci(daily)
     if bench_daily is not None:
         out["excess_ann_ci_low"], out["excess_ann_ci_high"] = excess_ci(daily, bench_daily)
+        (out["sharpe_diff_vs_benchmark"], out["sharpe_diff_ci_low"],
+         out["sharpe_diff_ci_high"]) = sharpe_diff_ci(daily, bench_daily)
     if universe_daily is not None:
         out["excess_universe_ann_ci_low"], out["excess_universe_ann_ci_high"] = excess_ci(daily, universe_daily)
     out["psr"] = probabilistic_sharpe(daily)
