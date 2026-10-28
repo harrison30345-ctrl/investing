@@ -193,3 +193,23 @@ Fixes 4–7 add per-experiment cost curves (0×/2×/3×) and intraday cost defau
 interest from FRED rates (`rates.py`; Sharpe measured above cash), regime breakdowns
 (`backtest/regimes.py`), walk-forward analysis on train+validation only (`backtest/walkforward.py`), and
 exact stop levels for strategies (`stop_price`, used by ORB).
+
+## 12. Research hardening (Phase Four, 28 Oct 2026)
+No schema change; existing experiment records are not rewritten (re-running a stored configuration
+reproduces its numbers exactly).
+- **Universe types** (`universe.UNIVERSE_KINDS`, `universe_kind`, `BIAS_NOTES`): current stocks, ETFs or
+  point-in-time. New experiments store the matching selection-bias note. ETF universes still carry one:
+  lower fund survivorship is not no bias. Reports add the type note to runs recorded before it existed.
+- **Walk-forward cost curve** (`walkforward._cost_curve`): the stitched out-of-sample result re-run at
+  0×/2×/3× trading frictions, with each fold's choice fixed at baseline costs. Stored as `cost_x*` plus
+  `result_basis` / `cost_curve_basis`. Costs never feed signals.
+- **Calendar overrides** (`markets.CLOSURE_OVERRIDES`): exchange closures the pinned calendar library
+  misses (e.g. 9 Jan 2025), each with a source. `schedule`/`sessions` remove them (`overrides=False` gives
+  the library calendar). The validator reports them as info and makes a bar on such a day an error;
+  `runner._prepare` drops any such bar, so no price or fill can exist on a closed day.
+- **Trial accounting** (`trials.py`): the per-universe count (`metrics["trials"]`) stays the Deflated Sharpe
+  input. The project-wide count of distinct configurations and strategy families is computed from the
+  records, shown on reports and experiment pages as context, and never used as a DSR input. Counting
+  rules are in the module docstring.
+- **Monthly equal-weight baseline** (`engine.universe_monthly_curve`): a secondary, exploratory baseline
+  (`universe_monthly_*`). Verdicts and pre-registered criteria keep the buy-and-hold universe baseline.

@@ -35,6 +35,8 @@ def metrics_grid(m: dict, benchmark: str) -> None:
         ("Excess", C.fmt_pct(m.get("excess_return"), digits=1), C.tone(m.get("excess_return"))),
         ("EW universe B&H", C.fmt_pct(m.get("universe_return"), digits=1), C.tone(m.get("universe_return"))),
         ("Excess vs universe", C.fmt_pct(m.get("excess_vs_universe"), digits=1), C.tone(m.get("excess_vs_universe"))),
+        ("EW monthly (secondary)", C.fmt_pct(m.get("universe_monthly_return"), digits=1)
+         if m.get("universe_monthly_return") is not None else "n/a", ""),
         ("Sharpe", f"{m.get('sharpe') or 0:.2f}", ""),
         ("Sharpe 95% CI", f"{m['sharpe_ci_low']:.2f} – {m['sharpe_ci_high']:.2f}"
          if m.get("sharpe_ci_low") is not None else "n/a", ""),
@@ -180,6 +182,10 @@ def experiment_detail(e: pd.Series, key: str = "detail") -> None:
                         use_container_width=True, key=f"{key}_dd")
         for n in e["bias_notes"] or []:
             st.caption("⚠ " + n)
+        from quantedge.trials import project_trials_from_db
+        st.caption(f"Multiple testing: Deflated Sharpe uses {int(m.get('trials') or 1)} tries on these symbols. "
+                   f"Project-wide by #{int(e['id'])}: {project_trials_from_db(int(e['id'])).describe()} "
+                   "(context only; see quantedge/trials.py for how they are counted).")
         retest_buttons(e, key)
     tabs = [f"Trades ({int(m.get('trade_count') or 0)})", "By regime"] + \
         (["Walk-forward folds"] if m.get("folds") else []) + ["Configuration"]

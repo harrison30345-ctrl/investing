@@ -22,7 +22,7 @@ from ..db.models import EquityPoint, Experiment, Trade, utcnow
 from ..markets import MARKETS
 from ..strategies import get_strategy
 from ..strategies.indicators import adjusted_ohlc
-from ..universe import UNIVERSES
+from ..universe import BIAS_NOTES, UNIVERSES, universe_kind
 from ..universe import get as catalogue_get
 from .engine import BacktestConfig, BacktestResult, default_config, run_backtest
 from .splits import PERIODS, chronological_split
@@ -55,23 +55,28 @@ class TestSetLocked(PermissionError):
 
 
 def _prepare(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
-    """Adjusted OHLC, converted to major currency units (pence → pounds)."""
+    """Adjusted OHLC, converted to major currency units (pence → pounds). Bars on override closures are dropped."""
     out = adjusted_ohlc(df)
+    from ..markets import closure_overrides
+    closed = closure_overrides(catalogue_get(symbol).market)
+    if len(closed) and out.index.isin(closed).any():
+        log.warning("%s: dropping bars on exchange closures %s", symbol, list(out.index[out.index.isin(closed)]))
+        out = out[~out.index.isin(closed)]
     if catalogue_get(symbol).currency == "GBX":
         for c in ("open", "high", "low", "close", "adj_close"):
             out[c] = out[c] / 100.0
     return out.dropna(subset=["open", "high", "low", "close"])
 
 
-def bias_notes(universe_name: Optional[str], provider: str, intraday: bool = False) -> List[str]:
+def bias_notes(universe_name: Optional[str], provider: str, intraday: bool = False,
+               symbols: Optional[List[str]] = None) -> List[str]:
     notes = []
     if intraday:
         notes.append("Short sample: Yahoo keeps only ~60 days of 5-minute bars, so this covers a few dozen sessions "
                      "at most. Treat any result as anecdotal.")
         notes.append("Fills assume the next 5-minute bar's open plus the cost model; real slippage around the open "
                      "and on breakouts is often larger.")
-    if universe_name in UNIVERSES or universe_name is None:
-        notes.append("Survivorship bias: universe is today's large caps; delisted or demoted companies are missing.")
+    notes.append(BIAS_NOTES[universe_kind(universe_name, symbols)])
     if provider == "yahoo":
         notes.append("Yahoo data is not point-in-time; adjusted prices are revised after each dividend or split.")
     if provider == "demo":
@@ -113,7 +118,7 @@ def run_experiment(strategy_key: str, params: Optional[Dict[str, Any]] = None, *
     with session_scope() as s:
         exp = Experiment(strategy_key=strategy.key, params=p, universe=syms, market=market, period=period,
                          used_test_set=period in ("test", "full"), config=cfg.to_dict(), data_provider=pkey,
-                         benchmark=bench_sym, status="running", bias_notes=bias_notes(universe, pkey, intraday),
+                         benchmark=bench_sym, status="running", bias_notes=bias_notes(universe, pkey, intraday, syms),
                          source=source, notes=notes, batch=batch, parent_id=parent_id)
         s.add(exp)
         s.flush()

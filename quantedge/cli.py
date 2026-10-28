@@ -142,17 +142,17 @@ def cmd_report(args) -> int:
     from quantedge.db.models import Experiment
     from quantedge.reports import build_reports, report_markdown, sweep_summary
     with session_scope() as s:
-        q = s.query(Experiment)
-        if args.ids:
-            q = q.filter(Experiment.id.in_([int(i) for i in args.ids.split(",")]))
-        rows = [{c.name: getattr(e, c.name) for c in Experiment.__table__.columns} for e in q.all()]
-    rows = [r for r in rows if r["source"] != "timing"]
+        everything = [{c.name: getattr(e, c.name) for c in Experiment.__table__.columns} for e in s.query(Experiment)]
+    rows = [r for r in everything if r["source"] != "timing"]
+    if args.ids:
+        wanted = {int(i) for i in args.ids.split(",")}
+        rows = [r for r in rows if r["id"] in wanted]
     if getattr(args, "sweep", False):
         sm = sweep_summary(rows)
         if sm:
             print(f"\n{sm.finding.title}: {sm.finding.detail}")
         return 0
-    for r in build_reports(rows):
+    for r in build_reports(rows, all_experiments=everything):
         print(report_markdown(r), "\n" + "-" * 72)
     return 0
 

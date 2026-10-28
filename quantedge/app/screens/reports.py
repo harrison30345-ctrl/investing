@@ -23,11 +23,12 @@ if not exps.empty:
 if exps.empty:
     C.empty_state("Nothing to report", "Run a backtest in the Strategy Lab first.")
     st.stop()
+everything = exps.to_dict("records")          # the project-wide trial count covers every market
 if mkt:
     exps = exps[exps["market"] == mkt]
 
 records = exps.to_dict("records")
-reports = build_reports(records)
+reports = build_reports(records, all_experiments=everything)
 
 f1, f2 = st.columns([2, 1.2])
 with f1:

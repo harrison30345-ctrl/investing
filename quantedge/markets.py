@@ -5,6 +5,12 @@ Calendars come from `pandas_market_calendars`, which knows each exchange's
 holidays and early closes (e.g. the LSE's 12:30 close on Christmas Eve).
 Every "is the market open?" answer in the app comes from here, never from
 a hard-coded 9-to-5 assumption.
+
+Closure overrides (Phase Four): the pinned calendar library (4.4.2, the last version that runs on
+Python 3.9) misses some exceptional closures announced after it was released. CLOSURE_OVERRIDES
+lists them explicitly, with a source, and `schedule()`/`sessions()` remove them. The library's own
+calendar is unchanged and still available with `overrides=False`. Overrides only remove sessions:
+nothing here can add a trading day or a price.
 """
 from __future__ import annotations
 
@@ -35,19 +41,43 @@ MARKETS = {
 }
 
 
+# market → {date: reason}. Add an entry only for a closure the exchange actually announced.
+CLOSURE_OVERRIDES = {
+    "US": {
+        "2025-01-09": "NYSE and Nasdaq closed for the national day of mourning for President Jimmy Carter "
+                      "(NYSE notice, 30 Dec 2024)",
+    },
+    "UK": {},
+}
+
+
+def closure_overrides(market: str, start=None, end=None) -> pd.DatetimeIndex:
+    """Override closures for a market, optionally limited to [start, end]."""
+    days = pd.DatetimeIndex(sorted(pd.Timestamp(d) for d in CLOSURE_OVERRIDES.get(market, {})))
+    if start is not None:
+        days = days[days >= pd.Timestamp(start)]
+    if end is not None:
+        days = days[days <= pd.Timestamp(end)]
+    return days
+
+
 @lru_cache(maxsize=4)
 def _calendar(name: str):
     return mcal.get_calendar(name)
 
 
-def schedule(market: str, start, end) -> pd.DataFrame:
-    """Sessions (market_open, market_close in UTC) between two dates inclusive."""
-    return _calendar(MARKETS[market].calendar).schedule(start_date=start, end_date=end)
+def schedule(market: str, start, end, overrides: bool = True) -> pd.DataFrame:
+    """Sessions (market_open, market_close in UTC) between two dates inclusive, minus override closures."""
+    sched = _calendar(MARKETS[market].calendar).schedule(start_date=start, end_date=end)
+    if overrides:
+        closed = closure_overrides(market)
+        sched = sched[~pd.DatetimeIndex(sched.index).normalize().tz_localize(None).isin(closed)]
+    return sched
 
 
-def sessions(market: str, start, end) -> pd.DatetimeIndex:
+def sessions(market: str, start, end, overrides: bool = True) -> pd.DatetimeIndex:
     """Trading dates (naive, midnight) between start and end inclusive."""
-    sched = schedule(market, start, end)
+    sched = schedule(market, start, end, overrides)
     return pd.DatetimeIndex(sched.index).normalize().tz_localize(None)
 
 

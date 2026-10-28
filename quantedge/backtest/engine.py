@@ -30,6 +30,7 @@ import math
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 import pandas as pd
 
 from ..strategies.base import RebalanceStrategy, SignalStrategy
@@ -73,6 +74,7 @@ class BacktestResult:
     total_costs: float
     traded_notional: float
     universe: Optional[pd.Series] = None
+    universe_monthly: Optional[pd.Series] = None
 
 
 TRADE_COLUMNS = ["symbol", "entry_ts", "entry_price", "exit_ts", "exit_price", "shares", "costs",
@@ -130,6 +132,45 @@ def universe_curve(bars: Dict[str, pd.DataFrame], index: pd.DatetimeIndex, cfg: 
     return total.rename("universe")
 
 
+def universe_monthly_curve(bars: Dict[str, pd.DataFrame], index: pd.DatetimeIndex, cfg: "BacktestConfig",
+                           market: str) -> Optional[pd.Series]:
+    """
+    Secondary, exploratory baseline (Phase Four): the same symbols equally weighted, rebalanced back to
+    equal weights at the first close of each calendar month. Bought at the first close of the window
+    with the same costs as `universe_curve`; each rebalance pays spread, slippage and commission on the
+    value traded (and UK stamp duty on purchases); the final value is sold at the bid like the strategy.
+
+    It is reported next to the buy-and-hold baseline, never instead of it: pass/fail criteria that name
+    "the equal-weight universe" mean `universe_curve`.
+    """
+    if not bars or len(index) < 2:
+        return None
+    closes = pd.DataFrame({s: b["close"].dropna().reindex(index).ffill() for s, b in bars.items()})
+    closes = closes.loc[:, closes.iloc[0].notna()]
+    if closes.empty:
+        return None
+    cm = cfg.costs
+    side = (cm.spread_bps / 2 + cm.slippage_bps + cm.commission_bps) / 1e4
+    stamp = cm.uk_stamp_duty_bps / 1e4 if market == "UK" else 0.0
+    n = closes.shape[1]
+    first = closes.iloc[0].values
+    shares = (cfg.initial_capital / n) / (first * (1 + side + stamp))
+    month = pd.DatetimeIndex(index).to_period("M")
+    values = []
+    for i in range(len(index)):
+        px = closes.iloc[i].values
+        if i > 0 and month[i] != month[i - 1]:
+            value = float((shares * px).sum())
+            target = value / n
+            buys = np.clip(target - shares * px, 0, None).sum()
+            sells = np.clip(shares * px - target, 0, None).sum()
+            value -= sells * side + buys * (side + stamp)
+            shares = (value / n) / px
+        values.append(float((shares * px).sum()))
+    values[-1] *= (1 - (cm.spread_bps / 2 + cm.slippage_bps) / 1e4)
+    return pd.Series(values, index=index, name="universe_monthly")
+
+
 def _cash_series(cash_rates: Optional[pd.Series], cfg: "BacktestConfig") -> Optional[pd.Series]:
     return cash_rates if (cash_rates is not None and getattr(cfg, "cash_interest", True)) else None
 
@@ -163,7 +204,8 @@ def _daily_rf(cash_rates: Optional[pd.Series], index: pd.DatetimeIndex) -> Optio
 
 def _finish(equity, exposure, trades, benchmark, dates, cfg, costs, notional, universe=None,
             skipped_capacity: int = 0, cash_rates: Optional[pd.Series] = None, interest: float = 0.0,
-            regime_benchmark: Optional[pd.Series] = None) -> BacktestResult:
+            regime_benchmark: Optional[pd.Series] = None,
+            universe_monthly: Optional[pd.Series] = None) -> BacktestResult:
     from . import stats as S
     eq = pd.Series(equity, index=dates[: len(equity)], name="equity")
     ex = pd.Series(exposure, index=eq.index, name="exposure")
@@ -183,6 +225,13 @@ def _finish(equity, exposure, trades, benchmark, dates, cfg, costs, notional, un
         mets["universe_sharpe"] = M.sharpe(uni.pct_change(), rf)
         mets["universe_max_drawdown"] = M.max_drawdown(uni)
         mets["excess_vs_universe"] = mets["net_return"] - mets["universe_return"]
+    um = universe_monthly.reindex(eq.index).ffill() if universe_monthly is not None else None
+    if um is not None and um.dropna().size > 1:
+        # Secondary baseline: reported only; no verdict or criterion uses it.
+        mets["universe_monthly_return"] = float(um.iloc[-1] / um.iloc[0] - 1)
+        mets["universe_monthly_sharpe"] = M.sharpe(um.pct_change(), rf)
+        mets["universe_monthly_max_drawdown"] = M.max_drawdown(um)
+        mets["excess_vs_universe_monthly"] = mets["net_return"] - mets["universe_monthly_return"]
     rf_v = rf.values[1:] if rf is not None else 0.0
     daily = eq.pct_change().fillna(0.0).values[1:]
     bdaily = bm.reindex(eq.index).ffill().pct_change().fillna(0.0).values[1:] if bm is not None else None
@@ -194,7 +243,7 @@ def _finish(equity, exposure, trades, benchmark, dates, cfg, costs, notional, un
     mets["entries_skipped_capacity"] = float(skipped_capacity)
     from .regimes import regime_breakdown
     mets.update(regime_breakdown(eq, regime_benchmark, rf))
-    return BacktestResult(eq, ex, tr, bm, mets, costs, notional, uni)
+    return BacktestResult(eq, ex, tr, bm, mets, costs, notional, uni, um)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -276,7 +325,8 @@ def run_signal_backtest(strategy: SignalStrategy, params: Dict[str, Any], bars: 
     idx = dates[: len(equity_curve)]
     return _finish(equity_curve, exposure_curve, pf.trades, benchmark, dates, cfg, pf.total_costs,
                    pf.notional_traded, universe_curve(bars, idx, cfg, market), pf.skipped_capacity,
-                   _cash_series(cash_rates, cfg), pf.interest_earned, benchmark)
+                   _cash_series(cash_rates, cfg), pf.interest_earned, benchmark,
+                   universe_monthly_curve(bars, idx, cfg, market))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -411,7 +461,8 @@ def run_rebalance_backtest(strategy: RebalanceStrategy, params: Dict[str, Any], 
 
     return _finish(equity_curve, exposure_curve, trades, benchmark, dates, cfg, total_costs, notional_traded,
                    universe_curve(bars, dates[: len(equity_curve)], cfg, market), 0,
-                   _cash_series(cash_rates, cfg), interest_earned, benchmark)
+                   _cash_series(cash_rates, cfg), interest_earned, benchmark,
+                   universe_monthly_curve(bars, dates[: len(equity_curve)], cfg, market))
 
 
 def run_backtest(strategy, params, bars, market, config=None, start=None, end=None, benchmark=None,

@@ -53,6 +53,7 @@ class StrategyReport:
     failed_runs: int = 0
     test_runs: int = 0
     last_run: Optional[pd.Timestamp] = None
+    universe_kind: str = ""
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -120,6 +121,11 @@ def _period_findings(e: dict, label: str) -> List[Finding]:
         f.append(Finding("good" if clo > 0 else "caution", f"Excess return over {sb['label']}",
                          f"95% interval {pct(clo)} to {pct(chi)} a year."
                          + (" Entirely above zero." if clo > 0 else " Includes zero: not a demonstrated edge.")))
+    um, ex_um = _m(e, "universe_monthly_return"), _m(e, "excess_vs_universe_monthly")
+    if um is not None:
+        f.append(Finding("info", "Secondary baseline (exploratory)",
+                         f"{pct(net)} vs {pct(um)} for the same symbols equally weighted and rebalanced monthly "
+                         f"({pct(ex_um)} difference). Reported for context; verdicts use buy-and-hold."))
     dsr, trials = _m(e, "deflated_sharpe"), _m(e, "trials")
     if dsr is not None:
         f.append(Finding("info" if dsr >= DSR_THRESHOLD else "caution", "Multiple-testing haircut",
@@ -136,7 +142,8 @@ def _period_findings(e: dict, label: str) -> List[Finding]:
     if x2 is not None and x1 is not None:
         be = _m(e, "cost_breakeven_multiple")
         fragile = x2 <= 0 < x1 or (x1 > 0 and x2 < 0.5 * x1)
-        f.append(Finding("caution" if fragile else "info", "Cost sensitivity",
+        basis = " (stitched out-of-sample folds)" if (e.get("metrics") or {}).get("result_basis") else ""
+        f.append(Finding("caution" if fragile else "info", "Cost sensitivity" + basis,
                          f"Net return {pct(_m(e, 'cost_x0_net_return'))} with no trading costs, {pct(x1)} as tested, "
                          f"{pct(x2)} at 2× and {pct(x3)} at 3×."
                          + (f" Breaks even at about {be:.1f}× the assumed costs." if be is not None else "")
@@ -269,8 +276,14 @@ def _summary(name: str, uni: str, e: dict, label: str) -> str:
 
 # ── public API ──────────────────────────────────────────────────────────────
 
-def build_reports(experiments: List[dict]) -> List[StrategyReport]:
-    """One report per strategy configuration, newest activity first."""
+def build_reports(experiments: List[dict], all_experiments: Optional[List[dict]] = None) -> List[StrategyReport]:
+    """
+    One report per strategy configuration, newest activity first. `all_experiments` (default: the same
+    list) is what the project-wide trial count is taken over; pass every record when `experiments` is filtered.
+    """
+    from .trials import project_trials
+    from .universe import BIAS_NOTES, universe_kind
+    everything = all_experiments if all_experiments is not None else experiments
     groups: Dict[str, List[dict]] = {}
     for e in experiments:
         groups.setdefault(config_key(e), []).append(e)
@@ -309,13 +322,22 @@ def build_reports(experiments: List[dict]) -> List[StrategyReport]:
             findings.append(Finding("caution", "Test set used repeatedly",
                                     f"The untouched period has been run {test_runs} times. Every look makes it less "
                                     "untouched."))
-        caveats = list(dict.fromkeys(n for r in done for n in (r.get("bias_notes") or [])))
+        kind = universe_kind(None, head["universe"])
+        if any("id" in r for r in everything):
+            pt = project_trials(everything, upto_id=max(r["id"] for r in runs))
+            per = int(_m(primary, "trials") or 1) if primary else 1
+            findings.append(Finding("info", "Project-wide search (context, not a DSR input)",
+                                    f"By experiment #{max(r['id'] for r in runs)} the project had examined "
+                                    f"{pt.describe()}. The Deflated Sharpe uses {per} "
+                                    f"tr{'y' if per == 1 else 'ies'} on these symbols only."))
+        # Stored notes are kept as recorded; the universe-type note is added if a run predates it.
+        caveats = list(dict.fromkeys([n for r in done for n in (r.get("bias_notes") or [])] + [BIAS_NOTES[kind]]))
         reports.append(StrategyReport(
             key=key, strategy_key=head["strategy_key"], strategy_name=name, market=head["market"],
             universe_label=uni, params=head["params"], periods=periods, verdict=verdict, verdict_level=level,
             summary=_summary(name, uni, primary, primary_label) if primary else "No completed runs yet.",
             findings=findings, caveats=caveats, experiment_ids=[r["id"] for r in runs],
-            failed_runs=sum(1 for r in runs if r["status"] == "failed"), test_runs=test_runs,
+            failed_runs=sum(1 for r in runs if r["status"] == "failed"), test_runs=test_runs, universe_kind=kind,
             last_run=pd.Timestamp(head["created_at"]) if head.get("created_at") is not None else None))
     reports.sort(key=lambda r: max(r.experiment_ids), reverse=True)
     return reports
@@ -408,7 +430,8 @@ def compare_rows(experiments: List[dict]) -> pd.DataFrame:
 def report_markdown(r: StrategyReport) -> str:
     icon = {"good": "✓", "info": "·", "caution": "!", "warning": "✗"}
     lines = [f"# {r.strategy_name}: {r.universe_label} ({r.market})", "",
-             f"**Verdict:** {r.verdict}", "", r.summary, "", "## Periods", "",
+             f"**Verdict:** {r.verdict}", "", f"**Universe type:** {r.universe_kind.replace('_', ' ')}", "",
+             r.summary, "", "## Periods", "",
              "| Period | Window | Net | Benchmark | Sharpe | Max DD | Trades |", "|---|---|---|---|---|---|---|"]
     for p in PERIOD_ORDER:
         e = r.periods.get(p)

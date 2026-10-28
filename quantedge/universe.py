@@ -83,6 +83,36 @@ UNIVERSES: Dict[str, List[str]] = {
     "us_intraday": ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "AMZN"],
 }
 
+# What kind of list each universe is, which decides its selection-bias caveat (Phase Four):
+#   "current_stocks" — companies chosen from today's index: delisted or demoted names are missing.
+#   "etf"            — exchange-traded funds chosen today (less survivorship, not none).
+#   "point_in_time"  — historical membership as of each date (no universe here is this yet).
+UNIVERSE_KINDS: Dict[str, str] = {
+    "us_large": "current_stocks", "uk_large": "current_stocks", "us_intraday": "current_stocks",
+    "us_sectors": "etf",
+}
+
+BIAS_NOTES: Dict[str, str] = {
+    "current_stocks": "Survivorship bias: universe is today's large caps; delisted or demoted companies are missing.",
+    "etf": "Selection bias (ETF universe): the funds were chosen today. Fund-level survivorship is lower than for "
+           "a list of today's companies, but not zero: funds that closed or launched later are absent, the list "
+           "was picked knowing these funds still exist, and each fund's holdings change over time (index "
+           "reclassifications, rebalancing).",
+    "point_in_time": "Point-in-time universe: membership as of each date. Remaining bias comes from vendor "
+                     "errors and how delisting returns are treated.",
+}
+
+
+def universe_kind(name: Optional[str] = None, symbols: Optional[List[str]] = None) -> str:
+    """Kind of a named universe, or inferred from symbols: all ETFs → "etf", otherwise current stocks."""
+    if name in UNIVERSE_KINDS:
+        return UNIVERSE_KINDS[name]
+    syms = list(symbols or UNIVERSES.get(name or "", []))
+    if syms and all(get(s).kind == "etf" for s in syms):
+        return "etf"
+    return "current_stocks"
+
+
 DEFAULT_WATCHLIST = ["AAPL", "MSFT", "NVDA", "JPM", "SHEL.L", "AZN.L", "HSBA.L", "RR.L"]
 
 

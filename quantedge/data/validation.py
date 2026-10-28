@@ -18,7 +18,7 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 
-from ..markets import sessions
+from ..markets import CLOSURE_OVERRIDES, closure_overrides, sessions
 
 JUMP_THRESHOLD = 0.40     # >40% one-day move: possible unadjusted split or bad tick
 
@@ -89,11 +89,23 @@ def validate_daily(df: pd.DataFrame, symbol: str, market: str, *, is_index: bool
                             "High/low don't bracket open/close", len(bad_hl), _ex(bad_hl)))
 
     expected = sessions(market, idx[0].date(), idx[-1].date())
+    closed = closure_overrides(market, idx[0], idx[-1])
+    if len(closed):
+        on_closed = idx.intersection(closed)
+        if len(on_closed):
+            # A bar on a day the exchange was shut can't be a real price.
+            issues.append(Issue("bar_on_override_closure", "error",
+                                "Bars on days listed as exchange closures (markets.CLOSURE_OVERRIDES)",
+                                len(on_closed), _ex(on_closed)))
+        issues.append(Issue("closure_overrides", "info",
+                            "Treated as closed by explicit override: "
+                            + "; ".join(f"{d:%Y-%m-%d}: {CLOSURE_OVERRIDES[market][f'{d:%Y-%m-%d}']}" for d in closed),
+                            len(closed), _ex(closed)))
     missing = expected.difference(idx)
     if len(missing):
         sev = "error" if len(missing) > max(5, 0.02 * len(expected)) else "warning"
         issues.append(Issue("missing_sessions", sev, "Exchange sessions with no bar", len(missing), _ex(missing)))
-    extra = idx.difference(expected)
+    extra = idx.difference(expected).difference(closed)
     if len(extra):
         issues.append(Issue("non_session_bars", "warning",
                             "Bars on days the exchange calendar marks closed", len(extra), _ex(extra)))

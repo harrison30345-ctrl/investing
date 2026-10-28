@@ -16,6 +16,9 @@ so the stitched result never benefits from hindsight about which value worked be
   * Every candidate's in-sample score is stored in the experiment's `folds`, so the full
     search is on the record, not just the winners.
   * Daily strategies only. ~60 days of intraday history can't support it.
+  * Cost curve (Phase Four): the stitched out-of-sample result is re-run with trading frictions at
+    0×, 2× and 3×. Each fold keeps the value chosen at baseline costs, so the curve shows what costs
+    do to the traded path. Signals never see costs, so the trades' timing is the same at every level.
 """
 from __future__ import annotations
 
@@ -71,7 +74,7 @@ def run_walk_forward(strategy_key: str, param: str, values: List[Any], *, base_p
         exp = Experiment(strategy_key=strategy.key, params={**strategy.resolve(base), "walk_forward": spec},
                          universe=syms, market=market, period="walkforward", used_test_set=False,
                          config=cfg.to_dict(), data_provider=pkey, benchmark=bench_sym, status="running",
-                         bias_notes=bias_notes(universe, pkey) + [
+                         bias_notes=bias_notes(universe, pkey, symbols=syms) + [
                              "Walk-forward: parameters re-chosen every fold on past data only; results are the "
                              "stitched out-of-sample folds."],
                          source=source, notes=notes)
@@ -106,7 +109,7 @@ def run_walk_forward(strategy_key: str, param: str, values: List[Any], *, base_p
         cash_rates, cash_source = (annual_rates(market, all_dates) if cfg.cash_interest
                                    else (None, "none (cash interest off)"))
 
-        folds, pieces = [], []
+        folds, pieces, chosen = [], [], []
         for ins, oos in windows:
             scores = {}
             for key, p in candidates.items():
@@ -115,6 +118,7 @@ def run_walk_forward(strategy_key: str, param: str, values: List[Any], *, base_p
             best = max(scores, key=lambda k: scores[k])           # ties: the first value listed
             r = run_backtest(strategy, candidates[best], bars, market, cfg, oos[0], oos[1], benchmark, cash_rates)
             pieces.append(r)
+            chosen.append((candidates[best], oos))
             folds.append({"in_sample": [f"{ins[0]:%Y-%m-%d}", f"{ins[1]:%Y-%m-%d}"],
                           "out_of_sample": [f"{oos[0]:%Y-%m-%d}", f"{oos[1]:%Y-%m-%d}"],
                           "chosen": json.loads(best), "in_sample_sharpe": {k: round(v, 4) for k, v in scores.items()},
@@ -123,6 +127,8 @@ def run_walk_forward(strategy_key: str, param: str, values: List[Any], *, base_p
                           "oos_universe_return": r.metrics.get("universe_return")})
 
         result = _stitch(pieces, cfg, cash_rates, benchmark)
+        result.metrics["result_basis"] = "stitched out-of-sample folds"
+        result.metrics.update(_cost_curve(strategy, chosen, bars, market, cfg, cash_rates, benchmark, result))
         result.metrics["folds"] = folds
         result.metrics["cash_rate_source"] = cash_source
         result.metrics["walkforward_values_chosen"] = [f["chosen"] for f in folds]
@@ -142,6 +148,31 @@ def run_walk_forward(strategy_key: str, param: str, values: List[Any], *, base_p
             e.status, e.finished_at = "failed", utcnow()
             e.error = f"{exc}\n\n{traceback.format_exc(limit=4)}"
         raise
+
+
+def _cost_curve(strategy, chosen, bars, market, cfg: BacktestConfig, cash_rates, benchmark,
+                result) -> Dict[str, Any]:
+    """Stitched out-of-sample net return, Sharpe and drawdown at 0×, 2× and 3× trading frictions."""
+    from dataclasses import replace
+    from .runner import COST_MULTIPLES
+    out: Dict[str, Any] = {"cost_curve_basis": "stitched out-of-sample folds; fold choices fixed at baseline costs"}
+    pts = {1.0: float(result.metrics["net_return"])}
+    for k in COST_MULTIPLES:
+        c = replace(cfg, costs=cfg.costs.scaled(k))
+        alt = _stitch([run_backtest(strategy, p, bars, market, c, oos[0], oos[1], benchmark, cash_rates)
+                       for p, oos in chosen], c, cash_rates, benchmark)
+        tag = f"x{int(k)}"
+        out[f"cost_{tag}_net_return"] = float(alt.metrics["net_return"])
+        out[f"cost_{tag}_sharpe"] = float(alt.metrics.get("sharpe") or 0.0)
+        out[f"cost_{tag}_max_drawdown"] = float(alt.metrics["max_drawdown"])
+        out[f"cost_{tag}_trade_count"] = float(alt.metrics.get("trade_count") or 0)
+        pts[k] = out[f"cost_{tag}_net_return"]
+    xs = sorted(pts)
+    for a, b in zip(xs, xs[1:]):
+        if pts[a] > 0 >= pts[b]:
+            out["cost_breakeven_multiple"] = float(a + (b - a) * pts[a] / (pts[a] - pts[b]))
+            break
+    return out
 
 
 def _chain(series_list: List[pd.Series], start_value: float) -> pd.Series:
@@ -166,8 +197,10 @@ def _stitch(pieces, cfg: BacktestConfig, cash_rates, benchmark):
     trades = pd.concat([p.trades for p in pieces], ignore_index=True)
     bm = _chain([p.benchmark for p in pieces], cfg.initial_capital) if all(p.benchmark is not None for p in pieces) else None
     uni = _chain([p.universe for p in pieces], cfg.initial_capital) if all(p.universe is not None for p in pieces) else None
+    um = (_chain([p.universe_monthly for p in pieces], cfg.initial_capital)
+          if all(p.universe_monthly is not None for p in pieces) else None)
     interest = sum((p.metrics.get("interest_earned_pct") or 0.0) * cfg.initial_capital for p in pieces)
     return _finish(list(eq.values), list(ex.reindex(eq.index).fillna(0.0).values), trades.to_dict("records"),
                    bm, eq.index, cfg, sum(p.total_costs for p in pieces), sum(p.traded_notional for p in pieces),
                    uni, int(sum(p.metrics.get("entries_skipped_capacity") or 0 for p in pieces)),
-                   cash_rates, interest, benchmark)
+                   cash_rates, interest, benchmark, um)
