@@ -1,0 +1,36 @@
+# Copy to theses/<TICKER>.yaml (files starting with "_" are ignored).
+# Easiest route: ask Claude "write a thesis for <TICKER>" — the equity-research
+# plugin fills this in. Then run:  python3 -m screener.cli -c longterm --theses
+#
+# Metric names for checks are the screener's own, e.g. pe_trailing, pe_forward,
+# roe, roic, operating_margin, net_margin, debt_to_equity, revenue_growth_1y,
+# eps_growth_1y, fcf_yield, fcf_margin, composite_score, fcf_positive_3y.
+
+ticker: TICKER
+name: Company name
+position: long            # long | short | watch
+created: 2026-01-01
+conviction: medium        # high | medium | low
+target_price:             # what it's worth if the thesis plays out
+thesis: >
+  One or two sentences: what you believe, and why the market is wrong.
+
+pillars:                  # 3-5 things that must stay true
+  - text: Revenue keeps growing double digits
+    check: {metric: revenue_growth_1y, min: 10}
+  - text: Margins hold
+    check: {metric: operating_margin, min: 20}
+  - text: A pillar with no number (checked by hand at review)
+
+risks:                    # 3-5 things that would break it
+  - Example risk
+
+exit_triggers:            # if a check fails, the trigger fires: re-read and consider exiting
+  - text: Stays sensibly valued
+    check: {metric: pe_forward, max: 35}
+
+catalysts:                # add outcome: "..." once it has happened
+  - {date: 2026-01-01, event: Next earnings, impact: high}
+
+log:                      # newest last; each entry counts as a review
+  - {date: 2026-01-01, data_point: Thesis created, impact: neutral, action: no change, conviction: medium}

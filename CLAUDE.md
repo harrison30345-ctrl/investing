@@ -65,6 +65,27 @@ Built-in configs are in `screener/configs/`. The user can ask to adjust threshol
 - `screener/dashboard.py` — Streamlit web dashboard
 
 
+## Investment theses (`theses/`) and the equity-research / TradingCalc plugins
+
+Each stock the user holds or watches can have a thesis file, `theses/<TICKER>.yaml`
+(shape in `theses/_TEMPLATE.yaml`, logic in `screener/theses.py`, tests in `tests/test_theses.py`).
+`python3 -m screener.cli -c longterm --theses` screens every thesis ticker (plus any `-t`/`-u`)
+and prints a THESIS CHECK: pillars holding/broken, exit triggers fired, catalysts in the next
+30 days, catalysts that passed without a logged outcome, and theses not reviewed in 90+ days.
+
+- "Write a thesis for X" → use the equity-research **thesis-tracker** skill, then save it as
+  `theses/X.yaml`. Turn every pillar and exit trigger you can into a `check` on a real screener
+  metric name; leave judgement-only pillars without a check. Ask the user for their position
+  and conviction rather than inventing them.
+- "Update my thesis" / after earnings → append a `log` entry (date, data_point, impact,
+  action, conviction) and set `outcome` on catalysts that have happened. Never delete old entries.
+- Catalyst dates → equity-research **catalyst-calendar** skill; write them into `catalysts`.
+- New ideas → run the screener first, then the **idea-generation** skill on its top results.
+- Earnings → **earnings-analysis**; then update the affected thesis.
+- Position size, risk/reward, Sharpe, VaR, Kelly → **TradingCalc** tools; never estimate those numbers.
+- After writing or editing any thesis, run `--theses` and show the user the check.
+- This is research, not advice: keep the user's own view as the thesis, and include disconfirming evidence.
+
 ---
 
 # QuantEdge (research + paper-trading platform, `quantedge/`)
