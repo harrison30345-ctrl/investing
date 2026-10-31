@@ -75,10 +75,17 @@ Separate from the screener above. Launch guide: `docs/quantedge/README.md`; desi
 - Run: `python3 -m quantedge.cli dashboard` (port 8503, launch config "quantedge"),
   `python3 -m quantedge.worker`, `python3 -m quantedge.cli --help` for everything else.
 - Tests: `python3 -m pytest tests -q` (includes headless page renders; ~3 minutes).
-- Safety rules to keep: no real-money execution or broker code; `QE_TRADING_MODE` only research/paper;
-  never substitute demo data for real data; the backtester is the only source of numbers; paper
-  accounts need a validated run and a human approver; agents can't approve or create anything;
-  every experiment (including failures) is recorded.
+- Safety rules to keep (decisions D1–D8, `docs/quantedge/DECISIONS.md`, 31 Oct 2026): broker adapters are
+  allowed but connect to **paper endpoints only**; no live order submission, no live credentials, no live
+  code path until a formal readiness review that the user approves; `QE_TRADING_MODE` only
+  research/paper (later `broker_paper`, never `live`); research code (`backtest/`, `strategies/`, specs)
+  never imports execution code; agents work only through the strategy spec language, can't modify
+  execution/backtest code, bypass risk controls, run commands, approve or create anything; respect the
+  monthly budgets (AI £30, data £20, hosting £10, misc £5) and don't enable a paid service without the
+  user's OK; scope is US and UK equities, daily and intraday kept separate; never substitute demo data for
+  real data; the backtester is the only source of numbers; paper accounts need a validated run and a human
+  approver; every experiment (including failures) is recorded. `trading/` (Trading Arena) is a separate,
+  unversioned app: audit in `docs/quantedge/TRADING-DIR-AUDIT.md`; don't change it without the user's OK.
 - Dashboard pages live in `quantedge/app/screens/` (not `pages/`, which Streamlit auto-discovers).
   Streamlit doesn't hot-reload non-page modules: restart the server after editing `quantedge/ui` etc.
 - Local Python is 3.9: keep code 3.9-compatible (`from __future__ import annotations`, `Optional[...]`).

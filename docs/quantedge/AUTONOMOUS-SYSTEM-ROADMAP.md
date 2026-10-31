@@ -410,3 +410,18 @@ New package layout inside `quantedge/` (existing modules unchanged unless listed
 
 **Phase 10: live-readiness review**
 - `docs/quantedge/LIVE-READINESS-REVIEW.md` only. Live code paths are written after that review is approved.
+
+## Addendum — 31 Oct 2026: decisions applied
+Decisions D1–D8 are recorded in [DECISIONS.md](DECISIONS.md); the `trading/` audit is in
+[TRADING-DIR-AUDIT.md](TRADING-DIR-AUDIT.md). Changes to the plan above:
+- **Phase 0b (new, S): spend controls.**
+  - AI: GBP limit (£30) on the existing pre-call hard cap, plus alerts at 50/80/100%.
+  - Data/hosting/misc: a `cost_ledger` table, a refusal hook for paid clients, and health checks.
+  - Needs Alembic, which is pending approval.
+- **Phase 6:** US paper on Alpaca (free plan: IEX real-time data). UK paper on the internal `SimBroker`,
+  because UK equities on Alpaca are unconfirmed. IBKR is next behind the same interface. The Alpaca port
+  fixes the five defects listed in the audit.
+- **Phase 2 spec language:** one timeframe per strategy (daily or intraday), never mixed. US/UK equities only.
+- **Phase 4 agents:** spec-only tools. No shell, no file writes, no code changes. Spec versions are hashed and stored.
+- **Phase 9:** a VM that fits £10/month. AI runs on schedules and events only, never continuously.
+- **Live:** unchanged. Nothing before the Phase 10 review.
