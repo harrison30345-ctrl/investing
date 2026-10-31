@@ -346,6 +346,177 @@ def _label_for(ticker: str, directory: dict) -> str:
     return f"{ticker} — {name}" if name else ticker
 
 
+# ── Research data, shared by the home screen and the Research page ──
+#
+# These live at module level so both pages hit the same caches: the home screen
+# and the Research page ask for the same backdrop, headlines and prices, and
+# fetching them twice would double the wait for no benefit.
+
+NEWS_TTL = 1800          # headlines go stale in minutes, not hours
+MAX_FOLLOWED = 14        # each company costs an HTTP request
+
+
+def _news_bucket() -> int:
+    """Time bucket for anything that should refresh every half hour."""
+    return int(time.time() // NEWS_TTL)
+
+
+def _research_nonce() -> int:
+    """Bumped by the Refresh button, and part of every cache key below.
+
+    Without it the button would increment a counter no cache reads, and refresh
+    nothing.
+    """
+    return st.session_state.get("_research_nonce", 0)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _holding_symbols(nonce: int) -> list:
+    """Tickers held at Trading 212, if an account is linked.
+
+    Cached for five minutes: Trading 212 allows roughly one account request
+    every five seconds, and these pages would otherwise hit it on every rerun.
+    A failure returns nothing rather than raising -- an unreachable broker
+    should cost this section, not the page.
+    """
+    creds = load_credentials() or st.session_state.get("_t212")
+    if creds is None:
+        return []
+    try:
+        return [p.symbol for p in Trading212(creds).positions() if p.quantity]
+    except T212Error:
+        return []
+
+
+def _followed() -> tuple:
+    """Companies this user follows: holdings, then watchlist, then recent.
+
+    Holdings lead because news about something owned matters more than news
+    about something browsed once.
+    """
+    ordered, seen = [], set()
+
+    def add(ticker) -> None:
+        t = str(ticker or "").strip().upper()
+        if t and t not in seen:
+            seen.add(t)
+            ordered.append(t)
+
+    for symbol in _holding_symbols(_research_nonce()):
+        add(symbol)
+    try:
+        wl = _watchlist()
+        for entry in wl.all():
+            add(entry.ticker)
+        for entry in wl.recent(limit=12):
+            add(entry.ticker)
+    except Exception:  # noqa: BLE001 - an empty store is not an error here
+        pass
+    return tuple(ordered[:MAX_FOLLOWED])
+
+
+@st.cache_data(persist="disk", show_spinner=False)
+def _backdrop(bucket: int, nonce: int):
+    return fetch_context()
+
+
+@st.cache_data(persist="disk", show_spinner=False)
+def _followed_closes(tickers: tuple, bucket: int, nonce: int):
+    """A year of closing prices, one column per company."""
+    frames = _batch_prices(tickers, period="1y")
+    columns = {t: df["Close"].dropna() for t, df in frames.items()
+               if "Close" in getattr(df, "columns", [])}
+    return pd.DataFrame(columns) if columns else pd.DataFrame()
+
+
+def _day_moves(closes, tickers: tuple) -> list:
+    """(ticker, 1-day %, 1-week %) per company, biggest absolute move first."""
+    moves = []
+    for ticker in tickers:
+        if ticker not in getattr(closes, "columns", []):
+            continue
+        series = closes[ticker].dropna()
+        if len(series) < 6:
+            continue
+        day = (series.iloc[-1] / series.iloc[-2] - 1) * 100 if series.iloc[-2] else None
+        week = (series.iloc[-1] / series.iloc[-6] - 1) * 100 if series.iloc[-6] else None
+        moves.append((ticker, day, week))
+    moves.sort(key=lambda m: (m[1] is None, -abs(m[1] or 0)))
+    return moves
+
+
+@st.cache_data(persist="disk", show_spinner=False)
+def _company_news(tickers: tuple, names_tuple: tuple, bucket: int, nonce: int) -> list:
+    return news_service.for_tickers(list(tickers), per_ticker=8,
+                                    names=dict(names_tuple))
+
+
+@st.cache_data(persist="disk", show_spinner=False)
+def _market_news(bucket: int, nonce: int) -> list:
+    return news_service.for_queries(per_query=6)
+
+
+@st.cache_data(persist="disk", show_spinner=False)
+def _earnings_dates(tickers: tuple, bucket: int, nonce: int) -> tuple:
+    """Next reporting date per company, flagged when it is an estimate.
+
+    Returns (reached_provider, rows). The flag matters: the provider rate
+    limits this endpoint, and a refusal is indistinguishable from "this company
+    has no date" unless the two are tracked apart. Saying "nothing is
+    reporting" when nothing was actually fetched is a false statement about the
+    next six weeks.
+
+    Fetched one at a time rather than through _batch_info: this endpoint
+    refuses even a handful of concurrent requests, and the batch helper reports
+    that refusal as an empty dict. A dozen sequential requests take a couple of
+    seconds and are cached for half an hour.
+    """
+    reached, out = False, []
+    for ticker in tickers:
+        try:
+            info = yf.Ticker(ticker).info or {}
+        except Exception:  # noqa: BLE001 - a refusal for one company is not fatal
+            continue
+        if not info:
+            continue
+        reached = True
+        stamp = info.get("earningsTimestampStart") or info.get("earningsTimestamp")
+        if not stamp:
+            continue
+        try:
+            when = datetime.fromtimestamp(float(stamp))
+        except (TypeError, ValueError, OSError):
+            continue
+        days = (when.date() - date.today()).days
+        if 0 <= days <= 45:
+            out.append((ticker, when, days, bool(info.get("isEarningsDateEstimate"))))
+    return reached, sorted(out, key=lambda r: r[1])
+
+
+def _headline_rows(items: list, show_tickers: bool = True) -> None:
+    """Headlines as external links. Shown unaltered -- never summarised."""
+    html = []
+    for h in items:
+        chips = ""
+        if show_tickers and h.tickers:
+            chips = "".join(
+                f'<span style="font-size:0.66rem;font-weight:600;letter-spacing:0.04em;'
+                f'color:{theme.BRASS};margin-right:0.4rem;">{t}</span>'
+                for t in h.tickers[:3]
+            )
+        html.append(
+            f'<a href="{h.url}" target="_blank" rel="noopener noreferrer" '
+            f'style="display:block;padding:0.5rem 0;border-bottom:1px solid {theme.RULE};'
+            f'text-decoration:none;">'
+            f'<span style="display:block;color:{theme.INK};font-size:0.88rem;'
+            f'line-height:1.35;">{h.title}</span>'
+            f'<span style="display:block;margin-top:0.2rem;font-size:0.72rem;'
+            f'color:{theme.FAINT};">{chips}{h.publisher} · {h.age}</span></a>'
+        )
+    st.markdown('<div class="bs-rowset">' + "".join(html) + '</div>',
+                unsafe_allow_html=True)
+
+
 def _company_picker(default: str = "AAPL") -> str:
     """Search by ticker or company name.
 
@@ -628,11 +799,19 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# A page can ask to send the reader elsewhere (the home screen's "Open
+# Research"). The radio's state can only be set before it is drawn, so the
+# request is parked in session state and applied here on the next run.
+_goto = st.session_state.pop("_goto", None)
+if _goto:
+    st.session_state["_nav"] = _goto
+
 nav = st.sidebar.radio(
     "Navigate",
     ["Overview", "Research", "Hedge Fund", "Discover", "Screener", "Watchlist", "Portfolio"],
     index=0,
     label_visibility="collapsed",
+    key="_nav",
 )
 
 # Company and Compare are views reached from anywhere, not destinations in the
@@ -692,12 +871,223 @@ if page not in ("Company", "Compare"):
 # ════════════════════════════════════════════════════════════
 if page == "Overview":
 
+    _nonce = _research_nonce()
+    followed = _followed()
+    directory = _company_directory(_bucket())
+
+    def _name(ticker: str) -> str:
+        return directory.get(ticker) or ticker
+
+    def _short(ticker: str) -> str:
+        """'Apple' from 'Apple Inc.' -- for use inside a sentence."""
+        name = directory.get(ticker)
+        if not name:
+            return ticker
+        for suffix in (", Inc.", " Inc.", " Corporation", " Corp.", " plc", " PLC",
+                       " Holdings", " Group", " Ltd", " Limited", " Company", ", Inc"):
+            name = name.replace(suffix, "")
+        return name.strip() or ticker
+
+    @st.cache_data(ttl=120, show_spinner=False)
+    def _t212_cash(nonce: int):
+        """Account totals only -- one request, well inside Trading 212's limits."""
+        creds = load_credentials() or st.session_state.get("_t212")
+        if creds is None:
+            return None
+        try:
+            return Trading212(creds).cash()
+        except T212Error:
+            return None
+
+    # Everything the page says is fetched up front, so the opening paragraph
+    # can be written from it. These share caches with the Research page.
+    with st.spinner(""):
+        context = _backdrop(_news_bucket(), _nonce)
+        closes = (_followed_closes(followed, _news_bucket(), _nonce)
+                  if followed else pd.DataFrame())
+        moves = _day_moves(closes, followed) if followed else []
+        reached, upcoming = (_earnings_dates(followed, _news_bucket(), _nonce)
+                             if followed else (False, []))
+        headlines = (_company_news(followed, tuple(sorted(
+                         (t, directory.get(t, "")) for t in followed)),
+                         _news_bucket(), _nonce)
+                     if followed else [])
+        cash = _t212_cash(_nonce)
+
+    # ── The brief ────────────────────────────────────────────
+    # Written from the data, deterministically. Every clause is a fact the page
+    # goes on to show; nothing here is a view on what happens next.
+    # The latest close may not be today's -- at weekends and before the open it
+    # is the previous session, and calling that "today" would be false.
+    _last = closes.index[-1].date() if len(getattr(closes, "index", [])) else None
+    session = ("today" if _last == date.today()
+               else f"on {_last:%A}" if _last else "in the last session")
+
+    def _brief() -> list:
+        out = []
+        dated = [m for m in moves if m[1] is not None]
+        if dated:
+            n = len(dated)
+            up = sum(1 for m in dated if m[1] > 0)
+            down = sum(1 for m in dated if m[1] < 0)
+            verb = "are" if session == "today" else "closed"
+            if up == n:
+                out.append(f"All {n} companies you follow {verb} higher {session}.")
+            elif down == n:
+                out.append(f"All {n} companies you follow {verb} lower {session}.")
+            else:
+                out.append(f"Of the {n} companies you follow, {up} "
+                           f"{('is' if up == 1 else 'are') if verb == 'are' else 'closed'} "
+                           f"higher {session} and {down} lower.")
+            ticker, day, _ = dated[0]
+            if abs(day) >= 1:
+                out.append(f"{_short(ticker)} moved most, "
+                           f"{'up' if day > 0 else 'down'} {abs(day):.1f}%.")
+
+        soon = [u for u in upcoming if u[2] <= 7]
+        if soon:
+            today = [u for u in soon if u[2] == 0]
+            later = [u for u in soon if u[2] > 0]
+            if today:
+                names = " and ".join(_short(u[0]) for u in today[:2])
+                out.append(f"{names} {'reports' if len(today) == 1 else 'report'} today.")
+            if later and len(later) <= 2:
+                out.append(" ".join(
+                    f"{_short(t)} reports {when:%A}." for t, when, _, _ in later))
+            elif later:
+                out.append(f"{len(later)} more report results in the next week.")
+
+        if context.ok:
+            restrictive = context.by_tilt("restrictive")
+            if restrictive:
+                labels = ", ".join(r.label.split(" (")[0].lower() for r in restrictive[:2])
+                out.append(f"In the wider market, {labels} "
+                           f"{'is' if len(restrictive) == 1 else 'are'} in territory "
+                           f"equities have historically struggled in.")
+            else:
+                trend = next((r for r in context.readings if r.key == "trend"), None)
+                vix = next((r for r in context.readings if r.key == "volatility"), None)
+                if trend and vix:
+                    side = "above" if trend.value >= 0 else "below"
+                    out.append(f"The wider market is steady — the S&P 500 sits "
+                               f"{abs(trend.value):.1f}% {side} its 200-day average "
+                               f"and the VIX is at {vix.value:.0f}.")
+
+        if not followed:
+            out.insert(0, "Add companies to your watchlist or link Trading 212, "
+                          "and this page will be written around them.")
+        return out
+
     _hour = datetime.now().hour
-    _greeting = "Good morning" if _hour < 12 else ("Good afternoon" if _hour < 18 else "Good evening")
-    theme.page_header(_greeting, "What stands out in the market today.")
+    _greeting = ("Good morning" if _hour < 12
+                 else "Good afternoon" if _hour < 18 else "Good evening")
+    st.markdown(
+        f'<div class="bs-eyebrow">{datetime.now():%A %d %B}</div>'
+        f'<h1 style="margin-bottom:0.55rem;">{_greeting}</h1>'
+        f'<div style="font-size:1.06rem;line-height:1.6;color:{theme.INK};'
+        f'max-width:46rem;margin-bottom:1.4rem;">{" ".join(_brief())}</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Account strip ────────────────────────────────────────
+    if cash is not None and cash.total is not None:
+        cur = {"GBP": "£", "USD": "$", "EUR": "€"}.get(cash.currency or "", "")
+        stats = [("Account value", f"{cur}{cash.total:,.0f}")]
+        if cash.ppl is not None:
+            base = (cash.invested or 0)
+            pct = f" ({cash.ppl / base * 100:+.1f}%)" if base else ""
+            stats.append(("Open return", f"{'+' if cash.ppl >= 0 else '−'}"
+                                         f"{cur}{abs(cash.ppl):,.0f}{pct}"))
+        if cash.invested is not None:
+            stats.append(("Invested", f"{cur}{cash.invested:,.0f}"))
+        if cash.free is not None:
+            stats.append(("Cash", f"{cur}{cash.free:,.0f}"))
+        theme.stat_grid(stats)
+
+    # ── Your companies | Coming up ───────────────────────────
+    def _spark(series, width: int = 84, height: int = 22) -> str:
+        """A month of closes as an inline SVG line. Shape only, no axes."""
+        values = [float(v) for v in series.dropna().iloc[-22:]]
+        if len(values) < 2:
+            return ""
+        low, high = min(values), max(values)
+        span = (high - low) or 1.0
+        step = width / (len(values) - 1)
+        points = " ".join(f"{i * step:.1f},{height - (v - low) / span * height:.1f}"
+                          for i, v in enumerate(values))
+        colour = theme.POSITIVE if values[-1] >= values[0] else theme.NEGATIVE
+        return (f'<svg width="{width}" height="{height}" viewBox="0 -1 {width} {height + 2}" '
+                f'style="vertical-align:middle;"><polyline points="{points}" fill="none" '
+                f'stroke="{colour}" stroke-width="1.4" stroke-linejoin="round"/></svg>')
+
+    left, right = st.columns([1.75, 1], gap="large")
+
+    with left:
+        theme.section("Your companies")
+        if not moves:
+            st.caption("Companies you hold, watch or look at will appear here with "
+                       "today's move.")
+        else:
+            rows = []
+            for ticker, day, week in moves[:8]:
+                colour = theme.POSITIVE if (day or 0) >= 0 else theme.NEGATIVE
+                rows.append(
+                    f'<a class="bs-link" href="?company={ticker}" target="_self" '
+                    f'style="display:grid;grid-template-columns:4.2rem 1fr 90px 4.4rem 4.4rem;'
+                    f'align-items:center;gap:0.6rem;padding:0.5rem 0;'
+                    f'border-bottom:1px solid {theme.RULE};text-decoration:none;">'
+                    f'<span style="font-weight:640;color:{theme.INK};">{ticker}</span>'
+                    f'<span style="color:{theme.MUTED};font-size:0.8rem;overflow:hidden;'
+                    f'white-space:nowrap;text-overflow:ellipsis;">{_name(ticker)}</span>'
+                    f'<span>{_spark(closes[ticker])}</span>'
+                    f'<span style="text-align:right;color:{theme.FAINT};font-size:0.76rem;'
+                    f'font-variant-numeric:tabular-nums;">'
+                    f'{"" if week is None else f"{week:+.1f}% 1w"}</span>'
+                    f'<span style="text-align:right;color:{colour};font-weight:620;'
+                    f'font-variant-numeric:tabular-nums;">'
+                    f'{"—" if day is None else f"{day:+.2f}%"}</span></a>'
+                )
+            st.markdown('<div class="bs-rowset">' + "".join(rows) + '</div>',
+                        unsafe_allow_html=True)
+            st.caption(f"Ordered by the size of the move {session}. "
+                       f"The line is the last month.")
+
+    with right:
+        theme.section("Coming up")
+        window = [u for u in upcoming if u[2] <= 21]
+        if window:
+            theme.stat_grid([
+                (f"{t}{' (est.)' if est else ''}",
+                 "Today" if days == 0 else f"{when:%a %d %b}")
+                for t, when, days, est in window[:6]
+            ])
+            st.caption("Results dates. Est. marks the provider's guess.")
+        elif followed and not reached:
+            st.caption("Results dates could not be fetched just now.")
+        else:
+            st.caption("No results due in the next three weeks.")
+
+        theme.section("Backdrop")
+        if context.ok:
+            picks = [r for r in context.readings
+                     if r.key in ("trend", "volatility", "ten_year", "oil")]
+            theme.stat_grid([(r.label.split(" (")[0].replace(" vs 200-day average", " trend"),
+                              r.display) for r in picks])
+            if st.button("Open Research", key="_home_to_research"):
+                st.session_state["_goto"] = "Research"
+                st.rerun()
+        else:
+            st.caption("Market backdrop unavailable just now.")
+
+    # ── Latest on your companies ─────────────────────────────
+    if headlines:
+        theme.section("Latest on your companies")
+        _headline_rows(headlines[:5])
+        st.caption("Stories whose headline names one of your companies. "
+                   "Shown as published — the full feed is on the Research page.")
 
     # ── Market snapshot ──────────────────────────────────────
-    theme.section("Market snapshot")
+    theme.section("Markets")
 
     @st.cache_data(persist="disk", show_spinner=False)
     def _market_overview(bucket: int) -> list:
@@ -3373,58 +3763,7 @@ elif page == "Research":
         "headlines naming them, and what their shares have actually moved with.",
     )
 
-    NEWS_TTL = 1800          # headlines go stale in minutes, not hours
-    MAX_FOLLOWED = 14        # each company costs an HTTP request
-
-    def _news_bucket() -> int:
-        return int(time.time() // NEWS_TTL)
-
-    _nonce = st.session_state.get("_research_nonce", 0)
-
-    # ── Which companies this page is about ───────────────────
-
-    @st.cache_data(ttl=300, show_spinner=False)
-    def _holding_symbols(nonce: int) -> list:
-        """Tickers held at Trading 212, if an account is linked.
-
-        Cached for five minutes: Trading 212 allows roughly one account request
-        every five seconds, and this page would otherwise hit it on every rerun.
-        A failure returns nothing rather than raising -- an unreachable broker
-        should cost this section, not the page.
-        """
-        creds = load_credentials() or st.session_state.get("_t212")
-        if creds is None:
-            return []
-        try:
-            return [p.symbol for p in Trading212(creds).positions() if p.quantity]
-        except T212Error:
-            return []
-
-    def _followed() -> tuple:
-        """Holdings first, then watchlist, then recently viewed.
-
-        Holdings lead because news about something owned matters more than news
-        about something browsed once.
-        """
-        ordered, seen = [], set()
-
-        def add(ticker) -> None:
-            t = str(ticker or "").strip().upper()
-            if t and t not in seen:
-                seen.add(t)
-                ordered.append(t)
-
-        for symbol in _holding_symbols(_nonce):
-            add(symbol)
-        try:
-            wl = _watchlist()
-            for entry in wl.all():
-                add(entry.ticker)
-            for entry in wl.recent(limit=12):
-                add(entry.ticker)
-        except Exception:  # noqa: BLE001 - an empty store is not an error here
-            pass
-        return tuple(ordered[:MAX_FOLLOWED])
+    _nonce = _research_nonce()
 
     followed = _followed()
 
@@ -3434,13 +3773,6 @@ elif page == "Research":
 
     # ── Market backdrop ──────────────────────────────────────
     theme.section("Market backdrop")
-
-    # Every cached fetch below takes `nonce` as well as the time bucket, so the
-    # Refresh button genuinely refetches. Without it the button would bump a
-    # counter that no cache key reads, and quietly do nothing.
-    @st.cache_data(persist="disk", show_spinner=False)
-    def _backdrop(bucket: int, nonce: int):
-        return fetch_context()
 
     context = _backdrop(_news_bucket(), _nonce)
 
@@ -3512,30 +3844,12 @@ elif page == "Research":
     # ── What moved ───────────────────────────────────────────
     theme.section("What moved")
 
-    @st.cache_data(persist="disk", show_spinner=False)
-    def _closes(tickers: tuple, bucket: int, nonce: int):
-        frames = _batch_prices(tickers, period="1y")
-        columns = {t: df["Close"].dropna() for t, df in frames.items()
-                   if "Close" in getattr(df, "columns", [])}
-        return pd.DataFrame(columns) if columns else pd.DataFrame()
-
-    closes = _closes(followed, _news_bucket(), _nonce)
-
-    moves = []
-    for ticker in followed:
-        if ticker not in getattr(closes, "columns", []):
-            continue
-        series = closes[ticker].dropna()
-        if len(series) < 6:
-            continue
-        day = (series.iloc[-1] / series.iloc[-2] - 1) * 100 if series.iloc[-2] else None
-        week = (series.iloc[-1] / series.iloc[-6] - 1) * 100 if series.iloc[-6] else None
-        moves.append((ticker, day, week))
+    closes = _followed_closes(followed, _news_bucket(), _nonce)
+    moves = _day_moves(closes, followed)
 
     if not moves:
         st.caption("No recent price history came back for the companies you follow.")
     else:
-        moves.sort(key=lambda m: (m[1] is None, -abs(m[1] or 0)))
         cells = []
         for ticker, day, week in moves[:8]:
             colour = theme.POSITIVE if (day or 0) >= 0 else theme.NEGATIVE
@@ -3563,36 +3877,9 @@ elif page == "Research":
     # ── Headlines naming your companies ──────────────────────
     theme.section("Headlines on your companies")
 
-    @st.cache_data(persist="disk", show_spinner=False)
-    def _company_news(tickers: tuple, names_tuple: tuple, bucket: int, nonce: int) -> list:
-        return news_service.for_tickers(list(tickers), per_ticker=8,
-                                        names=dict(names_tuple))
-
     with st.spinner(""):
         headlines = _company_news(followed, tuple(sorted(names.items())),
                                   _news_bucket(), _nonce)
-
-    def _headline_rows(items: list, show_tickers: bool = True) -> None:
-        html = []
-        for h in items:
-            chips = ""
-            if show_tickers and h.tickers:
-                chips = "".join(
-                    f'<span style="font-size:0.66rem;font-weight:600;letter-spacing:0.04em;'
-                    f'color:{theme.BRASS};margin-right:0.4rem;">{t}</span>'
-                    for t in h.tickers[:3]
-                )
-            html.append(
-                f'<a href="{h.url}" target="_blank" rel="noopener noreferrer" '
-                f'style="display:block;padding:0.5rem 0;border-bottom:1px solid {theme.RULE};'
-                f'text-decoration:none;">'
-                f'<span style="display:block;color:{theme.INK};font-size:0.88rem;'
-                f'line-height:1.35;">{h.title}</span>'
-                f'<span style="display:block;margin-top:0.2rem;font-size:0.72rem;'
-                f'color:{theme.FAINT};">{chips}{h.publisher} · {h.age}</span></a>'
-            )
-        st.markdown('<div class="bs-rowset">' + "".join(html) + '</div>',
-                    unsafe_allow_html=True)
 
     if not headlines:
         st.caption(
@@ -3612,42 +3899,6 @@ elif page == "Research":
 
     # ── Upcoming earnings ────────────────────────────────────
     theme.section("Reporting next")
-
-    @st.cache_data(persist="disk", show_spinner=False)
-    def _earnings_dates(tickers: tuple, bucket: int, nonce: int) -> tuple:
-        """Next reporting date per company, flagged when it is an estimate.
-
-        Returns (reached_provider, rows). The flag matters: the provider rate
-        limits this endpoint, and a refusal is indistinguishable from "this
-        company has no date" unless the two are tracked apart. Saying "nothing
-        is reporting" when nothing was actually fetched is a false statement
-        about the next six weeks.
-
-        Fetched one at a time rather than through _batch_info: this endpoint
-        refuses even a handful of concurrent requests, and the batch helper
-        reports that refusal as an empty dict. A dozen sequential requests take
-        a couple of seconds and are cached for half an hour.
-        """
-        reached, out = False, []
-        for ticker in tickers:
-            try:
-                info = yf.Ticker(ticker).info or {}
-            except Exception:  # noqa: BLE001 - a refusal for one company is not fatal
-                continue
-            if not info:
-                continue
-            reached = True
-            stamp = info.get("earningsTimestampStart") or info.get("earningsTimestamp")
-            if not stamp:
-                continue
-            try:
-                when = datetime.fromtimestamp(float(stamp))
-            except (TypeError, ValueError, OSError):
-                continue
-            days = (when.date() - date.today()).days
-            if 0 <= days <= 45:
-                out.append((ticker, when, days, bool(info.get("isEarningsDateEstimate"))))
-        return reached, sorted(out, key=lambda r: r[1])
 
     reached_provider, upcoming = _earnings_dates(followed, _news_bucket(), _nonce)
 
@@ -3741,10 +3992,6 @@ elif page == "Research":
 
     # ── Economy and market news ──────────────────────────────
     theme.section("Economy and market")
-
-    @st.cache_data(persist="disk", show_spinner=False)
-    def _market_news(bucket: int, nonce: int) -> list:
-        return news_service.for_queries(per_query=6)
 
     with st.spinner(""):
         market_stories = _market_news(_news_bucket(), _nonce)
